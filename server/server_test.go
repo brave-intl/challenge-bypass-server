@@ -196,9 +196,4 @@ func TestIssueRedeem(t *testing.T) {
 		err = fmt.Errorf("Received non-200 response: %d\n", resp.StatusCode)
 		t.Fatal(err)
 	}
-
-	body, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
 }

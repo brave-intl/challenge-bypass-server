@@ -83,7 +83,7 @@ func (c *Server) fetchIssuer(issuerType string) (*Issuer, error) {
 
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		var signingKey []byte
 		var issuer = &Issuer{}
 		if err := rows.Scan(&issuer.IssuerType, &signingKey, &issuer.MaxTokens); err != nil {
@@ -171,7 +171,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 
 	defer rows.Close()
 
-	for rows.Next() {
+	if rows.Next() {
 		var redemption = &Redemption{}
 		if err := rows.Scan(&redemption.Id, &redemption.IssuerType, &redemption.Timestamp, &redemption.Payload); err != nil {
 			return nil, err

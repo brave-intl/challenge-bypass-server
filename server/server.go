@@ -19,9 +19,8 @@ import (
 )
 
 var (
-	Version         = "dev"
-	maxBackoffDelay = 1 * time.Second
-	maxRequestSize  = int64(20 * 1024) // ~10kB is expected size for 100*base64([64]byte) + ~framing
+	Version        = "dev"
+	maxRequestSize = int64(20 * 1024) // ~10kB is expected size for 100*base64([64]byte) + ~framing
 
 	ErrNoSecretKey         = errors.New("server config does not contain a key")
 	ErrRequestTooLarge     = errors.New("request too large to process")
@@ -48,7 +47,7 @@ func LoadConfigFile(filePath string) (Server, error) {
 	if err != nil {
 		return conf, err
 	}
-	err = json.Unmarshal(data, conf)
+	err = json.Unmarshal(data, &conf)
 	if err != nil {
 		return conf, err
 	}
@@ -64,7 +63,10 @@ func (c *Server) InitDbConfig() error {
 
 	if envConfig := os.Getenv("DBCONFIG"); envConfig != "" {
 		data := []byte(envConfig)
-		json.Unmarshal(data, &conf)
+		err := json.Unmarshal(data, &conf)
+		if err != nil {
+			return err
+		}
 
 		// Heroku style
 		if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
@@ -79,7 +81,10 @@ func (c *Server) InitDbConfig() error {
 		if err != nil {
 			return err
 		}
-		json.Unmarshal(data, &conf)
+		err = json.Unmarshal(data, &conf)
+		if err != nil {
+			return err
+		}
 	}
 
 	c.LoadDbConfig(conf)

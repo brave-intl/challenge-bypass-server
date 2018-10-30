@@ -3,7 +3,6 @@ RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools
 RUN git clone https://github.com/evq/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
-RUN git checkout fixDecodeErr
 RUN cargo build --target=x86_64-unknown-linux-musl 
 
 FROM golang:1.11 as go_builder

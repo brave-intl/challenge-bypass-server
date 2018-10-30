@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/brave-intl/bat-go/middleware"
+	"github.com/brave-intl/bat-go/utils/closers"
 	"github.com/brave-intl/bat-go/utils/handlers"
 	crypto "github.com/evq/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
@@ -41,6 +42,8 @@ func (c *Server) getIssuer(issuerType string) (*Issuer, *handlers.AppError) {
 }
 
 func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	defer closers.Panic(r.Body)
+
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.getIssuer(issuerType)
 		if appErr != nil {
@@ -59,7 +62,7 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	log := lg.Log(r.Context())
 
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req IssuerCreateRequest
 	if err := decoder.Decode(&req); err != nil {
 		return handlers.WrapError("Could not parse the request body", err)
