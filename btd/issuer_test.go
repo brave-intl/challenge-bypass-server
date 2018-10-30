@@ -1,16 +1,6 @@
 package btd
 
-import (
-	"bytes"
-	stdcrypto "crypto"
-	"crypto/elliptic"
-	crand "crypto/rand"
-	"errors"
-	"testing"
-
-	"github.com/brave-intl/challenge-bypass-server/crypto"
-)
-
+/*
 var (
 	testPayload = []byte("Some test payload")
 )
@@ -256,3 +246,4 @@ func TestBadMAC(t *testing.T) {
 		t.Fatal("No error occurred even though MAC should be bad")
 	}
 }
+*/

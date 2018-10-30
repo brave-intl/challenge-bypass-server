@@ -2,3 +2,4 @@
 /bin
 _vendor*/
 vendor/
+Makefile

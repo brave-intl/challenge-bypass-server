@@ -1,3 +1,5 @@
+select execute($$
+
 insert into migrations (id, description) values ('0001', 'initial_schema');
 
 create table issuers (
@@ -17,3 +19,5 @@ create table redemptions (
 );
 
 create index redemptions_type on redemptions using hash (issuerType);
+
+$$) where not exists (select * from migrations where id = '0001');
