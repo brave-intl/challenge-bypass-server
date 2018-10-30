@@ -7,6 +7,7 @@ RUN cargo build --target=x86_64-unknown-linux-musl
 
 FROM golang:1.11 as go_builder
 RUN apt-get update && apt-get install -y postgresql-client
+RUN go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchallenge_bypass_ristretto.a /usr/lib/
 COPY . /src
 WORKDIR /src

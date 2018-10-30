@@ -12,3 +12,6 @@ docker-dev:
 
 docker-test:
 	docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass go test ./...
+
+docker-lint:
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
