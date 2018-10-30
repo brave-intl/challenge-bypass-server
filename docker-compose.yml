@@ -22,7 +22,7 @@ services:
       context: .
       target: go_builder 
     environment:
-      - "DBCONFIG=1"
+      - "DBCONFIG={}"
       - "DATABASE_URL=postgres://btokens:password@postgres/btokens?sslmode=disable"
     depends_on:
       - postgres
