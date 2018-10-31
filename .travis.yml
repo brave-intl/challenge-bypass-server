@@ -3,7 +3,5 @@ os: linux
 services: docker
 script:
   - make docker-lint
-  - docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm challenge-bypass pwd
-  - docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm challenge-bypass ls
   - make docker-migrate-up || (sleep 2 && make docker-migrate-up)
   - make docker-test 
