@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
@@ -57,17 +59,16 @@ func TestPing(t *testing.T) {
 	}
 }
 
-func TestIssueRedeem(t *testing.T) {
-	issuerType := "test"
-	msg := "test message"
-
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
-	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", server.URL, issuerType)
-	req, err := http.NewRequest("GET", issuerURL, nil)
+func request(method string, URL string, payload io.Reader) (*http.Response, error) {
+	var req *http.Request
+	var err error
+	if payload != nil {
+		req, err = http.NewRequest(method, URL, payload)
+	} else {
+		req, err = http.NewRequest(method, URL, nil)
+	}
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 
 	req.Header.Add("Authorization", "Bearer "+accessToken)
@@ -75,11 +76,33 @@ func TestIssueRedeem(t *testing.T) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 
 	if resp.StatusCode != 200 {
-		t.Fatalf("Received non-200 response: %d\n", resp.StatusCode)
+		return nil, errors.New(fmt.Sprintf("Received non-200 response: %d", resp.StatusCode))
+	}
+	return resp, nil
+}
+
+func TestIssueRedeem(t *testing.T) {
+	issuerType := "test"
+	msg := "test message"
+
+	server := httptest.NewServer(handler)
+	defer server.Close()
+
+	payload := fmt.Sprintf(`{"name":"%s", "max_tokens":100}`, issuerType)
+	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", server.URL)
+	resp, err := request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", server.URL, issuerType)
+	resp, err = request("GET", issuerURL, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	body, err := ioutil.ReadAll(resp.Body)
@@ -110,24 +133,10 @@ func TestIssueRedeem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	payload := fmt.Sprintf(`{"blinded_tokens":["%s"]}}`, blindedTokenText)
+	payload = fmt.Sprintf(`{"blinded_tokens":["%s"]}}`, blindedTokenText)
 	issueURL := fmt.Sprintf("%s/v1/blindedToken/%s", server.URL, issuerType)
-
-	req, err = http.NewRequest("POST", issueURL, bytes.NewBuffer([]byte(payload)))
+	resp, err = request("POST", issueURL, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	req.Header.Add("Authorization", "Bearer "+accessToken)
-	req.Header.Add("Content-Type", "application/json")
-
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if resp.StatusCode != 200 {
-		err = fmt.Errorf("Received non-200 response: %d\n", resp.StatusCode)
 		t.Fatal(err)
 	}
 
@@ -179,21 +188,8 @@ func TestIssueRedeem(t *testing.T) {
 	payload = fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
 	redeemURL := fmt.Sprintf("%s/v1/blindedToken/%s/redemption/", server.URL, issuerType)
 
-	req, err = http.NewRequest("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
+	resp, err = request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
-		t.Fatal(err)
-	}
-
-	req.Header.Add("Authorization", "Bearer "+accessToken)
-	req.Header.Add("Content-Type", "application/json")
-
-	resp, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if resp.StatusCode != 200 {
-		err = fmt.Errorf("Received non-200 response: %d\n", resp.StatusCode)
 		t.Fatal(err)
 	}
 }
