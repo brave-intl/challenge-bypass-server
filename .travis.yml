@@ -3,4 +3,5 @@ os: linux
 services: docker
 script:
   - make docker-lint
+  - make docker-migrate-up || (sleep 2 && make docker-migrate-up)
   - make docker-test 
