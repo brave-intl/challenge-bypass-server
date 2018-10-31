@@ -16,11 +16,11 @@ services:
   challenge-bypass:
     container_name: challenge-bypass
     image: challenge-bypass-builder 
-    ports:
-      - "2416:2416"
     build:
       context: .
       target: go_builder 
+    ports:
+      - "2416:2416"
     environment:
       - "DBCONFIG={}"
       - "DATABASE_URL=postgres://btokens:password@postgres/btokens?sslmode=disable"
