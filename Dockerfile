@@ -12,8 +12,9 @@ COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchalleng
 COPY . /src
 WORKDIR /src
 RUN go build --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
+CMD ["/src/challenge-bypass-server"]
 
 FROM alpine:3.6
-COPY --from=go_builder /src/examples/golang.out /bin/
+COPY --from=go_builder /src/challenge-bypass-server /bin/
 EXPOSE ${PORT}
-CMD ["/bin/golang.out"]
+CMD ["/bin/challenge-bypass-server"]

@@ -15,7 +15,6 @@ import (
 
 type BlindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
-	BlindedToken  *crypto.BlindedToken   `json:"blinded_token"`
 }
 
 type BlindedTokenIssueResponse struct {

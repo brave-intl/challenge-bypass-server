@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -80,7 +79,7 @@ func request(method string, URL string, payload io.Reader) (*http.Response, erro
 	}
 
 	if resp.StatusCode != 200 {
-		return nil, errors.New(fmt.Sprintf("Received non-200 response: %d", resp.StatusCode))
+		return nil, fmt.Errorf("Received non-200 response: %d", resp.StatusCode)
 	}
 	return resp, nil
 }
@@ -94,13 +93,13 @@ func TestIssueRedeem(t *testing.T) {
 
 	payload := fmt.Sprintf(`{"name":"%s", "max_tokens":100}`, issuerType)
 	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", server.URL)
-	resp, err := request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
+	_, err := request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", server.URL, issuerType)
-	resp, err = request("GET", issuerURL, nil)
+	resp, err := request("GET", issuerURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +187,7 @@ func TestIssueRedeem(t *testing.T) {
 	payload = fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
 	redeemURL := fmt.Sprintf("%s/v1/blindedToken/%s/redemption/", server.URL, issuerType)
 
-	resp, err = request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
+	_, err = request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
 	if err != nil {
 		t.Fatal(err)
 	}
