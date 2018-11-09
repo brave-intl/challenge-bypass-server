@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	crypto "github.com/evq/challenge-bypass-ristretto-ffi"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
 )

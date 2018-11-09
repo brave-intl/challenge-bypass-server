@@ -8,7 +8,7 @@ import (
 	"github.com/brave-intl/bat-go/middleware"
 	"github.com/brave-intl/bat-go/utils/closers"
 	"github.com/brave-intl/bat-go/utils/handlers"
-	crypto "github.com/evq/challenge-bypass-ristretto-ffi"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
 	"github.com/pressly/lg"
 )

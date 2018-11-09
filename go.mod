@@ -4,8 +4,8 @@ require (
 	github.com/asaskevich/govalidator v0.0.0-20180720115003-f9ffefc3facf // indirect
 	github.com/beorn7/perks v0.0.0-20180321164747-3a771d992973 // indirect
 	github.com/brave-intl/bat-go v0.1.1-0.20181107220832-d6572c56cb83
+	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20181109203825-a002ad761f99
 	github.com/certifi/gocertifi v0.0.0-20180905225744-ee1a9a0726d2 // indirect
-	github.com/evq/challenge-bypass-ristretto-ffi v0.0.0-20181028205128-d6dea946ddc9
 	github.com/getsentry/raven-go v0.1.0
 	github.com/go-chi/chi v3.3.3+incompatible
 	github.com/gogo/protobuf v1.1.1 // indirect

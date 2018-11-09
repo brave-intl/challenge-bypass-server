@@ -13,7 +13,7 @@ import (
 	"testing"
 
 	"github.com/brave-intl/bat-go/middleware"
-	crypto "github.com/evq/challenge-bypass-ristretto-ffi"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
 	uuid "github.com/satori/go.uuid"
 )
