@@ -93,7 +93,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			if err == DuplicateRedemptionError {
 				return &handlers.AppError{
 					Message: err.Error(),
-					Code:    400,
+					Code:    409,
 				}
 			} else {
 				return &handlers.AppError{
