@@ -16,5 +16,6 @@ CMD ["/src/challenge-bypass-server"]
 
 FROM alpine:3.6
 COPY --from=go_builder /src/challenge-bypass-server /bin/
-EXPOSE ${PORT}
+COPY migrations /src/migrations
+EXPOSE 2416
 CMD ["/bin/challenge-bypass-server"]

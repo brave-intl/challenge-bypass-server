@@ -61,30 +61,9 @@ var (
 func (c *Server) InitDbConfig() error {
 	conf := DbConfig{}
 
-	if envConfig := os.Getenv("DBCONFIG"); envConfig != "" {
-		data := []byte(envConfig)
-		err := json.Unmarshal(data, &conf)
-		if err != nil {
-			return err
-		}
-
-		// Heroku style
-		if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
-			conf.ConnectionURI = os.Getenv("DATABASE_URL")
-		}
-	} else {
-		if c.DbConfigPath == "" {
-			return ErrEmptyDbConfigPath
-		}
-
-		data, err := ioutil.ReadFile(c.DbConfigPath)
-		if err != nil {
-			return err
-		}
-		err = json.Unmarshal(data, &conf)
-		if err != nil {
-			return err
-		}
+	// Heroku style
+	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
+		conf.ConnectionURI = os.Getenv("DATABASE_URL")
 	}
 
 	c.LoadDbConfig(conf)
