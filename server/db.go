@@ -8,6 +8,9 @@ import (
 	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+	migrate "github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
 )
@@ -52,13 +55,23 @@ func (c *Server) LoadDbConfig(config DbConfig) {
 
 func (c *Server) initDb() {
 	cfg := c.dbConfig
-	db, err := sql.Open("postgres", cfg.ConnectionURI)
 
+	db, err := sql.Open("postgres", cfg.ConnectionURI)
 	if err != nil {
 		log.Fatal(err.Error())
 	}
 
-	c.db = db
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	m, err := migrate.NewWithDatabaseInstance(
+		"file:///src/migrations",
+		"postgres", driver)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
+	m.Steps(2)
 
 	if cfg.CachingConfig.Enabled {
 		c.caches = make(map[string]CacheInterface)

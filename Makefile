@@ -1,9 +1,3 @@
-docker-migrate-up:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm challenge-bypass ./bin/migrate-up.sh
-
-docker-migrate-down:
-	docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm challenge-bypass ./bin/migrate-down.sh $(migration)
-
 docker-psql:
 	docker-compose exec postgres psql -U btokens
 
