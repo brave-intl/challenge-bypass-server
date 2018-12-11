@@ -8,10 +8,14 @@ RUN cargo build --target=x86_64-unknown-linux-musl
 FROM golang:1.11 as go_builder
 RUN apt-get update && apt-get install -y postgresql-client
 RUN go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
-COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchallenge_bypass_ristretto.a /usr/lib/
-COPY . /src
+RUN mkdir /src
 WORKDIR /src
-RUN go build -mod=vendor --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
+COPY go.mod .
+COPY go.sum .
+RUN go mod download
+COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchallenge_bypass_ristretto.a /usr/lib/
+COPY . .
+RUN go build --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
 FROM alpine:3.6
