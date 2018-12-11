@@ -72,7 +72,10 @@ func (c *Server) initDb() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	m.Steps(3)
+	err = m.Steps(3)
+	if err != nil {
+		log.Fatal(err.Error())
+	}
 
 	if cfg.CachingConfig.Enabled {
 		c.caches = make(map[string]CacheInterface)
