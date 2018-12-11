@@ -22,6 +22,7 @@ services:
     ports:
       - "2416:2416"
     environment:
+      - "SENTRY_DSN"
       - "DBCONFIG={}"
       - "DATABASE_URL=postgres://btokens:password@postgres/btokens?sslmode=disable"
     depends_on:

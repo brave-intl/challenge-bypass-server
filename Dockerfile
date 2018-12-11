@@ -11,7 +11,7 @@ RUN go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchallenge_bypass_ristretto.a /usr/lib/
 COPY . /src
 WORKDIR /src
-RUN go build --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
+RUN go build -mod=vendor --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
 FROM alpine:3.6

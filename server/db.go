@@ -60,6 +60,7 @@ func (c *Server) initDb() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
+	c.db = db
 
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
@@ -71,7 +72,7 @@ func (c *Server) initDb() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	m.Steps(2)
+	m.Steps(3)
 
 	if cfg.CachingConfig.Enabled {
 		c.caches = make(map[string]CacheInterface)
@@ -89,7 +90,7 @@ func (c *Server) fetchIssuer(issuerType string) (*Issuer, error) {
 	}
 
 	rows, err := c.db.Query(
-		`SELECT issuerType, signingKey, maxTokens FROM issuers WHERE issuerType=$1`, issuerType)
+		`SELECT issuer_type, signing_key, max_tokens FROM issuers WHERE issuer_type=$1`, issuerType)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +140,7 @@ func (c *Server) createIssuer(issuerType string, maxTokens int) error {
 	}
 
 	rows, err := c.db.Query(
-		`INSERT INTO issuers(issuerType, signingKey, maxTokens) VALUES ($1, $2, $3)`, issuerType, signingKeyTxt, maxTokens)
+		`INSERT INTO issuers(issuer_type, signing_key, max_tokens) VALUES ($1, $2, $3)`, issuerType, signingKeyTxt, maxTokens)
 	if err != nil {
 		return err
 	}
@@ -155,7 +156,7 @@ func (c *Server) redeemToken(issuerType string, preimage *crypto.TokenPreimage, 
 	}
 
 	rows, err := c.db.Query(
-		`INSERT INTO redemptions(id, issuerType, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, issuerType, payload)
+		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, issuerType, payload)
 
 	if err != nil {
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
@@ -176,7 +177,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	}
 
 	rows, err := c.db.Query(
-		`SELECT id, issuerType, ts, payload FROM redemptions WHERE id = $1 AND issuerType = $2`, id, issuerType)
+		`SELECT id, issuer_type, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
 
 	if err != nil {
 		return nil, err
