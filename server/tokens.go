@@ -44,7 +44,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 		if request.BlindedTokens == nil {
 			return &handlers.AppError{
 				Message: "Empty request",
-				Code:    400,
+				Code:    http.StatusBadRequest,
 			}
 		}
 
@@ -53,7 +53,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 			return &handlers.AppError{
 				Error:   err,
 				Message: "Could not approve new tokens",
-				Code:    500,
+				Code:    http.StatusInternalServerError,
 			}
 		}
 
@@ -81,7 +81,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		if request.TokenPreimage == nil || request.Signature == nil {
 			return &handlers.AppError{
 				Message: "Empty request",
-				Code:    400,
+				Code:    http.StatusBadRequest,
 			}
 		}
 
@@ -93,13 +93,13 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			if err == DuplicateRedemptionError {
 				return &handlers.AppError{
 					Message: err.Error(),
-					Code:    409,
+					Code:    http.StatusConflict,
 				}
 			} else {
 				return &handlers.AppError{
 					Error:   err,
 					Message: "Could not mark token redemption",
-					Code:    500,
+					Code:    http.StatusInternalServerError,
 				}
 			}
 		}
@@ -116,13 +116,13 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 			if err == RedemptionNotFoundError {
 				return &handlers.AppError{
 					Message: err.Error(),
-					Code:    400,
+					Code:    http.StatusBadRequest,
 				}
 			} else {
 				return &handlers.AppError{
 					Error:   err,
 					Message: "Could not check token redemption",
-					Code:    500,
+					Code:    http.StatusInternalServerError,
 				}
 			}
 		}
@@ -140,8 +140,8 @@ func (c *Server) tokenRouter() chi.Router {
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
 	}
-	r.Method("POST", "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.blindedTokenIssuerHandler)))
-	r.Method("POST", "/{type}/redemption/", middleware.InstrumentHandler("RedeemTokens", handlers.AppHandler(c.blindedTokenRedeemHandler)))
-	r.Method("GET", "/{type}/redemption/", middleware.InstrumentHandler("CheckToken", handlers.AppHandler(c.blindedTokenRedemptionHandler)))
+	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.blindedTokenIssuerHandler)))
+	r.Method(http.MethodPost, "/{type}/redemption/", middleware.InstrumentHandler("RedeemTokens", handlers.AppHandler(c.blindedTokenRedeemHandler)))
+	r.Method(http.MethodGet, "/{type}/redemption/", middleware.InstrumentHandler("CheckToken", handlers.AppHandler(c.blindedTokenRedemptionHandler)))
 	return r
 }
