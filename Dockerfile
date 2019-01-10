@@ -5,7 +5,7 @@ RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
 RUN cargo build --target=x86_64-unknown-linux-musl --no-default-features
 
-FROM golang:1.11 as go_builder
+FROM golang:1.11.4 as go_builder
 RUN apt-get update && apt-get install -y postgresql-client
 RUN go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
 RUN mkdir /src
