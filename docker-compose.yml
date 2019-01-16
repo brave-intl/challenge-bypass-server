@@ -16,6 +16,7 @@ services:
   challenge-bypass:
     container_name: challenge-bypass
     image: challenge-bypass-builder 
+    restart: always
     build:
       context: .
       target: go_builder 
