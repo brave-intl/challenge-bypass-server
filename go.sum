@@ -19,6 +19,8 @@ github.com/brave-intl/bat-go v0.1.1 h1:LwETyhc3axI++UMdLT4qDuEwuZw08qMYKqtDRPs23
 github.com/brave-intl/bat-go v0.1.1/go.mod h1:ob0XhWyX3Tqu2j0fJEoXouwc63axNdPpyyg1PVC4y4k=
 github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20181212160454-380b923f57b3 h1:FbpqR/KAJ4h8XYwqzHJEqj2c86OJtZCAexYDtp+ewVU=
 github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20181212160454-380b923f57b3/go.mod h1:I9sAUIQc7AvvUU0Ustl5WMTdqmlNjXsX6dRLnDNxXiE=
+github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190128173058-ab1a9a02d07a h1:gvF8m2UZBbQZ5C0ztfLY3yO3Nx+fRF/5/+X4YxRd880=
+github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190128173058-ab1a9a02d07a/go.mod h1:I9sAUIQc7AvvUU0Ustl5WMTdqmlNjXsX6dRLnDNxXiE=
 github.com/certifi/gocertifi v0.0.0-20180905225744-ee1a9a0726d2 h1:MmeatFT1pTPSVb4nkPmBFN/LRZ97vPjsFKsZrU3KKTs=
 github.com/certifi/gocertifi v0.0.0-20180905225744-ee1a9a0726d2/go.mod h1:GJKEexRPVJrBSOjoqN5VNOIKJ5Q3RViH6eu3puDRwx4=
 github.com/client9/misspell v0.3.4/go.mod h1:qj6jICC3Q7zFZvVWo7KLAzC3yx5G7kyvSDkc90ppPyw=

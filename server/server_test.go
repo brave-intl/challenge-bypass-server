@@ -154,15 +154,7 @@ func TestIssueRedeem(t *testing.T) {
 		t.Fatal("Batch proof or signed tokens not returned")
 	}
 
-	ok, err := decodedResp.BatchProof.Verify([]*crypto.BlindedToken{blindedToken}, decodedResp.SignedTokens, publicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("Proof did not verify")
-	}
-
-	unblindedToken, err := token.Unblind(decodedResp.SignedTokens[0])
+	unblindedTokens, err := decodedResp.BatchProof.VerifyAndUnblind([]*crypto.Token{token}, []*crypto.BlindedToken{blindedToken}, decodedResp.SignedTokens, publicKey)
 	if err != nil {
 		t.Fatal(err)
 	}
