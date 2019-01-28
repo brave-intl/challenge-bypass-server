@@ -159,6 +159,8 @@ func TestIssueRedeem(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	unblindedToken := unblindedTokens[0]
+
 	vKey := unblindedToken.DeriveVerificationKey()
 
 	sig, err := vKey.Sign(msg)

@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -58,23 +57,23 @@ func (c *Server) initDb() {
 
 	db, err := sql.Open("postgres", cfg.ConnectionURI)
 	if err != nil {
-		log.Fatal(err.Error())
+		panic(err)
 	}
 	c.db = db
 
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
-		log.Fatal(err.Error())
+		panic(err)
 	}
 	m, err := migrate.NewWithDatabaseInstance(
 		"file:///src/migrations",
 		"postgres", driver)
 	if err != nil {
-		log.Fatal(err.Error())
+		panic(err)
 	}
-	err = m.Steps(3)
-	if err != nil {
-		log.Fatal(err.Error())
+	err = m.Migrate(3)
+	if err != migrate.ErrNoChange && err != nil {
+		panic(err)
 	}
 
 	if cfg.CachingConfig.Enabled {

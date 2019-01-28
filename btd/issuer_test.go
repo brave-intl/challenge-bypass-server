@@ -1,7 +1,6 @@
 package btd
 
 import (
-	"errors"
 	"log"
 	"testing"
 
@@ -49,19 +48,12 @@ func makeTokenRedempRequest(sKey *crypto.SigningKey) (*crypto.TokenPreimage, *cr
 	// Verify DLEQ proof
 
 	pKey := sKey.PublicKey()
-	proofVerfied, err := dleqProof.Verify(blindedTokens, signedTokens, pKey)
+	clientUnblindedTokens, err := dleqProof.VerifyAndUnblind(tokens, blindedTokens, signedTokens, pKey)
 	if err != nil {
 		return nil, nil, err
-	}
-	if !proofVerfied {
-		return nil, nil, errors.New("DLEQ proof failed to verify")
 	}
 
-	// Unblind a point
-	clientUnblindedToken, err := tokens[0].Unblind(signedTokens[0])
-	if err != nil {
-		return nil, nil, err
-	}
+	clientUnblindedToken := clientUnblindedTokens[0]
 
 	// Redemption
 
