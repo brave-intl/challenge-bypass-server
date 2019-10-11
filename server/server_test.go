@@ -10,55 +10,58 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"testing"
 
 	"github.com/brave-intl/bat-go/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
 	uuid "github.com/satori/go.uuid"
+	"github.com/stretchr/testify/suite"
 )
 
-var handler http.Handler
+type ServerTestSuite struct {
+	suite.Suite
+	handler     http.Handler
+	accessToken string
+	srv         *Server
+}
 
-var accessToken string
-
-func init() {
+func (suite *ServerTestSuite) SetupSuite() {
 	os.Setenv("ENV", "production")
 
-	accessToken = uuid.NewV4().String()
-	middleware.TokenList = []string{accessToken}
+	suite.accessToken = uuid.NewV4().String()
+	middleware.TokenList = []string{suite.accessToken}
 
-	srv := &Server{}
+	suite.srv = &Server{}
 
-	err := srv.InitDbConfig()
-	if err != nil {
-		panic(err)
-	}
+	err := suite.srv.InitDbConfig()
+	suite.Require().NoError(err, "Failed to setup db conn")
 
-	handler = chi.ServerBaseContext(srv.setupRouter(SetupLogger(context.Background())))
+	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
 }
 
-func TestPing(t *testing.T) {
-	server := httptest.NewServer(handler)
+func (suite *ServerTestSuite) SetupTest() {
+	tables := []string{"issuers", "redemptions"}
+
+	for _, table := range tables {
+		_, err := suite.srv.db.Exec("delete from " + table)
+		suite.Require().NoError(err, "Failed to get clean table")
+	}
+}
+
+func (suite *ServerTestSuite) TestPing() {
+	server := httptest.NewServer(suite.handler)
 	defer server.Close()
 	resp, err := http.Get(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("Received non-200 response: %d\n", resp.StatusCode)
-	}
+	suite.Require().NoError(err, "Ping request must succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
+
 	expected := "."
 	actual, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if expected != string(actual) {
-		t.Errorf("Expected the message '%s'\n", expected)
-	}
+	suite.Assert().NoError(err, "Reading response body should succeed")
+	suite.Assert().Equal(expected, string(actual), "Message should match")
 }
 
-func request(method string, URL string, payload io.Reader) (*http.Response, error) {
+func (suite *ServerTestSuite) request(method string, URL string, payload io.Reader) (*http.Response, error) {
 	var req *http.Request
 	var err error
 	if payload != nil {
@@ -70,119 +73,99 @@ func request(method string, URL string, payload io.Reader) (*http.Response, erro
 		return nil, err
 	}
 
-	req.Header.Add("Authorization", "Bearer "+accessToken)
+	req.Header.Add("Authorization", "Bearer "+suite.accessToken)
 	req.Header.Add("Content-Type", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("Received non-200 response: %d", resp.StatusCode)
-	}
-	return resp, nil
+	return http.DefaultClient.Do(req)
 }
 
-func TestIssueRedeem(t *testing.T) {
-	issuerType := "test"
-	msg := "test message"
-
-	server := httptest.NewServer(handler)
-	defer server.Close()
-
+func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string) *crypto.PublicKey {
 	payload := fmt.Sprintf(`{"name":"%s", "max_tokens":100}`, issuerType)
-	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", server.URL)
-	_, err := request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", serverURL)
+	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
+	suite.Require().NoError(err, "Issuer creation must succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", server.URL, issuerType)
-	resp, err := request("GET", issuerURL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", serverURL, issuerType)
+	resp, err = suite.request("GET", issuerURL, nil)
+	suite.Require().NoError(err, "Issuer fetch must succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp IssuerResponse
 	err = json.Unmarshal(body, &issuerResp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Issuer fetch body unmarshal must succeed")
 
-	if issuerResp.PublicKey == nil {
-		t.Fatal("Public key was missing")
-	}
+	suite.Require().NotEqual(issuerResp.PublicKey, nil, "Public key was missing")
 
-	publicKey := issuerResp.PublicKey
+	return issuerResp.PublicKey
+}
 
+func (suite *ServerTestSuite) createToken(serverURL string, issuerType string, publicKey *crypto.PublicKey) *crypto.UnblindedToken {
 	token, err := crypto.RandomToken()
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Must be able to generate random token")
 
 	blindedToken := token.Blind()
 	blindedTokenText, err := blindedToken.MarshalText()
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Must be able to blind token")
 
-	payload = fmt.Sprintf(`{"blinded_tokens":["%s"]}}`, blindedTokenText)
-	issueURL := fmt.Sprintf("%s/v1/blindedToken/%s", server.URL, issuerType)
-	resp, err = request("POST", issueURL, bytes.NewBuffer([]byte(payload)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	payload := fmt.Sprintf(`{"blinded_tokens":["%s"]}}`, blindedTokenText)
+	issueURL := fmt.Sprintf("%s/v1/blindedToken/%s", serverURL, issuerType)
+	resp, err := suite.request("POST", issueURL, bytes.NewBuffer([]byte(payload)))
+	suite.Require().NoError(err, "Token signing must succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err = ioutil.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	body, err := ioutil.ReadAll(resp.Body)
+	suite.Require().NoError(err, "Token signing body read must succeed")
 
 	var decodedResp BlindedTokenIssueResponse
 	err = json.Unmarshal(body, &decodedResp)
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Token signing body unmarshal must succeed")
 
-	if decodedResp.BatchProof == nil || len(decodedResp.SignedTokens) != 1 {
-		t.Fatal("Batch proof or signed tokens not returned")
-	}
+	suite.Require().NotEqual(decodedResp.BatchProof, nil, "Batch proof was missing")
+	suite.Require().NotEqual(decodedResp.SignedTokens, 1, "Signed tokens was missing")
 
 	unblindedTokens, err := decodedResp.BatchProof.VerifyAndUnblind([]*crypto.Token{token}, []*crypto.BlindedToken{blindedToken}, decodedResp.SignedTokens, publicKey)
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Batch verification and token unblinding must succeed")
 
-	unblindedToken := unblindedTokens[0]
+	return unblindedTokens[0]
+}
 
+func (suite *ServerTestSuite) prepareRedemption(unblindedToken *crypto.UnblindedToken, msg string) (preimageText []byte, sigText []byte) {
 	vKey := unblindedToken.DeriveVerificationKey()
 
 	sig, err := vKey.Sign(msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sigText, err := sig.MarshalText()
-	if err != nil {
-		t.Fatal(err)
-	}
+	suite.Require().NoError(err, "Must be able to sign message")
+	sigText, err = sig.MarshalText()
+	suite.Require().NoError(err, "Must be able to marshal signature")
 
 	preimage := unblindedToken.Preimage()
-	preimageText, err := preimage.MarshalText()
-	if err != nil {
-		t.Fatal(err)
-	}
+	preimageText, err = preimage.MarshalText()
+	suite.Require().NoError(err, "Must be able to marshal preimage")
 
-	payload = fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
-	redeemURL := fmt.Sprintf("%s/v1/blindedToken/%s/redemption/", server.URL, issuerType)
+	return
+}
+func (suite *ServerTestSuite) attemptRedeem(serverURL string, preimageText []byte, sigText []byte, issuerType string, msg string) (*http.Response, error) {
+	payload := fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
+	redeemURL := fmt.Sprintf("%s/v1/blindedToken/%s/redemption/", serverURL, issuerType)
 
-	_, err = request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	return suite.request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
+}
+
+func (suite *ServerTestSuite) TestIssueRedeem() {
+	issuerType := "test"
+	msg := "test message"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuer(server.URL, issuerType)
+	unblindedToken := suite.createToken(server.URL, issuerType, publicKey)
+	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
+
+	resp, err := suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Assert().NoError(err, "Attempted redemption request should succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 }
