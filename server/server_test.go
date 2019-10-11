@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"testing"
 
 	"github.com/brave-intl/bat-go/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -23,6 +25,10 @@ type ServerTestSuite struct {
 	handler     http.Handler
 	accessToken string
 	srv         *Server
+}
+
+func TestServerTestSuite(t *testing.T) {
+	suite.Run(t, new(ServerTestSuite))
 }
 
 func (suite *ServerTestSuite) SetupSuite() {
@@ -104,14 +110,25 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string) 
 }
 
 func (suite *ServerTestSuite) createToken(serverURL string, issuerType string, publicKey *crypto.PublicKey) *crypto.UnblindedToken {
-	token, err := crypto.RandomToken()
-	suite.Require().NoError(err, "Must be able to generate random token")
+	return suite.createTokens(serverURL, issuerType, publicKey, 1)[0]
+}
+func (suite *ServerTestSuite) createTokens(serverURL string, issuerType string, publicKey *crypto.PublicKey, numTokens int) []*crypto.UnblindedToken {
+	tokens := make([]*crypto.Token, numTokens, numTokens)
+	blindedTokens := make([]*crypto.BlindedToken, numTokens, numTokens)
 
-	blindedToken := token.Blind()
-	blindedTokenText, err := blindedToken.MarshalText()
-	suite.Require().NoError(err, "Must be able to blind token")
+	for i := 0; i < numTokens; i++ {
+		token, err := crypto.RandomToken()
+		suite.Require().NoError(err, "Must be able to generate random token")
+		tokens[i] = token
 
-	payload := fmt.Sprintf(`{"blinded_tokens":["%s"]}}`, blindedTokenText)
+		blindedToken := token.Blind()
+		suite.Require().NoError(err, "Must be able to blind token")
+		blindedTokens[i] = blindedToken
+	}
+
+	blindedTokenText, err := json.Marshal(blindedTokens)
+
+	payload := fmt.Sprintf(`{"blinded_tokens":%s}}`, blindedTokenText)
 	issueURL := fmt.Sprintf("%s/v1/blindedToken/%s", serverURL, issuerType)
 	resp, err := suite.request("POST", issueURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err, "Token signing must succeed")
@@ -124,13 +141,13 @@ func (suite *ServerTestSuite) createToken(serverURL string, issuerType string, p
 	err = json.Unmarshal(body, &decodedResp)
 	suite.Require().NoError(err, "Token signing body unmarshal must succeed")
 
-	suite.Require().NotEqual(decodedResp.BatchProof, nil, "Batch proof was missing")
-	suite.Require().NotEqual(decodedResp.SignedTokens, 1, "Signed tokens was missing")
+	suite.Require().NotEqual(nil, decodedResp.BatchProof, "Batch proof was missing")
+	suite.Require().Equal(numTokens, len(decodedResp.SignedTokens), "Signed tokens were missing")
 
-	unblindedTokens, err := decodedResp.BatchProof.VerifyAndUnblind([]*crypto.Token{token}, []*crypto.BlindedToken{blindedToken}, decodedResp.SignedTokens, publicKey)
+	unblindedTokens, err := decodedResp.BatchProof.VerifyAndUnblind(tokens, blindedTokens, decodedResp.SignedTokens, publicKey)
 	suite.Require().NoError(err, "Batch verification and token unblinding must succeed")
 
-	return unblindedTokens[0]
+	return unblindedTokens
 }
 
 func (suite *ServerTestSuite) prepareRedemption(unblindedToken *crypto.UnblindedToken, msg string) (preimageText []byte, sigText []byte) {
@@ -166,6 +183,98 @@ func (suite *ServerTestSuite) TestIssueRedeem() {
 	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
 
 	resp, err := suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
-	suite.Assert().NoError(err, "Attempted redemption request should succeed")
-	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
+
+	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Attempted duplicate redemption request should fail")
+}
+
+func (suite *ServerTestSuite) attemptRedeemBulk(serverURL string, preimageTexts [][]byte, sigTexts [][]byte, issuerTypes []string, msg string) (*http.Response, error) {
+	numTokens := len(preimageTexts)
+	tokenTexts := make([]string, numTokens, numTokens)
+
+	for i := 0; i < numTokens; i++ {
+		tokenTexts[i] = fmt.Sprintf(`{"t":"%s", "signature":"%s", "issuer":"%s"}`, preimageTexts[i], sigTexts[i], issuerTypes[i])
+	}
+	payload := fmt.Sprintf(`{"tokens":[%s], "payload":"%s"}`, strings.Join(tokenTexts, ","), msg)
+	redeemURL := fmt.Sprintf("%s/v1/blindedToken/bulk/redemption/", serverURL)
+
+	return suite.request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
+}
+
+func (suite *ServerTestSuite) TestBulkIssueRedeem() {
+	issuerTypeA := "typeA"
+	issuerTypeB := "typeB"
+	msg := "test message"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKeyA := suite.createIssuer(server.URL, issuerTypeA)
+	publicKeyB := suite.createIssuer(server.URL, issuerTypeB)
+
+	unblindedTokenA := suite.createToken(server.URL, issuerTypeA, publicKeyA)
+	unblindedTokenB := suite.createToken(server.URL, issuerTypeB, publicKeyB)
+
+	preimageTextA, sigTextA := suite.prepareRedemption(unblindedTokenA, msg)
+	preimageTextB, sigTextB := suite.prepareRedemption(unblindedTokenB, msg)
+
+	resp, err := suite.attemptRedeemBulk(server.URL, [][]byte{preimageTextA, preimageTextB}, [][]byte{sigTextA, sigTextB}, []string{issuerTypeA, issuerTypeB}, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Bulk redeem of tokens with different issuers should succeed")
+
+	resp, err = suite.attemptRedeem(server.URL, preimageTextA, sigTextA, issuerTypeA, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Should not be able to individually redeem a bulk redeemed token")
+	resp, err = suite.attemptRedeem(server.URL, preimageTextB, sigTextB, issuerTypeB, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Should not be able to individually redeem a bulk redeemed token")
+
+	unblindedTokenA = suite.createToken(server.URL, issuerTypeA, publicKeyA)
+	unblindedTokenB = suite.createToken(server.URL, issuerTypeB, publicKeyB)
+
+	preimageTextA, sigTextA = suite.prepareRedemption(unblindedTokenA, msg)
+	preimageTextB, sigTextB = suite.prepareRedemption(unblindedTokenB, msg)
+
+	resp, err = suite.attemptRedeem(server.URL, preimageTextB, sigTextB, issuerTypeB, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Bulk redeem of single token should succeed")
+
+	resp, err = suite.attemptRedeemBulk(server.URL, [][]byte{preimageTextA, preimageTextB}, [][]byte{sigTextA, sigTextB}, []string{issuerTypeA, issuerTypeB}, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Bulk redeem of including token that was individually redeemed should fail")
+
+	resp, err = suite.attemptRedeem(server.URL, preimageTextA, sigTextA, issuerTypeA, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Bulk redeem should not spend any tokens if not possible to spend all tokens")
+}
+
+func (suite *ServerTestSuite) TestLargeBulkIssueRedeem() {
+	numTokens := 400
+	issuerType := "type"
+	msg := "test message"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuer(server.URL, issuerType)
+
+	unblindedTokens := suite.createTokens(server.URL, issuerType, publicKey, numTokens)
+
+	preimageTexts := make([][]byte, numTokens, numTokens)
+	sigTexts := make([][]byte, numTokens, numTokens)
+	issuerTypes := make([]string, numTokens, numTokens)
+
+	for i := 0; i < numTokens; i++ {
+		preimageText, sigText := suite.prepareRedemption(unblindedTokens[i], msg)
+		preimageTexts[i] = preimageText
+		sigTexts[i] = sigText
+		issuerTypes[i] = issuerType
+	}
+
+	resp, err := suite.attemptRedeemBulk(server.URL, preimageTexts, sigTexts, issuerTypes, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Bulk redeem of many tokens should succeed")
 }
