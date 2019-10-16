@@ -113,8 +113,8 @@ func (suite *ServerTestSuite) createToken(serverURL string, issuerType string, p
 	return suite.createTokens(serverURL, issuerType, publicKey, 1)[0]
 }
 func (suite *ServerTestSuite) createTokens(serverURL string, issuerType string, publicKey *crypto.PublicKey, numTokens int) []*crypto.UnblindedToken {
-	tokens := make([]*crypto.Token, numTokens, numTokens)
-	blindedTokens := make([]*crypto.BlindedToken, numTokens, numTokens)
+	tokens := make([]*crypto.Token, numTokens)
+	blindedTokens := make([]*crypto.BlindedToken, numTokens)
 
 	for i := 0; i < numTokens; i++ {
 		token, err := crypto.RandomToken()
@@ -127,6 +127,7 @@ func (suite *ServerTestSuite) createTokens(serverURL string, issuerType string, 
 	}
 
 	blindedTokenText, err := json.Marshal(blindedTokens)
+	suite.Require().NoError(err, "Must be able to marshal blinded tokens")
 
 	payload := fmt.Sprintf(`{"blinded_tokens":%s}}`, blindedTokenText)
 	issueURL := fmt.Sprintf("%s/v1/blindedToken/%s", serverURL, issuerType)
@@ -193,7 +194,7 @@ func (suite *ServerTestSuite) TestIssueRedeem() {
 
 func (suite *ServerTestSuite) attemptRedeemBulk(serverURL string, preimageTexts [][]byte, sigTexts [][]byte, issuerTypes []string, msg string) (*http.Response, error) {
 	numTokens := len(preimageTexts)
-	tokenTexts := make([]string, numTokens, numTokens)
+	tokenTexts := make([]string, numTokens)
 
 	for i := 0; i < numTokens; i++ {
 		tokenTexts[i] = fmt.Sprintf(`{"t":"%s", "signature":"%s", "issuer":"%s"}`, preimageTexts[i], sigTexts[i], issuerTypes[i])
@@ -263,9 +264,9 @@ func (suite *ServerTestSuite) TestLargeBulkIssueRedeem() {
 
 	unblindedTokens := suite.createTokens(server.URL, issuerType, publicKey, numTokens)
 
-	preimageTexts := make([][]byte, numTokens, numTokens)
-	sigTexts := make([][]byte, numTokens, numTokens)
-	issuerTypes := make([]string, numTokens, numTokens)
+	preimageTexts := make([][]byte, numTokens)
+	sigTexts := make([][]byte, numTokens)
+	issuerTypes := make([]string, numTokens)
 
 	for i := 0; i < numTokens; i++ {
 		preimageText, sigText := suite.prepareRedemption(unblindedTokens[i], msg)
