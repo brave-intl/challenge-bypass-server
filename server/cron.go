@@ -1,8 +1,6 @@
 package server
 
 import (
-	"time"
-
 	"github.com/robfig/cron/v3"
 )
 
@@ -17,17 +15,4 @@ func (c *Server) SetupCronTasks() {
 		panic(err)
 	}
 	cron.Start()
-}
-
-func jobWorker(context *Server, job func(*Server) (bool, error), duration time.Duration) {
-	ticker := time.NewTicker(duration)
-	for {
-		attempted, err := job(context)
-		if err != nil {
-			panic(err)
-		}
-		if !attempted || err != nil {
-			<-ticker.C
-		}
-	}
 }
