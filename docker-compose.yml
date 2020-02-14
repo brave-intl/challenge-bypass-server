@@ -13,6 +13,9 @@ services:
       - "POSTGRES_PASSWORD=password"
     networks:
       - cb
+  dynamodb:
+    container_name: dynamodb
+    image: amazon/dynamodb-local:1.12.20
   challenge-bypass:
     container_name: challenge-bypass
     image: challenge-bypass-builder 

@@ -201,7 +201,11 @@ func (c *Server) rotateIssuers() error {
 
 	tx := c.db.MustBegin()
 
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil {
+			fmt.Println(err)
+		}
+	}()
 
 	fetchedIssuers := []issuer{}
 	err := tx.Select(
