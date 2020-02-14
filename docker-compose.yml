@@ -15,7 +15,11 @@ services:
       - cb
   dynamodb:
     container_name: dynamodb
-    image: amazon/dynamodb-local:1.12.20
+    image: amazon/dynamodb-local:1.12.0
+    networks: 
+      - cb
+    ports: 
+      - "8000:8000"
   challenge-bypass:
     container_name: challenge-bypass
     image: challenge-bypass-builder 
@@ -28,8 +32,10 @@ services:
     environment:
       - "SENTRY_DSN"
       - "DATABASE_URL=postgres://btokens:password@postgres/btokens?sslmode=disable"
+      - "DYNAMODB_ENDPOINT=http://dynamodb:8000"
     depends_on:
       - postgres
+      - dynamodb
     networks:
       - cb
 

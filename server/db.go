@@ -28,6 +28,7 @@ type DbConfig struct {
 	MaxConnection           int           `json:"maxConnection"`
 	DefaultDaysBeforeExpiry int           `json:"DefaultDaysBeforeExpiry"`
 	DefaultIssuerValidDays  int           `json:"DefaultIssuerValidDays"`
+	DynamodbEndpoint        string        `json:"DynamodbEndpoint"`
 }
 
 type issuer struct {

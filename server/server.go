@@ -67,6 +67,10 @@ func (c *Server) InitDbConfig() error {
 		conf.ConnectionURI = os.Getenv("DATABASE_URL")
 	}
 
+	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
+		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
+	}
+
 	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
 		if count, err := strconv.Atoi(maxConnection); err == nil {
 			conf.MaxConnection = count

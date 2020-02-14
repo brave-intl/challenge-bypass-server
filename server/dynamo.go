@@ -13,7 +13,8 @@ func (c *Server) initDynamo() {
 	}))
 
 	svc := dynamodb.New(sess, &aws.Config{
-		Region: aws.String("us-west-2"),
+		Region:   aws.String("us-west-2"),
+		Endpoint: aws.String(c.dbConfig.DynamodbEndpoint),
 	})
 
 	c.dynamo = svc
