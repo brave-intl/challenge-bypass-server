@@ -7,3 +7,5 @@ ALTER TABLE issuers ADD COLUMN rotated_at timestamp;
 ALTER TABLE issuers DROP CONSTRAINT issuers_pkey;
 ALTER TABLE issuers ADD PRIMARY KEY (id);
 ALTER TABLE issuers ADD COLUMN version integer DEFAULT 1;
+
+DROP INDEX CONCURRENTLY IF EXISTS redemptions_type;
