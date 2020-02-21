@@ -23,7 +23,7 @@ func (c *Server) initDynamo() {
 
 func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, error) {
 	input := &dynamodb.GetItemInput{
-		TableName: aws.String("redemption"),
+		TableName: aws.String("redemptions"),
 		Key: map[string]*dynamodb.AttributeValue{
 			"issuerId": {
 				S: aws.String(issuer.ID),
@@ -66,7 +66,7 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimageTxt []byte, payload strin
 	input := &dynamodb.PutItemInput{
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(issuerId) AND attribute_not_exists(id)"),
-		TableName:           aws.String("redemption"),
+		TableName:           aws.String("redemptions"),
 	}
 
 	_, err = c.dynamo.PutItem(input)
