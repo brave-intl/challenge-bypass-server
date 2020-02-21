@@ -13,8 +13,9 @@ func (c *Server) initDynamo() {
 	}))
 
 	svc := dynamodb.New(sess, &aws.Config{
-		Region:   aws.String("us-west-2"),
-		Endpoint: aws.String(c.dbConfig.DynamodbEndpoint),
+		Region:                        aws.String("us-west-2"),
+		Endpoint:                      aws.String(c.dbConfig.DynamodbEndpoint),
+		CredentialsChainVerboseErrors: aws.Bool(true),
 	})
 
 	c.dynamo = svc
