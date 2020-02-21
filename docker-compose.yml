@@ -35,7 +35,7 @@ services:
       - "DYNAMODB_ENDPOINT=http://dynamodb:8000"
       - AWS_ACCESS_KEY_ID=dummy
       - AWS_SECRET_ACCESS_KEY=dummy
-      - AWS_REGION=us-east-1
+      - AWS_REGION=us-west-2
     depends_on:
       - postgres
       - dynamodb
