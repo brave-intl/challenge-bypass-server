@@ -5,7 +5,6 @@ RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
 RUN git checkout 1.0.0-pre.1
 RUN cargo build --target=x86_64-unknown-linux-musl --features nightly
-
 FROM golang:1.13.1 as go_builder
 RUN apt-get update && apt-get install -y postgresql-client
 RUN go get -u github.com/golangci/golangci-lint/cmd/golangci-lint
@@ -18,7 +17,6 @@ COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/debug/libchalleng
 COPY . .
 RUN go build --ldflags '-extldflags "-static"' -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
-
 FROM alpine:3.6
 COPY --from=go_builder /src/challenge-bypass-server /bin/
 COPY migrations /src/migrations
