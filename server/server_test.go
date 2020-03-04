@@ -106,9 +106,8 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string) 
 
 	suite.Require().NotEqual(issuerResp.PublicKey, nil, "Public key was missing")
 
-	if issuerResp.ID == "" {
-		t.Fatal("ID was missing")
-	}
+	suite.Require().NotEqual(issuerResp.ID, "", "ID was missing")
+
 	return issuerResp.PublicKey
 }
 
