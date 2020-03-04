@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"net/http"
@@ -16,14 +17,33 @@ import (
 	chiware "github.com/go-chi/chi/middleware"
 	"github.com/jmoiron/sqlx"
 	"github.com/pressly/lg"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sirupsen/logrus"
 )
 
 var (
-	maxRequestSize = int64(20 * 1024) // ~10kB is expected size for 100*base64([64]byte) + ~framing
+	Version        = "dev"
+	maxRequestSize = int64(1024 * 1024) // 1MiB
+
+	ErrNoSecretKey         = errors.New("server config does not contain a key")
+	ErrRequestTooLarge     = errors.New("request too large to process")
+	ErrUnrecognizedRequest = errors.New("received unrecognized request type")
 )
 
-// Server is the main app service
+// init - Register Metrics for Server
+func init() {
+	// DB
+	prometheus.MustRegister(fetchIssuerCounter)
+	prometheus.MustRegister(createIssuerCounter)
+	prometheus.MustRegister(redeemTokenCounter)
+	prometheus.MustRegister(fetchRedemptionCounter)
+	// DB latency
+	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
+	prometheus.MustRegister(createIssuerDBDuration)
+	prometheus.MustRegister(createRedemptionDBDuration)
+	prometheus.MustRegister(fetchRedemptionDBDuration)
+}
+
 type Server struct {
 	ListenPort   int    `json:"listen_port,omitempty"`
 	MaxTokens    int    `json:"max_tokens,omitempty"`

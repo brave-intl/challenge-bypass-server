@@ -1,18 +1,20 @@
 package server
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Why?
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // CachingConfig is how long data is cached
@@ -99,6 +101,19 @@ func (c *Server) initDb() {
 	db.SetMaxOpenConns(cfg.MaxConnection)
 	c.db = db
 
+	// Database Telemetry (open connections, etc)
+	// Create a new collector, the name will be used as a label on the metrics
+	collector := metrics.NewStatsCollector("challenge_bypass_db", db)
+	// Register it with Prometheus
+	err = prometheus.Register(collector)
+
+	if ae, ok := err.(prometheus.AlreadyRegisteredError); ok {
+		// take old collector, and add the new db
+		if sc, ok := ae.ExistingCollector.(*metrics.StatsCollector); ok {
+			sc.AddStatsGetter("challenge_bypass_db", db)
+		}
+	}
+
 	driver, err := postgres.WithInstance(c.db.DB, &postgres.Config{})
 	if err != nil {
 		panic(err)
@@ -122,7 +137,62 @@ func (c *Server) initDb() {
 	}
 }
 
+var (
+	fetchIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "fetch_issuer_count",
+		Help: "Number of fetch issuer attempts",
+	})
+
+	createIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "create_issuer_count",
+		Help: "Number of create issuer attempts",
+	})
+
+	redeemTokenCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "redeem_token_count",
+		Help: "Number of calls to redeem token",
+	})
+
+	fetchRedemptionCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "fetch_redemption_count",
+		Help: "Number of calls to fetch redemption",
+	})
+
+	// Timers for SQL calls
+	latencyBuckets = []float64{.25, .5, 1, 2.5, 5, 10}
+
+	fetchIssuerByTypeDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "db_fetch_issuer_by_type_duration",
+		Help:    "select issuer by type sql call duration",
+		Buckets: latencyBuckets,
+	})
+
+	createIssuerDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "db_create_issuer_duration",
+		Help:    "create issuer sql call duration",
+		Buckets: latencyBuckets,
+	})
+
+	createRedemptionDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "db_create_redemption_duration",
+		Help:    "create redemption sql call duration",
+		Buckets: latencyBuckets,
+	})
+
+	fetchRedemptionDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "db_fetch_redemption_duration",
+		Help:    "fetch redemption sql call duration",
+		Buckets: latencyBuckets,
+	})
+)
+
+func incrementCounter(c prometheus.Counter) {
+	c.Add(1)
+}
+
 func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
+	defer incrementCounter(fetchIssuerCounter)
+
 	if c.caches != nil {
 		if cached, found := c.caches["issuer"].Get(issuerID); found {
 			return cached.(*Issuer), nil
@@ -130,6 +200,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	}
 
 	fetchedIssuer := issuer{}
+	queryTimer := prometheus.NewTimer(fetchIssuerByTypeDBDuration)
 	err := c.db.Get(&fetchedIssuer, `
 	    SELECT * FROM issuers
 	    WHERE id=$1
@@ -143,6 +214,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	if err != nil {
 		return nil, err
 	}
+	queryTimer.ObserveDuration()
 
 	issuer.SigningKey = &crypto.SigningKey{}
 	err = issuer.SigningKey.UnmarshalText(fetchedIssuer.SigningKey)
@@ -272,6 +344,7 @@ func (c *Server) rotateIssuers() error {
 }
 
 func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.Time) error {
+	defer incrementCounter(createIssuerCounter)
 	if maxTokens == 0 {
 		maxTokens = 40
 	}
@@ -286,6 +359,7 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 		return err
 	}
 
+	queryTimer := prometheus.NewTimer(createIssuerDBDuration)
 	rows, err := c.db.Query(
 		`INSERT INTO issuers(issuer_type, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, 2)`,
 		issuerType,
@@ -296,6 +370,7 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 	if err != nil {
 		return err
 	}
+	queryTimer.ObserveDuration()
 
 	if c.caches != nil {
 		if _, found := c.caches["issuers"].Get(issuerType); found {
@@ -307,45 +382,54 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 	return nil
 }
 
+type Queryable interface {
+	Query(query string, args ...interface{}) (*sql.Rows, error)
+}
+
 func (c *Server) redeemToken(issuer *Issuer, preimage *crypto.TokenPreimage, payload string) error {
+	defer incrementCounter(redeemTokenCounter)
+	if issuer.Version == 1 {
+		return redeemTokenWithDB(c.db, issuer.IssuerType, preimage, payload)
+	} else if issuer.Version == 2 {
+		return c.redeemTokenV2(issuer, preimage, payload)
+	}
+	return errors.New("Wrong Issuer Version")
+}
+
+func redeemTokenWithDB(db Queryable, issuer string, preimage *crypto.TokenPreimage, payload string) error {
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		return err
 	}
 
-	if issuer.Version == 1 {
-		rows, err := c.db.Query(
-			`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, issuer.IssuerType, payload)
-		if err != nil {
-			if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
-				return errDuplicateRedemption
-			}
-			return err
-		}
-		defer rows.Close()
-		return nil
-	}
-
-	err = c.redeemTokenV2(issuer, preimageTxt, payload)
-
+	queryTimer := prometheus.NewTimer(createRedemptionDBDuration)
+	rows, err := db.Query(
+		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, issuer, payload)
 	if err != nil {
-		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
+		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
 			return errDuplicateRedemption
 		}
 		return err
 	}
+	defer rows.Close()
+
+	queryTimer.ObserveDuration()
 	return nil
 }
 
 func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
+	defer incrementCounter(fetchRedemptionCounter)
 	if c.caches != nil {
 		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, ID)); found {
 			return cached.(*Redemption), nil
 		}
 	}
 
+	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.db.Query(
 		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
+
+	queryTimer.ObserveDuration()
 
 	if err != nil {
 		return nil, err
