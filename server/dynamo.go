@@ -2,9 +2,11 @@ package server
 
 import (
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 )
 
 func (c *Server) initDynamo() {
@@ -50,7 +52,8 @@ func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, er
 	return &redemption, nil
 }
 
-func (c *Server) redeemTokenV2(issuer *Issuer, preimageTxt []byte, payload string) error {
+func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, payload string) error {
+	preimageTxt, err := preimage.MarshalText()
 	redemption := RedemptionV2{
 		IssuerID: issuer.ID,
 		ID:       string(preimageTxt),
@@ -71,6 +74,9 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimageTxt []byte, payload strin
 
 	_, err = c.dynamo.PutItem(input)
 	if err != nil {
+		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
+			return errDuplicateRedemption
+		}
 		return err
 	}
 
