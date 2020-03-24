@@ -1,6 +1,8 @@
 package server
 
 import (
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -27,10 +29,8 @@ func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, er
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String("redemptions"),
 		Key: map[string]*dynamodb.AttributeValue{
-			"issuerId": {
-				S: aws.String(issuer.ID),
-			}, "id": {
-				S: aws.String(ID),
+			"id": {
+				S: aws.String(ID + issuer.ID),
 			},
 		},
 	}
@@ -46,7 +46,7 @@ func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, er
 		panic(err)
 	}
 
-	if redemption.IssuerID == "" {
+	if redemption.IssuerID == "" || redemption.ID == "" {
 		return nil, errRedemptionNotFound
 	}
 	return &redemption, nil
@@ -55,10 +55,11 @@ func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, er
 func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, payload string) error {
 	preimageTxt, err := preimage.MarshalText()
 	redemption := RedemptionV2{
-		IssuerID: issuer.ID,
-		ID:       string(preimageTxt),
-		Payload:  payload,
-		TTL:      issuer.ExpiresAt.Unix(),
+		IssuerID:  issuer.ID,
+		ID:        string(preimageTxt) + issuer.ID,
+		Payload:   payload,
+		Timestamp: time.Now(),
+		TTL:       issuer.ExpiresAt.Unix(),
 	}
 
 	av, err := dynamodbattribute.MarshalMap(redemption)
@@ -68,7 +69,7 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, p
 
 	input := &dynamodb.PutItemInput{
 		Item:                av,
-		ConditionExpression: aws.String("attribute_not_exists(issuerId) AND attribute_not_exists(id)"),
+		ConditionExpression: aws.String("attribute_not_exists(id)"),
 		TableName:           aws.String("redemptions"),
 	}
 
