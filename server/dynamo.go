@@ -54,6 +54,10 @@ func (c *Server) fetchRedemptionV2(issuer *Issuer, ID string) (*RedemptionV2, er
 
 func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, payload string) error {
 	preimageTxt, err := preimage.MarshalText()
+	if err != nil {
+		return err
+	}
+
 	redemption := RedemptionV2{
 		IssuerID:  issuer.ID,
 		ID:        string(preimageTxt) + issuer.ID,
