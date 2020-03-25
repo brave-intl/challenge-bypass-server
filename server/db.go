@@ -68,6 +68,7 @@ type Redemption struct {
 type RedemptionV2 struct {
 	IssuerID  string    `json:"issuerId"`
 	ID        string    `json:"id"`
+	PreImage  string    `json:"preImage"`
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`

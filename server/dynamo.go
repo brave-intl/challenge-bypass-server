@@ -78,6 +78,7 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, p
 	redemption := RedemptionV2{
 		IssuerID:  issuer.ID,
 		ID:        id.String(),
+		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
 		TTL:       issuer.ExpiresAt.Unix(),
@@ -91,7 +92,7 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, p
 
 	input := &dynamodb.PutItemInput{
 		Item:                av,
-		ConditionExpression: aws.String("attribute_not_exists(id) and attribute_not_exists(issuerId)"),
+		ConditionExpression: aws.String("attribute_not_exists(id)"),
 		TableName:           aws.String("redemptions"),
 	}
 
