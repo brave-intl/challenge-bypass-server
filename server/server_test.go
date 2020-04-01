@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/brave-intl/bat-go/middleware"
@@ -192,17 +191,4 @@ func (suite *ServerTestSuite) TestIssueRedeem() {
 	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Attempted duplicate redemption request should fail")
-}
-
-func (suite *ServerTestSuite) attemptRedeemBulk(serverURL string, preimageTexts [][]byte, sigTexts [][]byte, issuerTypes []string, msg string) (*http.Response, error) {
-	numTokens := len(preimageTexts)
-	tokenTexts := make([]string, numTokens)
-
-	for i := 0; i < numTokens; i++ {
-		tokenTexts[i] = fmt.Sprintf(`{"t":"%s", "signature":"%s", "issuer":"%s"}`, preimageTexts[i], sigTexts[i], issuerTypes[i])
-	}
-	payload := fmt.Sprintf(`{"tokens":[%s], "payload":"%s"}`, strings.Join(tokenTexts, ","), msg)
-	redeemURL := fmt.Sprintf("%s/v1/blindedToken/bulk/redemption/", serverURL)
-
-	return suite.request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
 }
