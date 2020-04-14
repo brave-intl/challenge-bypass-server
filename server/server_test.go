@@ -227,7 +227,9 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	server := httptest.NewServer(suite.handler)
 	defer server.Close()
 
-	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, time.Now().AddDate(0, 0, 1))
+	expiresAt := time.Now().AddDate(0, 0, 1)
+	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, expiresAt)
+	issuer, _ := suite.srv.getLatestIssuer(issuerType)
 
 	unblindedToken := suite.createToken(server.URL, issuerType, publicKey)
 	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
@@ -241,13 +243,19 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 
 	unblindedToken = suite.createToken(server.URL, issuerType, publicKey)
 	preimageText, sigText = suite.prepareRedemption(unblindedToken, msg)
-	suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE issuer_type=$2`, time.Now().AddDate(0, 0, -1), issuerType)
+	unblindedToken2 := suite.createToken(server.URL, issuerType, publicKey)
+	preimageText2, sigText2 := suite.prepareRedemption(unblindedToken2, msg)
 	suite.srv.rotateIssuers()
+	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Assert().NoError(err, "HTTP Request should complete")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
+
+	suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
 	issuers, err := suite.srv.fetchIssuers(issuerType)
 	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
-	issuer, _ := suite.srv.getLatestIssuer(issuerType)
+	issuer, _ = suite.srv.getLatestIssuer(issuerType)
 
-	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 
