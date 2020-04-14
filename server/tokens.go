@@ -100,7 +100,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		var verified = false
 		var verifiedIssuer = &Issuer{}
 		for _, issuer := range *issuers {
-			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+			if issuer.ExpiresAt.IsZero() != true && issuer.ExpiresAt.Before(time.Now()) {
 				continue
 			}
 			if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload, []*crypto.SigningKey{issuer.SigningKey}); err != nil {
