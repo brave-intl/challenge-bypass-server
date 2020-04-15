@@ -245,13 +245,13 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	preimageText, sigText = suite.prepareRedemption(unblindedToken, msg)
 	unblindedToken2 := suite.createToken(server.URL, issuerType, publicKey)
 	preimageText2, sigText2 := suite.prepareRedemption(unblindedToken2, msg)
-	suite.srv.rotateIssuers()
-	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	_ = suite.srv.rotateIssuers()
+	resp, _ = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
-	issuers, err := suite.srv.fetchIssuers(issuerType)
+	_, _ = suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	issuers, _ := suite.srv.fetchIssuers(issuerType)
 	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
 	issuer, _ = suite.srv.getLatestIssuer(issuerType)
 
