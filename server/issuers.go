@@ -79,6 +79,20 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 	return nil
 }
 
+func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	defer closers.Panic(r.Body)
+
+	issuers, appErr := c.fetchAllIssuers()
+	if appErr != nil {
+		return appErr
+	}
+	err := json.NewEncoder(w).Encode(issuers)
+	if err != nil {
+		panic(err)
+	}
+	return nil
+}
+
 func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	log := lg.Log(r.Context())
 
@@ -117,5 +131,6 @@ func (c *Server) issuerRouter() chi.Router {
 	}
 	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuer", handlers.AppHandler(c.issuerHandler)))
 	r.Method("POST", "/", middleware.InstrumentHandler("CreateIssuer", handlers.AppHandler(c.issuerCreateHandler)))
+	r.Method("GET", "/", middleware.InstrumentHandler("GetAllIssuers", handlers.AppHandler(c.issuerGetAllHandler)))
 	return r
 }
