@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -109,6 +110,24 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string) 
 	suite.Require().NotEqual(issuerResp.ID, "", "ID was missing")
 
 	return issuerResp.PublicKey
+}
+
+func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
+	getAllIssuersURL := fmt.Sprintf("%s/v1/issuer/", serverURL)
+	resp, err := suite.request("GET", getAllIssuersURL, nil)
+	suite.Require().NoError(err, "Getting alll Issuers must succeed")
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
+
+	body, err := ioutil.ReadAll(resp.Body)
+	suite.Require().NoError(err, "Issuer fetch body read must succeed")
+
+	var issuerResp []issuerResponse
+	err = json.Unmarshal(body, &issuerResp)
+	suite.Require().NoError(err, "Issuer fetch body unmarshal must succeed")
+
+	suite.Require().NotEqual(issuerResp[0].ID, "", "ID was missing")
+
+	return issuerResp
 }
 
 func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issuerType string, expiresAt time.Time) *crypto.PublicKey {
@@ -218,6 +237,19 @@ func (suite *ServerTestSuite) TestIssueRedeem() {
 	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "Attempted duplicate redemption request should fail")
+}
+
+func (suite *ServerTestSuite) TestIssuerGetAll() {
+	issuerType := "test2"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	expiresAt := time.Now().AddDate(0, 0, 1)
+	suite.createIssuerWithExpiration(server.URL, issuerType, expiresAt)
+	issuers := suite.getAllIssuers(server.URL)
+
+	suite.Assert().Equal(reflect.ValueOf(issuers).Len(), 1, "Exactly one issuer")
 }
 
 func (suite *ServerTestSuite) TestIssueRedeemV2() {
