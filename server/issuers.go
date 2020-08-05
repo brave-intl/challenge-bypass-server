@@ -84,7 +84,11 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 
 	issuers, appErr := c.fetchAllIssuers()
 	if appErr != nil {
-		return appErr
+		return &handlers.AppError{
+			Error:   appErr,
+			Message: "Error getting issuers",
+			Code:    500,
+		}
 	}
 	err := json.NewEncoder(w).Encode(issuers)
 	if err != nil {

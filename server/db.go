@@ -280,10 +280,6 @@ func (c *Server) fetchAllIssuers() (*[]Issuer, error) {
 		return nil, err
 	}
 
-	if len(fetchedIssuers) < 1 {
-		return nil, errIssuerNotFound
-	}
-
 	issuers := []Issuer{}
 	for _, fetchedIssuer := range fetchedIssuers {
 		issuer, err := convertDBIssuer(fetchedIssuer)
