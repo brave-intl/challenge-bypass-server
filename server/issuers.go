@@ -18,6 +18,7 @@ type issuerResponse struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
 	PublicKey *crypto.PublicKey `json:"public_key"`
+	ExpiresAt time.Time         `json:"expires_at"`
 }
 
 type issuerCreateRequest struct {
@@ -70,7 +71,7 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 		if appErr != nil {
 			return appErr
 		}
-		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey()})
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), issuer.ExpiresAt})
 		if err != nil {
 			panic(err)
 		}
@@ -90,7 +91,11 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 			Code:    500,
 		}
 	}
-	err := json.NewEncoder(w).Encode(issuers)
+	respIssuers := []issuerResponse{}
+	for _, issuer := range *issuers {
+		respIssuers = append(respIssuers, issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), issuer.ExpiresAt})
+	}
+	err := json.NewEncoder(w).Encode(respIssuers)
 	if err != nil {
 		panic(err)
 	}
