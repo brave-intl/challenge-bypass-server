@@ -126,6 +126,8 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	suite.Require().NoError(err, "Issuer fetch body unmarshal must succeed")
 
 	suite.Require().NotEqual(issuerResp[0].ID, "", "ID was missing")
+	suite.Require().NotEqual(issuerResp[0].Name, "", "Name was missing")
+	suite.Require().NotEqual(issuerResp[0].PublicKey, "", "Public Key was missing")
 
 	return issuerResp
 }
