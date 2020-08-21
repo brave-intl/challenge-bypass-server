@@ -26,7 +26,6 @@ services:
       - "PPROF_ENABLE"
       - "PPROF_PORT"
       - "SENTRY_DSN"
-      - "SENTRY_DSN"
       - "DATABASE_URL=postgres://btokens:password@postgres/btokens?sslmode=disable"
     depends_on:
       - postgres
