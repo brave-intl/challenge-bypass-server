@@ -13,7 +13,7 @@ docker-test:
 	&& go test ./..."
 
 docker-lint:
-	golangci-lint run
+	docker-compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
 
 docker:
 	docker build -t brave/challenge-bypass:$$(git rev-parse --short HEAD) .
