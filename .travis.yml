@@ -1,4 +1,6 @@
-language: generic
+language: go
+go:
+- "1.13.1"
 os: linux
 services: docker
 script:
