@@ -65,6 +65,8 @@ func main() {
 		}()
 	}
 
+	srv.SetupCronTasks()
+
 	err = srv.ListenAndServe(serverCtx, logger)
 
 	if err != nil {
