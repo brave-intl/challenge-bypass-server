@@ -52,7 +52,7 @@ func main() {
 	logger.WithFields(logrus.Fields{"prefix": "main"}).Info("Starting server")
 
 	// add profiling flag to enable profiling routes
-	if os.Getenv("PPROF_ENABLED") != "" {
+	if os.Getenv("PPROF_ENABLE") != "" {
 		var addr = ":6061"
 		if os.Getenv("PPROF_PORT") != "" {
 			addr = os.Getenv("PPROF_PORT")
