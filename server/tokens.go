@@ -18,6 +18,11 @@ type blindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
 }
 
+type markedBlindedTokenIssueRequest struct {
+	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
+	IssuerCohort int `json:"issuer_cohort"`
+}
+
 type blindedTokenIssueResponse struct {
 	BatchProof   *crypto.BatchDLEQProof `json:"batch_proof"`
 	SignedTokens []*crypto.SignedToken  `json:"signed_tokens"`
@@ -278,5 +283,16 @@ func (c *Server) tokenRouter() chi.Router {
 	r.Method(http.MethodPost, "/{type}/redemption/", middleware.InstrumentHandler("RedeemTokens", handlers.AppHandler(c.blindedTokenRedeemHandler)))
 	r.Method(http.MethodGet, "/{id}/redemption/{tokenId}", middleware.InstrumentHandler("CheckToken", handlers.AppHandler(c.blindedTokenRedemptionHandler)))
 	r.Method(http.MethodPost, "/bulk/redemption/", middleware.InstrumentHandler("BulkRedeemTokens", handlers.AppHandler(c.blindedTokenBulkRedeemHandler)))
+	return r
+}
+
+// New end point to generated marked tokens
+func (c *Server) markedTokenRouter() chi.Router {
+	r := chi.NewRouter()
+	if os.Getenv("ENV") == "production" {
+		r.Use(middleware.SimpleTokenAuthorizedOnly)
+	}
+	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.blindedTokenIssuerHandler)))
+	//r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueMarkedTokens", handlers.AppHandler(c.markedBlindedTokenIssuerHandler)))
 	return r
 }

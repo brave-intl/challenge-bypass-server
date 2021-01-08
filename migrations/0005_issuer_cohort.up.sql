@@ -1,0 +1,1 @@
+ALTER TABLE issuers ADD COLUMN issuer_cohort integer DEFAULT 1;

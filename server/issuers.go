@@ -23,6 +23,7 @@ type issuerResponse struct {
 
 type issuerCreateRequest struct {
 	Name      string     `json:"name"`
+	Cohort    int 	 `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }
@@ -129,7 +130,39 @@ func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *ha
 		}
 	}
 
-	if err := c.createIssuer(req.Name, req.MaxTokens, req.ExpiresAt); err != nil {
+	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
+		log.Errorf("%s", err)
+		return &handlers.AppError{
+			Error:   err,
+			Message: "Could not create new issuer",
+			Code:    500,
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+	return nil
+}
+
+// issuerCreateHandlerNew handles the new requests (maybe can be the same as the other)
+func (c *Server) issuerCreateHandlerNew(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	log := lg.Log(r.Context())
+
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
+	var req issuerCreateRequest
+	if err := decoder.Decode(&req); err != nil {
+		return handlers.WrapError("Could not parse the request body", err)
+	}
+
+	if req.ExpiresAt != nil {
+		if req.ExpiresAt.Before(time.Now()) {
+			return &handlers.AppError{
+				Message: "Expiration time has past",
+				Code:    400,
+			}
+		}
+	}
+
+	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		log.Errorf("%s", err)
 		return &handlers.AppError{
 			Error:   err,
