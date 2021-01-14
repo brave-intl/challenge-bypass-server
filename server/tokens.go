@@ -18,9 +18,9 @@ type blindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
 }
 
-type markedBlindedTokenIssueRequest struct {
+type newBlindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
-	IssuerCohort int `json:"issuer_cohort"`
+	IssuerCohort int `json:"cohort"`
 }
 
 type blindedTokenIssueResponse struct {
@@ -34,6 +34,10 @@ type blindedTokenRedeemRequest struct {
 	Signature     *crypto.VerificationSignature `json:"signature"`
 }
 
+type blindedTokenRedeemResponse struct {
+	Cohort int `json:"cohort"`
+}
+
 type BlindedTokenRedemptionInfo struct {
 	TokenPreimage *crypto.TokenPreimage         `json:"t"`
 	Signature     *crypto.VerificationSignature `json:"signature"`
@@ -45,9 +49,56 @@ type BlindedTokenBulkRedeemRequest struct {
 	Tokens  []BlindedTokenRedemptionInfo `json:"tokens"`
 }
 
+func (c *Server) newBlindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
+
+		var request newBlindedTokenIssueRequest
+
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
+			return handlers.WrapError("Could not parse the request body", err)
+		}
+
+		if request.BlindedTokens == nil {
+			return &handlers.AppError{
+				Message: "Empty request",
+				Code:    http.StatusBadRequest,
+			}
+		}
+
+		if request.IssuerCohort != 0 && request.IssuerCohort != 1  {
+			return &handlers.AppError{
+				Message: "Not supported Cohort",
+				Code: http.StatusBadRequest,
+			}
+		}
+
+		issuer, appErr := c.getLatestIssuer(issuerType, request.IssuerCohort)
+		if appErr != nil {
+			return appErr
+		}
+
+
+		signedTokens, proof, err := btd.ApproveTokens(request.BlindedTokens, issuer.SigningKey)
+		if err != nil {
+			return &handlers.AppError{
+				Error:   err,
+				Message: "Could not approve new tokens",
+				Code:    http.StatusInternalServerError,
+			}
+		}
+
+		err = json.NewEncoder(w).Encode(blindedTokenIssueResponse{proof, signedTokens})
+		if err != nil {
+			panic(err)
+		}
+	}
+	return nil
+}
+
+// Old endpoint, that always handles tokens with cohort = 1
 func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType)
+		issuer, appErr := c.getLatestIssuer(issuerType, 1)
 		if appErr != nil {
 			return appErr
 		}
@@ -104,6 +155,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 
 		var verified = false
 		var verifiedIssuer = &Issuer{}
+		var verifiedCohort = 0
 		for _, issuer := range *issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 				continue
@@ -113,13 +165,14 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			} else {
 				verified = true
 				verifiedIssuer = &issuer
+				verifiedCohort = issuer.IssuerCohort
 				break
 			}
 		}
 
 		if !verified {
 			return &handlers.AppError{
-				Message: "Could not verify that token redemption is valid",
+				Message: "Could not verify that token redemption is valid999",
 				Code:    http.StatusBadRequest,
 			}
 		}
@@ -136,7 +189,10 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				Message: "Could not mark token redemption",
 				Code:    http.StatusInternalServerError,
 			}
-
+		}
+		err := json.NewEncoder(w).Encode(blindedTokenRedeemResponse{verifiedCohort})
+		if err != nil {
+			panic(err)
 		}
 	}
 	return nil
@@ -156,7 +212,10 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	for _, token := range request.Tokens {
-		issuer, appErr := c.getLatestIssuer(token.Issuer)
+		// todo: this code seems to be from an old version - we use the `redeemTokenWithDB`, and we have no tests, so I
+		// assume that is no longer used, hence the usage of Cohort 1.
+		issuer, appErr := c.getLatestIssuer(token.Issuer, 1)
+
 		if appErr != nil {
 			_ = tx.Rollback()
 			return appErr
@@ -169,8 +228,8 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 				Code:    http.StatusBadRequest,
 			}
 		}
-
-		if err := btd.VerifyTokenRedemption(token.TokenPreimage, token.Signature, request.Payload, []*crypto.SigningKey{issuer.SigningKey}); err != nil {
+		err := btd.VerifyTokenRedemption(token.TokenPreimage, token.Signature, request.Payload, []*crypto.SigningKey{issuer.SigningKey})
+		if  err != nil {
 			_ = tx.Rollback()
 			return handlers.WrapError("Could not verify that token redemption is valid", err)
 		}
@@ -292,7 +351,6 @@ func (c *Server) markedTokenRouter() chi.Router {
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
 	}
-	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.blindedTokenIssuerHandler)))
-	//r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueMarkedTokens", handlers.AppHandler(c.markedBlindedTokenIssuerHandler)))
+	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.newBlindedTokenIssuerHandler)))
 	return r
 }

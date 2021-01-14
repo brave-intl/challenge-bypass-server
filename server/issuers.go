@@ -23,12 +23,16 @@ type issuerResponse struct {
 
 type issuerCreateRequest struct {
 	Name      string     `json:"name"`
-	Cohort    int 	 `json:"cohort"`
+	Cohort int `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
-func (c *Server) getLatestIssuer(issuerType string) (*Issuer, *handlers.AppError) {
+type issuerFetchRequest struct {
+	Cohort int `json:"cohort"`
+}
+
+func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
 		if err == errIssuerNotFound {
@@ -43,7 +47,29 @@ func (c *Server) getLatestIssuer(issuerType string) (*Issuer, *handlers.AppError
 			Code:    500,
 		}
 	}
-	return &(*issuer)[0], nil
+	issuerByCohorts := breakCohorts(issuer)
+	lastIssuer := &(*issuerByCohorts)[issuerCohort]
+	if len(*lastIssuer) == 0 {
+		return nil, &handlers.AppError{
+			Message: "Cohort for this issuer not found",
+			Code:    404,
+		}
+	}
+	return &(*lastIssuer)[0], nil
+}
+
+// breaks a slice of []Issuer into a 2D slice with one slice per cohort.
+// This creates an empty slice with two slices, mainly [[],[]], one per cohort.
+// Then we iterate through all issuers, and position each issuer in the slice
+// corresponding to their cohort. Note: this only works for two cohorts. Maybe
+// we want to use a constant defining the number of cohorts?
+func breakCohorts(ss *[]Issuer) (ret *[][]Issuer) {
+	a := make([][]Issuer, 2)
+	for _, s := range *ss {
+		i := s.IssuerCohort
+		a[i] = append(a[i], s)
+	}
+	return &a
 }
 
 func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
@@ -67,8 +93,14 @@ func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
 func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Body)
 
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
+	var req issuerFetchRequest
+	if err := decoder.Decode(&req); err != nil {
+		return handlers.WrapError("Could not parse the request body", err)
+	}
+
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType)
+		issuer, appErr := c.getLatestIssuer(issuerType, req.Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -113,38 +145,6 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 }
 
 func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
-	log := lg.Log(r.Context())
-
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
-	var req issuerCreateRequest
-	if err := decoder.Decode(&req); err != nil {
-		return handlers.WrapError("Could not parse the request body", err)
-	}
-
-	if req.ExpiresAt != nil {
-		if req.ExpiresAt.Before(time.Now()) {
-			return &handlers.AppError{
-				Message: "Expiration time has past",
-				Code:    400,
-			}
-		}
-	}
-
-	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
-		log.Errorf("%s", err)
-		return &handlers.AppError{
-			Error:   err,
-			Message: "Could not create new issuer",
-			Code:    500,
-		}
-	}
-
-	w.WriteHeader(http.StatusOK)
-	return nil
-}
-
-// issuerCreateHandlerNew handles the new requests (maybe can be the same as the other)
-func (c *Server) issuerCreateHandlerNew(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
