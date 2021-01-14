@@ -85,7 +85,6 @@ type CacheInterface interface {
 
 var (
 	errIssuerNotFound      = errors.New("Issuer with the given name does not exist")
-	errIssuerCohortNotFound	   = errors.New("Issuer with the given cohort and name does not exist")
 	errDuplicateRedemption = errors.New("Duplicate Redemption")
 	errRedemptionNotFound  = errors.New("Redemption with the given id does not exist")
 )
@@ -233,49 +232,6 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return issuer, nil
 }
 
-// todo: testing
-// fetchIssuersCohort is a function that fetches all issuers given an `issuerType`
-// and a cohort
-func (c *Server) fetchIssuersCohort(issuerType string, issuerCohort string) (*[]Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(issuerType); found {
-			return cached.(*[]Issuer), nil
-		}
-	}
-
-	fetchedIssuersCohort := []issuer{}
-	err := c.db.Select(
-		&fetchedIssuersCohort,
-		`SELECT *
-		FROM issuers 
-		WHERE issuer_type=$1 AND issuer_cohort=$2
-		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType, issuerCohort)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(fetchedIssuersCohort) < 1 {
-		return nil, errIssuerCohortNotFound
-	}
-
-	issuers := []Issuer{}
-	for _, fetchedIssuer := range fetchedIssuersCohort {
-		issuer, err := convertDBIssuer(fetchedIssuer)
-		if err != nil {
-			return nil, err
-		}
-
-		issuers = append(issuers, *issuer)
-	}
-
-	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuers)
-	}
-
-	return &issuers, nil
-}
-
-
 func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
@@ -340,7 +296,6 @@ func (c *Server) fetchAllIssuers() (*[]Issuer, error) {
 }
 
 // RotateIssuers is the function that rotates
-// todo: modify testing
 func (c *Server) rotateIssuers() error {
 	cfg := c.dbConfig
 
@@ -416,7 +371,6 @@ func (c *Server) rotateIssuers() error {
 	return nil
 }
 
-// todo: modify test
 func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int, expiresAt *time.Time) error {
 	defer incrementCounter(createIssuerCounter)
 	if maxTokens == 0 {
@@ -471,7 +425,6 @@ func (c *Server) redeemToken(issuer *Issuer, preimage *crypto.TokenPreimage, pay
 	return errors.New("Wrong Issuer Version")
 }
 
-// todo: we probably just need to care of the the `Server.redeemTokenV2`.
 func redeemTokenWithDB(db Queryable, issuer string, preimage *crypto.TokenPreimage, payload string) error {
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
