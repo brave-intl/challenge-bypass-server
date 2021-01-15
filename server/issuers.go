@@ -23,7 +23,7 @@ type issuerResponse struct {
 
 type issuerCreateRequest struct {
 	Name      string     `json:"name"`
-	Cohort int `json:"cohort"`
+	Cohort    int        `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }

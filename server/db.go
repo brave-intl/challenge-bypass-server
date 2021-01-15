@@ -34,28 +34,28 @@ type DbConfig struct {
 }
 
 type issuer struct {
-	ID         string      `db:"id"`
-	IssuerType string      `db:"issuer_type"`
-	IssuerCohort int `db:"issuer_cohort"`
-	SigningKey []byte      `db:"signing_key"`
-	MaxTokens  int         `db:"max_tokens"`
-	CreatedAt  pq.NullTime `db:"created_at"`
-	ExpiresAt  pq.NullTime `db:"expires_at"`
-	RotatedAt  pq.NullTime `db:"rotated_at"`
-	Version    int         `db:"version"`
+	ID           string      `db:"id"`
+	IssuerType   string      `db:"issuer_type"`
+	IssuerCohort int         `db:"issuer_cohort"`
+	SigningKey   []byte      `db:"signing_key"`
+	MaxTokens    int         `db:"max_tokens"`
+	CreatedAt    pq.NullTime `db:"created_at"`
+	ExpiresAt    pq.NullTime `db:"expires_at"`
+	RotatedAt    pq.NullTime `db:"rotated_at"`
+	Version      int         `db:"version"`
 }
 
 // Issuer of tokens
 type Issuer struct {
-	SigningKey *crypto.SigningKey
-	ID         string    `json:"id"`
-	IssuerType string    `json:"issuer_type"`
-	IssuerCohort int `json:"issuer_cohort"`
-	MaxTokens  int       `json:"max_tokens"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	RotatedAt  time.Time `json:"rotated_at"`
-	Version    int       `json:"version"`
+	SigningKey   *crypto.SigningKey
+	ID           string    `json:"id"`
+	IssuerType   string    `json:"issuer_type"`
+	IssuerCohort int       `json:"issuer_cohort"`
+	MaxTokens    int       `json:"max_tokens"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	RotatedAt    time.Time `json:"rotated_at"`
+	Version      int       `json:"version"`
 }
 
 // Redemption is a token Redeemed
@@ -326,14 +326,14 @@ func (c *Server) rotateIssuers() error {
 
 	for _, fetchedIssuer := range fetchedIssuers {
 		issuer := Issuer{
-			ID:         fetchedIssuer.ID,
-			IssuerType: fetchedIssuer.IssuerType,
+			ID:           fetchedIssuer.ID,
+			IssuerType:   fetchedIssuer.IssuerType,
 			IssuerCohort: fetchedIssuer.IssuerCohort,
-			MaxTokens:  fetchedIssuer.MaxTokens,
-			ExpiresAt:  fetchedIssuer.ExpiresAt.Time,
-			RotatedAt:  fetchedIssuer.RotatedAt.Time,
-			CreatedAt:  fetchedIssuer.CreatedAt.Time,
-			Version:    fetchedIssuer.Version,
+			MaxTokens:    fetchedIssuer.MaxTokens,
+			ExpiresAt:    fetchedIssuer.ExpiresAt.Time,
+			RotatedAt:    fetchedIssuer.RotatedAt.Time,
+			CreatedAt:    fetchedIssuer.CreatedAt.Time,
+			Version:      fetchedIssuer.Version,
 		}
 
 		if issuer.MaxTokens == 0 {
@@ -488,11 +488,11 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 
 func convertDBIssuer(issuer issuer) (*Issuer, error) {
 	Issuer := Issuer{
-		ID:         issuer.ID,
-		IssuerType: issuer.IssuerType,
+		ID:           issuer.ID,
+		IssuerType:   issuer.IssuerType,
 		IssuerCohort: issuer.IssuerCohort,
-		MaxTokens:  issuer.MaxTokens,
-		Version:    issuer.Version,
+		MaxTokens:    issuer.MaxTokens,
+		Version:      issuer.Version,
 	}
 	if issuer.ExpiresAt.Valid {
 		Issuer.ExpiresAt = issuer.ExpiresAt.Time

@@ -20,7 +20,7 @@ type blindedTokenIssueRequest struct {
 
 type newBlindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
-	IssuerCohort int `json:"cohort"`
+	IssuerCohort  int                    `json:"cohort"`
 }
 
 type blindedTokenIssueResponse struct {
@@ -65,10 +65,10 @@ func (c *Server) newBlindedTokenIssuerHandler(w http.ResponseWriter, r *http.Req
 			}
 		}
 
-		if request.IssuerCohort != 0 && request.IssuerCohort != 1  {
+		if request.IssuerCohort != 0 && request.IssuerCohort != 1 {
 			return &handlers.AppError{
 				Message: "Not supported Cohort",
-				Code: http.StatusBadRequest,
+				Code:    http.StatusBadRequest,
 			}
 		}
 
@@ -76,7 +76,6 @@ func (c *Server) newBlindedTokenIssuerHandler(w http.ResponseWriter, r *http.Req
 		if appErr != nil {
 			return appErr
 		}
-
 
 		signedTokens, proof, err := btd.ApproveTokens(request.BlindedTokens, issuer.SigningKey)
 		if err != nil {
@@ -229,7 +228,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 			}
 		}
 		err := btd.VerifyTokenRedemption(token.TokenPreimage, token.Signature, request.Payload, []*crypto.SigningKey{issuer.SigningKey})
-		if  err != nil {
+		if err != nil {
 			_ = tx.Rollback()
 			return handlers.WrapError("Could not verify that token redemption is valid", err)
 		}
