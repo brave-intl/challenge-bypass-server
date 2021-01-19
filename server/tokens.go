@@ -332,7 +332,7 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 	return nil
 }
 
-func (c *Server) tokenRouter() chi.Router {
+func (c *Server) tokenRouterV1() chi.Router {
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
@@ -345,7 +345,7 @@ func (c *Server) tokenRouter() chi.Router {
 }
 
 // New end point to generated marked tokens
-func (c *Server) markedTokenRouter() chi.Router {
+func (c *Server) tokenRouterV2() chi.Router {
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
