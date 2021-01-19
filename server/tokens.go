@@ -18,7 +18,7 @@ type blindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
 }
 
-type newBlindedTokenIssueRequest struct {
+type BlindedTokenIssueRequestV2 struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
 	IssuerCohort  int                    `json:"cohort"`
 }
@@ -49,10 +49,10 @@ type BlindedTokenBulkRedeemRequest struct {
 	Tokens  []BlindedTokenRedemptionInfo `json:"tokens"`
 }
 
-func (c *Server) newBlindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 
-		var request newBlindedTokenIssueRequest
+		var request BlindedTokenIssueRequestV2
 
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
 			return handlers.WrapError("Could not parse the request body", err)
@@ -350,6 +350,6 @@ func (c *Server) markedTokenRouter() chi.Router {
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
 	}
-	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.newBlindedTokenIssuerHandler)))
+	r.Method(http.MethodPost, "/{type}", middleware.InstrumentHandler("IssueTokens", handlers.AppHandler(c.BlindedTokenIssuerHandlerV2)))
 	return r
 }

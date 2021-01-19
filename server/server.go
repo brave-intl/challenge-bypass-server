@@ -145,8 +145,8 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	}
 
 	r.Mount("/v1/blindedToken", c.tokenRouter())
-	r.Mount("/v1/newBlindedToken", c.markedTokenRouter())
 	r.Mount("/v1/issuer", c.issuerRouter())
+	r.Mount("/v2/blindedToken", c.markedTokenRouter())
 	r.Get("/metrics", middleware.Metrics())
 
 	return ctx, r

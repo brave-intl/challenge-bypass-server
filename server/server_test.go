@@ -344,7 +344,7 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 	suite.Require().NoError(err, "Must be able to marshal blinded tokens")
 
 	payload := fmt.Sprintf(`{"blinded_tokens":%s, "cohort":%d}}`, blindedTokenText, issuerCohort)
-	issueURL := fmt.Sprintf("%s/v1/newBlindedToken/%s", serverURL, issuerType)
+	issueURL := fmt.Sprintf("%s/v2/blindedToken/%s", serverURL, issuerType)
 	resp, err := suite.request("POST", issueURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err, "Token signing must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
