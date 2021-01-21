@@ -85,6 +85,7 @@ type CacheInterface interface {
 
 var (
 	errIssuerNotFound      = errors.New("Issuer with the given name does not exist")
+	errIssuerCohortNotFound = errors.New("Issuer with the given name and cohort does not exist")
 	errDuplicateRedemption = errors.New("Duplicate Redemption")
 	errRedemptionNotFound  = errors.New("Redemption with the given id does not exist")
 )
@@ -230,6 +231,45 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	}
 
 	return issuer, nil
+}
+
+func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]Issuer, error) {
+	if c.caches != nil {
+		if cached, found := c.caches["issuers"].Get(issuerType); found {
+			return cached.(*[]Issuer), nil
+		}
+	}
+
+	fetchedIssuers := []issuer{}
+	err := c.db.Select(
+		&fetchedIssuers,
+		`SELECT *
+		FROM issuers 
+		WHERE issuer_type=$1 AND issuer_cohort=$2
+		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType, issuerCohort)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(fetchedIssuers) < 1 {
+		return nil, errIssuerCohortNotFound
+	}
+
+	issuers := []Issuer{}
+	for _, fetchedIssuer := range fetchedIssuers {
+		issuer, err := convertDBIssuer(fetchedIssuer)
+		if err != nil {
+			return nil, err
+		}
+
+		issuers = append(issuers, *issuer)
+	}
+
+	if c.caches != nil {
+		c.caches["issuers"].SetDefault(issuerType, issuers)
+	}
+
+	return &issuers, nil
 }
 
 func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {

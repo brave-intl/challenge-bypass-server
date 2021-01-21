@@ -33,11 +33,11 @@ type issuerFetchRequest struct {
 }
 
 func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
-		if err == errIssuerNotFound {
+		if err == errIssuerCohortNotFound {
 			return nil, &handlers.AppError{
-				Message: "Issuer not found",
+				Message: "Issuer with given cohort not found",
 				Code:    404,
 			}
 		}
@@ -47,29 +47,8 @@ func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, 
 			Code:    500,
 		}
 	}
-	issuerByCohorts := breakCohorts(issuer)
-	lastIssuer := &(*issuerByCohorts)[issuerCohort]
-	if len(*lastIssuer) == 0 {
-		return nil, &handlers.AppError{
-			Message: "Cohort for this issuer not found",
-			Code:    404,
-		}
-	}
-	return &(*lastIssuer)[0], nil
-}
 
-// breaks a slice of []Issuer into a 2D slice with one slice per cohort.
-// This creates an empty slice with two slices, mainly [[],[]], one per cohort.
-// Then we iterate through all issuers, and position each issuer in the slice
-// corresponding to their cohort. Note: this only works for two cohorts. Maybe
-// we want to use a constant defining the number of cohorts?
-func breakCohorts(ss *[]Issuer) (ret *[][]Issuer) {
-	a := make([][]Issuer, 2)
-	for _, s := range *ss {
-		i := s.IssuerCohort
-		a[i] = append(a[i], s)
-	}
-	return &a
+	return &(*issuer)[0], nil
 }
 
 func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
