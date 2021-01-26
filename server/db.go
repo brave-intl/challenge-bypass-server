@@ -34,26 +34,28 @@ type DbConfig struct {
 }
 
 type issuer struct {
-	ID         string      `db:"id"`
-	IssuerType string      `db:"issuer_type"`
-	SigningKey []byte      `db:"signing_key"`
-	MaxTokens  int         `db:"max_tokens"`
-	CreatedAt  pq.NullTime `db:"created_at"`
-	ExpiresAt  pq.NullTime `db:"expires_at"`
-	RotatedAt  pq.NullTime `db:"rotated_at"`
-	Version    int         `db:"version"`
+	ID           string      `db:"id"`
+	IssuerType   string      `db:"issuer_type"`
+	IssuerCohort int         `db:"issuer_cohort"`
+	SigningKey   []byte      `db:"signing_key"`
+	MaxTokens    int         `db:"max_tokens"`
+	CreatedAt    pq.NullTime `db:"created_at"`
+	ExpiresAt    pq.NullTime `db:"expires_at"`
+	RotatedAt    pq.NullTime `db:"rotated_at"`
+	Version      int         `db:"version"`
 }
 
 // Issuer of tokens
 type Issuer struct {
-	SigningKey *crypto.SigningKey
-	ID         string    `json:"id"`
-	IssuerType string    `json:"issuer_type"`
-	MaxTokens  int       `json:"max_tokens"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	RotatedAt  time.Time `json:"rotated_at"`
-	Version    int       `json:"version"`
+	SigningKey   *crypto.SigningKey
+	ID           string    `json:"id"`
+	IssuerType   string    `json:"issuer_type"`
+	IssuerCohort int       `json:"issuer_cohort"`
+	MaxTokens    int       `json:"max_tokens"`
+	CreatedAt    time.Time `json:"created_at"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	RotatedAt    time.Time `json:"rotated_at"`
+	Version      int       `json:"version"`
 }
 
 // Redemption is a token Redeemed
@@ -83,6 +85,7 @@ type CacheInterface interface {
 
 var (
 	errIssuerNotFound      = errors.New("Issuer with the given name does not exist")
+	errIssuerCohortNotFound = errors.New("Issuer with the given name and cohort does not exist")
 	errDuplicateRedemption = errors.New("Duplicate Redemption")
 	errRedemptionNotFound  = errors.New("Redemption with the given id does not exist")
 )
@@ -125,7 +128,7 @@ func (c *Server) initDb() {
 	if err != nil {
 		panic(err)
 	}
-	err = m.Migrate(4)
+	err = m.Migrate(5)
 	if err != migrate.ErrNoChange && err != nil {
 		panic(err)
 	}
@@ -230,6 +233,45 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return issuer, nil
 }
 
+func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]Issuer, error) {
+	if c.caches != nil {
+		if cached, found := c.caches["issuers"].Get(issuerType); found {
+			return cached.(*[]Issuer), nil
+		}
+	}
+
+	fetchedIssuers := []issuer{}
+	err := c.db.Select(
+		&fetchedIssuers,
+		`SELECT *
+		FROM issuers 
+		WHERE issuer_type=$1 AND issuer_cohort=$2
+		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType, issuerCohort)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(fetchedIssuers) < 1 {
+		return nil, errIssuerCohortNotFound
+	}
+
+	issuers := []Issuer{}
+	for _, fetchedIssuer := range fetchedIssuers {
+		issuer, err := convertDBIssuer(fetchedIssuer)
+		if err != nil {
+			return nil, err
+		}
+
+		issuers = append(issuers, *issuer)
+	}
+
+	if c.caches != nil {
+		c.caches["issuers"].SetDefault(issuerType, issuers)
+	}
+
+	return &issuers, nil
+}
+
 func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
@@ -324,13 +366,14 @@ func (c *Server) rotateIssuers() error {
 
 	for _, fetchedIssuer := range fetchedIssuers {
 		issuer := Issuer{
-			ID:         fetchedIssuer.ID,
-			IssuerType: fetchedIssuer.IssuerType,
-			MaxTokens:  fetchedIssuer.MaxTokens,
-			ExpiresAt:  fetchedIssuer.ExpiresAt.Time,
-			RotatedAt:  fetchedIssuer.RotatedAt.Time,
-			CreatedAt:  fetchedIssuer.CreatedAt.Time,
-			Version:    fetchedIssuer.Version,
+			ID:           fetchedIssuer.ID,
+			IssuerType:   fetchedIssuer.IssuerType,
+			IssuerCohort: fetchedIssuer.IssuerCohort,
+			MaxTokens:    fetchedIssuer.MaxTokens,
+			ExpiresAt:    fetchedIssuer.ExpiresAt.Time,
+			RotatedAt:    fetchedIssuer.RotatedAt.Time,
+			CreatedAt:    fetchedIssuer.CreatedAt.Time,
+			Version:      fetchedIssuer.Version,
 		}
 
 		if issuer.MaxTokens == 0 {
@@ -348,8 +391,9 @@ func (c *Server) rotateIssuers() error {
 		}
 
 		if _, err = tx.Exec(
-			`INSERT INTO issuers(issuer_type, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, 2)`,
+			`INSERT INTO issuers(issuer_type, issuer_cohort, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, $5, 2)`,
 			issuer.IssuerType,
+			issuer.IssuerCohort,
 			signingKeyTxt,
 			issuer.MaxTokens,
 			issuer.ExpiresAt.AddDate(0, 0, cfg.DefaultIssuerValidDays),
@@ -367,7 +411,7 @@ func (c *Server) rotateIssuers() error {
 	return nil
 }
 
-func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.Time) error {
+func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int, expiresAt *time.Time) error {
 	defer incrementCounter(createIssuerCounter)
 	if maxTokens == 0 {
 		maxTokens = 40
@@ -385,8 +429,9 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 
 	queryTimer := prometheus.NewTimer(createIssuerDBDuration)
 	rows, err := c.db.Query(
-		`INSERT INTO issuers(issuer_type, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, 2)`,
+		`INSERT INTO issuers(issuer_type, issuer_cohort, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, $5, 2)`,
 		issuerType,
+		issuerCohort,
 		signingKeyTxt,
 		maxTokens,
 		expiresAt,
@@ -483,10 +528,11 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 
 func convertDBIssuer(issuer issuer) (*Issuer, error) {
 	Issuer := Issuer{
-		ID:         issuer.ID,
-		IssuerType: issuer.IssuerType,
-		MaxTokens:  issuer.MaxTokens,
-		Version:    issuer.Version,
+		ID:           issuer.ID,
+		IssuerType:   issuer.IssuerType,
+		IssuerCohort: issuer.IssuerCohort,
+		MaxTokens:    issuer.MaxTokens,
+		Version:      issuer.Version,
 	}
 	if issuer.ExpiresAt.Valid {
 		Issuer.ExpiresAt = issuer.ExpiresAt.Time

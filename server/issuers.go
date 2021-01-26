@@ -23,16 +23,21 @@ type issuerResponse struct {
 
 type issuerCreateRequest struct {
 	Name      string     `json:"name"`
+	Cohort    int        `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
-func (c *Server) getLatestIssuer(issuerType string) (*Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+type issuerFetchRequest struct {
+	Cohort int `json:"cohort"`
+}
+
+func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, *handlers.AppError) {
+	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
-		if err == errIssuerNotFound {
+		if err == errIssuerCohortNotFound {
 			return nil, &handlers.AppError{
-				Message: "Issuer not found",
+				Message: "Issuer with given cohort not found",
 				Code:    404,
 			}
 		}
@@ -42,6 +47,7 @@ func (c *Server) getLatestIssuer(issuerType string) (*Issuer, *handlers.AppError
 			Code:    500,
 		}
 	}
+
 	return &(*issuer)[0], nil
 }
 
@@ -66,8 +72,14 @@ func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
 func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Body)
 
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
+	var req issuerFetchRequest
+	if err := decoder.Decode(&req); err != nil {
+		return handlers.WrapError("Could not parse the request body", err)
+	}
+
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType)
+		issuer, appErr := c.getLatestIssuer(issuerType, req.Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -129,7 +141,7 @@ func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *ha
 		}
 	}
 
-	if err := c.createIssuer(req.Name, req.MaxTokens, req.ExpiresAt); err != nil {
+	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		log.Errorf("%s", err)
 		return &handlers.AppError{
 			Error:   err,
