@@ -35,6 +35,8 @@ func main() {
 		}
 	}
 
+	srv.Logger = logger
+
 	if port := os.Getenv("PORT"); port != "" {
 		if portNumber, err := strconv.Atoi(port); err == nil {
 			srv.ListenPort = portNumber

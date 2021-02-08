@@ -319,6 +319,7 @@ func (c *Server) fetchAllIssuers() (*[]Issuer, error) {
 		FROM issuers
 		ORDER BY expires_at DESC NULLS LAST, created_at DESC`)
 	if err != nil {
+		c.Logger.Error("Failed to extract issuers from DB")
 		return nil, err
 	}
 
@@ -326,6 +327,7 @@ func (c *Server) fetchAllIssuers() (*[]Issuer, error) {
 	for _, fetchedIssuer := range fetchedIssuers {
 		issuer, err := convertDBIssuer(fetchedIssuer)
 		if err != nil {
+			c.Logger.Error("Error converting extracted Issuer")
 			return nil, err
 		}
 
@@ -419,11 +421,13 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int
 
 	signingKey, err := crypto.RandomSigningKey()
 	if err != nil {
+		c.Logger.Error("Error generating key")
 		return err
 	}
 
 	signingKeyTxt, err := signingKey.MarshalText()
 	if err != nil {
+		c.Logger.Error("Error marshalling signing key")
 		return err
 	}
 
@@ -437,6 +441,7 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int
 		expiresAt,
 	)
 	if err != nil {
+		c.Logger.Error("Could not insert the new issuer into the DB")
 		return err
 	}
 	queryTimer.ObserveDuration()
@@ -501,6 +506,7 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	queryTimer.ObserveDuration()
 
 	if err != nil {
+		c.Logger.Error("Unable to perform the query")
 		return nil, err
 	}
 
@@ -509,6 +515,7 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	if rows.Next() {
 		var redemption = &Redemption{}
 		if err := rows.Scan(&redemption.ID, &redemption.IssuerType, &redemption.Timestamp, &redemption.Payload); err != nil {
+			c.Logger.Error("Unable to convert DB values into redemption data structure")
 			return nil, err
 		}
 
@@ -520,9 +527,11 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	}
 
 	if err := rows.Err(); err != nil {
+		c.Logger.Error("Error parsing rows of DB")
 		return nil, err
 	}
 
+	c.Logger.Error("Redemption not found")
 	return nil, errRedemptionNotFound
 }
 
