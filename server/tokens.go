@@ -55,10 +55,12 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 		var request BlindedTokenIssueRequestV2
 
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
+			c.Logger.WithError(err)
 			return handlers.WrapError("Could not parse the request body", err)
 		}
 
 		if request.BlindedTokens == nil {
+			c.Logger.Error("Empty request")
 			return &handlers.AppError{
 				Message: "Empty request",
 				Code:    http.StatusBadRequest,
@@ -66,6 +68,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 		}
 
 		if request.IssuerCohort != 0 && request.IssuerCohort != 1 {
+			c.Logger.Error("Not supported Cohort")
 			return &handlers.AppError{
 				Message: "Not supported Cohort",
 				Code:    http.StatusBadRequest,
@@ -79,6 +82,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 
 		signedTokens, proof, err := btd.ApproveTokens(request.BlindedTokens, issuer.SigningKey)
 		if err != nil {
+			c.Logger.Error("Could not approve new tokens")
 			return &handlers.AppError{
 				Error:   err,
 				Message: "Could not approve new tokens",
@@ -105,10 +109,12 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 		var request blindedTokenIssueRequest
 
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
+			c.Logger.Error("Could not parse the request body")
 			return handlers.WrapError("Could not parse the request body", err)
 		}
 
 		if request.BlindedTokens == nil {
+			c.Logger.Error("Empty request")
 			return &handlers.AppError{
 				Message: "Empty request",
 				Code:    http.StatusBadRequest,
@@ -117,6 +123,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 
 		signedTokens, proof, err := btd.ApproveTokens(request.BlindedTokens, issuer.SigningKey)
 		if err != nil {
+			c.Logger.Error("Could not approve new tokens")
 			return &handlers.AppError{
 				Error:   err,
 				Message: "Could not approve new tokens",
@@ -142,10 +149,12 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		var request blindedTokenRedeemRequest
 
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
+			c.Logger.Error("Could not parse the request body")
 			return handlers.WrapError("Could not parse the request body", err)
 		}
 
 		if request.TokenPreimage == nil || request.Signature == nil {
+			c.Logger.Error("Empty request")
 			return &handlers.AppError{
 				Message: "Empty request",
 				Code:    http.StatusBadRequest,
@@ -170,8 +179,9 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		if !verified {
+			c.Logger.Error("Could not verify that the token redemption is valid")
 			return &handlers.AppError{
-				Message: "Could not verify that token redemption is valid999",
+				Message: "Could not verify that token redemption is valid",
 				Code:    http.StatusBadRequest,
 			}
 		}
@@ -191,6 +201,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		}
 		err := json.NewEncoder(w).Encode(blindedTokenRedeemResponse{verifiedCohort})
 		if err != nil {
+			c.Logger.Error("Could not encode the blinded token")
 			panic(err)
 		}
 	}
@@ -273,6 +284,7 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 
 		tokenID, err := url.PathUnescape(tokenID)
 		if err != nil {
+			c.Logger.Error("Bad request - incorrect token ID")
 			return &handlers.AppError{
 				Message: err.Error(),
 				Code:    http.StatusBadRequest,
@@ -281,6 +293,7 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 
 		issuer, err := c.fetchIssuer(issuerID)
 		if err != nil {
+			c.Logger.Error("Bad request - incorrect issuer ID")
 			return &handlers.AppError{
 				Message: err.Error(),
 				Code:    http.StatusBadRequest,

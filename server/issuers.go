@@ -36,11 +36,13 @@ func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, 
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if err == errIssuerCohortNotFound {
+			c.Logger.Error("Issuer with give cohort not found")
 			return nil, &handlers.AppError{
 				Message: "Issuer with given cohort not found",
 				Code:    404,
 			}
 		}
+		c.Logger.Error("Error finding issuer")
 		return nil, &handlers.AppError{
 			Error:   err,
 			Message: "Error finding issuer",
@@ -75,6 +77,7 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerFetchRequest
 	if err := decoder.Decode(&req); err != nil {
+		c.Logger.Error("Could not parse the request body")
 		return handlers.WrapError("Could not parse the request body", err)
 	}
 
@@ -89,6 +92,7 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 		}
 		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt})
 		if err != nil {
+			c.Logger.Error("Error encoding the issuer response")
 			panic(err)
 		}
 		return nil
@@ -118,6 +122,7 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 
 	err := json.NewEncoder(w).Encode(respIssuers)
 	if err != nil {
+		c.Logger.Error("Error encoding issuer")
 		panic(err)
 	}
 	return nil
@@ -129,11 +134,13 @@ func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *ha
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
 	if err := decoder.Decode(&req); err != nil {
+		c.Logger.Error("Could not parse the request body")
 		return handlers.WrapError("Could not parse the request body", err)
 	}
 
 	if req.ExpiresAt != nil {
 		if req.ExpiresAt.Before(time.Now()) {
+			c.Logger.Error("Expiration time has past")
 			return &handlers.AppError{
 				Message: "Expiration time has past",
 				Code:    400,
