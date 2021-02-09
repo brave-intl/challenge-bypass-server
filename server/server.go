@@ -48,7 +48,7 @@ type Server struct {
 	ListenPort   int    `json:"listen_port,omitempty"`
 	MaxTokens    int    `json:"max_tokens,omitempty"`
 	DbConfigPath string `json:"db_config_path"`
-	Logger		 *logrus.Logger `json:"omitempty"`
+	Logger		 *logrus.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DbConfig
 	db           *sqlx.DB
@@ -144,6 +144,8 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 		// Also handles panic recovery
 		r.Use(middleware.RequestLogger(logger))
 	}
+
+	c.Logger = logger
 
 	r.Mount("/v1/blindedToken", c.tokenRouterV1())
 	r.Mount("/v1/issuer", c.issuerRouter())
