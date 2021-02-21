@@ -28,7 +28,7 @@ type issuerCreateRequest struct {
 	ExpiresAt *time.Time `json:"expires_at"`
 }
 
-type issuerFetchRequest struct {
+type issuerFetchRequestV2 struct {
 	Cohort int `json:"cohort"`
 }
 
@@ -71,11 +71,33 @@ func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
 	return issuer, nil
 }
 
-func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+func (c *Server) issuerHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	defer closers.Panic(r.Body)
+
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
+		issuer, appErr := c.getLatestIssuer(issuerType)
+		if appErr != nil {
+			return appErr
+		}
+		expiresAt := ""
+		if !issuer.ExpiresAt.IsZero() {
+			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+		}
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt})
+		if err != nil {
+			c.Logger.Error("Error encoding the issuer response")
+			panic(err)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Body)
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
-	var req issuerFetchRequest
+	var req issuerFetchRequestV2
 	if err := decoder.Decode(&req); err != nil {
 		c.Logger.Error("Could not parse the request body")
 		return handlers.WrapError("Could not parse the request body", err)
@@ -99,6 +121,7 @@ func (c *Server) issuerHandler(w http.ResponseWriter, r *http.Request) *handlers
 	}
 	return nil
 }
+
 
 func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Body)
@@ -161,13 +184,23 @@ func (c *Server) issuerCreateHandler(w http.ResponseWriter, r *http.Request) *ha
 	return nil
 }
 
-func (c *Server) issuerRouter() chi.Router {
+func (c *Server) issuerRouterV1() chi.Router {
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
 	}
-	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuer", handlers.AppHandler(c.issuerHandler)))
+	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuer", handlers.AppHandler(c.issuerHandlerV1)))
 	r.Method("POST", "/", middleware.InstrumentHandler("CreateIssuer", handlers.AppHandler(c.issuerCreateHandler)))
 	r.Method("GET", "/", middleware.InstrumentHandler("GetAllIssuers", handlers.AppHandler(c.issuerGetAllHandler)))
 	return r
 }
+
+func (c *Server) issuerRouterV2() chi.Router {
+	r := chi.NewRouter()
+	if os.Getenv("ENV") == "production" {
+		r.Use(middleware.SimpleTokenAuthorizedOnly)
+	}
+	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuer", handlers.AppHandler(c.issuerHandlerV2)))
+	return r
+}
+
