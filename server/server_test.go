@@ -94,7 +94,7 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, 
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	payload = fmt.Sprintf(`{"cohort": %d}`, issuerCohort)
-	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", serverURL, issuerType)
+	issuerURL := fmt.Sprintf("%s/v2/issuer/%s", serverURL, issuerType)
 	resp, err = suite.request("GET", issuerURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
@@ -141,7 +141,7 @@ func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issue
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	payload = fmt.Sprintf(`{"cohort": %d}`, issuerCohort)
-	issuerURL := fmt.Sprintf("%s/v1/issuer/%s", serverURL, issuerType)
+	issuerURL := fmt.Sprintf("%s/v2/issuer/%s", serverURL, issuerType)
 	resp, err = suite.request("GET", issuerURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
