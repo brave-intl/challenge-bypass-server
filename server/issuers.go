@@ -75,7 +75,7 @@ func (c *Server) issuerHandlerV1(w http.ResponseWriter, r *http.Request) *handle
 	defer closers.Panic(r.Body)
 
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType, 1)
+		issuer, appErr := c.getLatestIssuer(issuerType, 0)
 		if appErr != nil {
 			return appErr
 		}
