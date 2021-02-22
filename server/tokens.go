@@ -14,6 +14,10 @@ import (
 	"github.com/go-chi/chi"
 )
 
+const (
+	v1Cohort = 1
+)
+
 type blindedTokenIssueRequest struct {
 	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
 }
@@ -98,10 +102,10 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 	return nil
 }
 
-// Old endpoint, that always handles tokens with cohort = 1
+// Old endpoint, that always handles tokens with v1cohort
 func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType, 1)
+		issuer, appErr := c.getLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -223,8 +227,8 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 
 	for _, token := range request.Tokens {
 		// todo: this code seems to be from an old version - we use the `redeemTokenWithDB`, and we have no tests, so I
-		// assume that is no longer used, hence the usage of Cohort 1.
-		issuer, appErr := c.getLatestIssuer(token.Issuer, 1)
+		// assume that is no longer used, hence the usage of v1Cohort.
+		issuer, appErr := c.getLatestIssuer(token.Issuer, v1Cohort)
 
 		if appErr != nil {
 			_ = tx.Rollback()

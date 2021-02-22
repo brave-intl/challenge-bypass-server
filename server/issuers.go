@@ -33,10 +33,10 @@ type issuerFetchRequestV2 struct {
 }
 
 func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+	issuer, err := c.fetchIssuegirsByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if err == errIssuerCohortNotFound {
-			c.Logger.Error("Issuer with give cohort not found")
+			c.Logger.Error("Issuer with given cohort not found")
 			return nil, &handlers.AppError{
 				Message: "Issuer with given cohort not found",
 				Code:    404,
@@ -75,7 +75,7 @@ func (c *Server) issuerHandlerV1(w http.ResponseWriter, r *http.Request) *handle
 	defer closers.Panic(r.Body)
 
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.getLatestIssuer(issuerType, 0)
+		issuer, appErr := c.getLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
 		}
