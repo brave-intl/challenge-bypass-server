@@ -226,7 +226,7 @@ func (suite *ServerTestSuite) attemptRedeem(serverURL string, preimageText []byt
 
 func (suite *ServerTestSuite) TestIssueRedeem() {
 	issuerType := "test"
-	issuerCohort := 1
+	issuerCohort := v1Cohort
 	msg := "test message"
 
 	server := httptest.NewServer(suite.handler)
@@ -247,7 +247,7 @@ func (suite *ServerTestSuite) TestIssueRedeem() {
 
 func (suite *ServerTestSuite) TestIssuerGetAll() {
 	issuerType := "test2"
-	issuerCohort := 1
+	issuerCohort := v1Cohort
 
 	server := httptest.NewServer(suite.handler)
 	defer server.Close()
@@ -261,7 +261,7 @@ func (suite *ServerTestSuite) TestIssuerGetAll() {
 
 func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	issuerType := "test2"
-	issuerCohort := 1
+	issuerCohort := v1Cohort
 	msg := "test message 2"
 
 	server := httptest.NewServer(suite.handler)
@@ -367,7 +367,7 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 
 func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	issuerType := "test2"
-	issuerCohort := 0
+	issuerCohort := 1 - v1Cohort
 	msg := "test message 2"
 
 	server := httptest.NewServer(suite.handler)
