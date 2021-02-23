@@ -33,7 +33,7 @@ type issuerFetchRequestV2 struct {
 }
 
 func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuegirsByCohort(issuerType, issuerCohort)
+	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if err == errIssuerCohortNotFound {
 			c.Logger.Error("Issuer with given cohort not found")
