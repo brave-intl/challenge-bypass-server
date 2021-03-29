@@ -452,14 +452,13 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.db.Query(
 		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
+	defer rows.Close()
 
 	queryTimer.ObserveDuration()
 
 	if err != nil {
 		return nil, err
 	}
-
-	defer rows.Close()
 
 	if rows.Next() {
 		var redemption = &Redemption{}
