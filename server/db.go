@@ -391,8 +391,8 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 		maxTokens,
 		expiresAt,
 	)
-	defer rows.Close()
 	if err != nil {
+		defer rows.Close()
 		return err
 	}
 	queryTimer.ObserveDuration()
@@ -402,6 +402,7 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 			c.caches["issuers"].Delete(issuerType)
 		}
 	}
+	defer rows.Close()
 
 	return nil
 }
@@ -429,13 +430,14 @@ func redeemTokenWithDB(db Queryable, issuer string, preimage *crypto.TokenPreima
 	queryTimer := prometheus.NewTimer(createRedemptionDBDuration)
 	rows, err := db.Query(
 		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, issuer, payload)
-	defer rows.Close()
 	if err != nil {
+		defer rows.Close()
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
 			return errDuplicateRedemption
 		}
 		return err
 	}
+	defer rows.Close()
 
 	queryTimer.ObserveDuration()
 	return nil
@@ -452,17 +454,18 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.db.Query(
 		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
-	defer rows.Close()
 
 	queryTimer.ObserveDuration()
 
 	if err != nil {
+		defer rows.Close()
 		return nil, err
 	}
 
 	if rows.Next() {
 		var redemption = &Redemption{}
 		if err := rows.Scan(&redemption.ID, &redemption.IssuerType, &redemption.Timestamp, &redemption.Payload); err != nil {
+			defer rows.Close()
 			return nil, err
 		}
 
@@ -470,13 +473,16 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, ID), redemption)
 		}
 
+		defer rows.Close()
 		return redemption, nil
 	}
 
 	if err := rows.Err(); err != nil {
+		defer rows.Close()
 		return nil, err
 	}
 
+	defer rows.Close()
 	return nil, errRedemptionNotFound
 }
 
