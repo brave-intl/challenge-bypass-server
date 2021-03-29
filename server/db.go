@@ -391,6 +391,7 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 		maxTokens,
 		expiresAt,
 	)
+	defer rows.Close()
 	if err != nil {
 		return err
 	}
@@ -402,7 +403,6 @@ func (c *Server) createIssuer(issuerType string, maxTokens int, expiresAt *time.
 		}
 	}
 
-	defer rows.Close()
 	return nil
 }
 
