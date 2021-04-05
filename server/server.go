@@ -119,6 +119,10 @@ func (c *Server) InitDbConfig() error {
 func SetupLogger(ctx context.Context) (context.Context, *logrus.Logger) {
 	logger := logrus.New()
 
+	if os.Getenv("ENV") == "production" {
+		logger.SetLevel(logrus.WarnLevel)
+	}
+
 	//logger.Formatter = &logrus.JSONFormatter{}
 
 	// Redirect output from the standard logging package "log"
