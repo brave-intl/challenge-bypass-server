@@ -19,6 +19,7 @@ type issuerResponse struct {
 	Name      string            `json:"name"`
 	PublicKey *crypto.PublicKey `json:"public_key"`
 	ExpiresAt string            `json:"expires_at,omitempty"`
+	Cohort    int               `json:"cohort"`
 }
 
 type issuerCreateRequest struct {
@@ -83,7 +84,7 @@ func (c *Server) issuerHandlerV1(w http.ResponseWriter, r *http.Request) *handle
 		if !issuer.ExpiresAt.IsZero() {
 			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
 		}
-		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt})
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt, issuer.IssuerCohort})
 		if err != nil {
 			c.Logger.Error("Error encoding the issuer response")
 			panic(err)
@@ -112,7 +113,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 		if !issuer.ExpiresAt.IsZero() {
 			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
 		}
-		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt})
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt, issuer.IssuerCohort})
 		if err != nil {
 			c.Logger.Error("Error encoding the issuer response")
 			panic(err)
@@ -139,7 +140,7 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 		if !issuer.ExpiresAt.IsZero() {
 			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
 		}
-		respIssuers = append(respIssuers, issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt})
+		respIssuers = append(respIssuers, issuerResponse{issuer.ID, issuer.IssuerType, issuer.SigningKey.PublicKey(), expiresAt, issuer.IssuerCohort})
 	}
 
 	err := json.NewEncoder(w).Encode(respIssuers)
@@ -202,4 +203,3 @@ func (c *Server) issuerRouterV2() chi.Router {
 	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuer", handlers.AppHandler(c.issuerHandlerV2)))
 	return r
 }
-

@@ -129,6 +129,7 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	suite.Require().NotEqual(issuerResp[0].ID, "", "ID was missing")
 	suite.Require().NotEqual(issuerResp[0].Name, "", "Name was missing")
 	suite.Require().NotEqual(issuerResp[0].PublicKey, "", "Public Key was missing")
+	suite.Require().NotEqual(issuerResp[0].Cohort, "", "Cohort was missing")
 
 	return issuerResp
 }
@@ -154,6 +155,7 @@ func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issue
 	suite.Require().NoError(err, "Issuer fetch body unmarshal must succeed")
 
 	suite.Require().NotEqual(issuerResp.PublicKey, nil, "Public key was missing")
+	suite.Require().NotEqual(issuerResp.Cohort, nil, "Public key was missing")
 
 	suite.Require().NotEqual(issuerResp.ID, "", "ID was missing")
 
