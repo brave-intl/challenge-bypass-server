@@ -30,6 +30,7 @@ type BlindedTokenIssueRequestV2 struct {
 type blindedTokenIssueResponse struct {
 	BatchProof   *crypto.BatchDLEQProof `json:"batch_proof"`
 	SignedTokens []*crypto.SignedToken  `json:"signed_tokens"`
+	PublicKey    *crypto.PublicKey      `json:"public_key"`
 }
 
 type blindedTokenRedeemRequest struct {
@@ -94,7 +95,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		err = json.NewEncoder(w).Encode(blindedTokenIssueResponse{proof, signedTokens})
+		err = json.NewEncoder(w).Encode(blindedTokenIssueResponse{proof, signedTokens, issuer.SigningKey.PublicKey()})
 		if err != nil {
 			panic(err)
 		}
@@ -135,7 +136,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		err = json.NewEncoder(w).Encode(blindedTokenIssueResponse{proof, signedTokens})
+		err = json.NewEncoder(w).Encode(blindedTokenIssueResponse{proof, signedTokens, issuer.SigningKey.PublicKey()})
 		if err != nil {
 			panic(err)
 		}
