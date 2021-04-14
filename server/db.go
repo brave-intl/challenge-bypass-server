@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+        "strconv"
 	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -233,8 +234,9 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 }
 
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]Issuer, error) {
+        compositeCacheKey := issuerType + strconv.Itoa(issuerCohort)
 	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(issuerType); found {
+		if cached, found := c.caches["issuers"].Get(compositeCacheKey); found {
 			return cached.(*[]Issuer), nil
 		}
 	}
@@ -265,7 +267,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]I
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuers)
+		c.caches["issuers"].SetDefault(compositeCacheKey, issuers)
 	}
 
 	return &issuers, nil
