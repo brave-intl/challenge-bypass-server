@@ -308,7 +308,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
 
 	_, _ = suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
-	issuers, _ := suite.srv.fetchIssuers(issuerType)
+	issuers, _ := suite.srv.fetchIssuers(issuerType, issuerCohort)
 	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
 	issuer, _ = suite.srv.getLatestIssuer(issuerType, issuerCohort)
 
@@ -414,7 +414,7 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
 
 	_, _ = suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
-	issuers, _ := suite.srv.fetchIssuers(issuerType)
+	issuers, _ := suite.srv.fetchIssuers(issuerType, issuerCohort)
 	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
