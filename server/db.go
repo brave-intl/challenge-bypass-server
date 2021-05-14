@@ -274,10 +274,9 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]I
 	return &issuers, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string, issuerCohort int) (*[]Issuer, error) {
-	compositeCacheKey := issuerType + strconv.Itoa(issuerCohort)
+func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(compositeCacheKey); found {
+		if cached, found := c.caches["issuers"].Get(issuerType); found {
 			return cached.(*[]Issuer), nil
 		}
 	}
@@ -287,8 +286,8 @@ func (c *Server) fetchIssuers(issuerType string, issuerCohort int) (*[]Issuer, e
 		&fetchedIssuers,
 		`SELECT *
 		FROM issuers 
-		WHERE issuer_type=$1 and issuer_cohort = $2
-		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType, issuerCohort)
+		WHERE issuer_type=$1
+		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +307,7 @@ func (c *Server) fetchIssuers(issuerType string, issuerCohort int) (*[]Issuer, e
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault(compositeCacheKey, issuers)
+		c.caches["issuers"].SetDefault(issuerType, issuers)
 	}
 
 	return &issuers, nil
