@@ -274,9 +274,10 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int) (*[]I
 	return &issuers, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
+func (c *Server) fetchIssuers(issuerType string, issuerCohort int) (*[]Issuer, error) {
+	compositeCacheKey := issuerType + strconv.Itoa(issuerCohort)
 	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(issuerType); found {
+		if cached, found := c.caches["issuers"].Get(compositeCacheKey); found {
 			return cached.(*[]Issuer), nil
 		}
 	}
@@ -286,8 +287,8 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		&fetchedIssuers,
 		`SELECT *
 		FROM issuers 
-		WHERE issuer_type=$1
-		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType)
+		WHERE issuer_type=$1 and issuer_cohort = $2
+		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
 	}
@@ -307,7 +308,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuers)
+		c.caches["issuers"].SetDefault(compositeCacheKey, issuers)
 	}
 
 	return &issuers, nil
@@ -449,15 +450,10 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int
 	defer rows.Close()
 	queryTimer.ObserveDuration()
 
+	compositeCacheKey := issuerType + strconv.Itoa(issuerCohort)
 	if c.caches != nil {
-		if _, found := c.caches["issuers"].Get(issuerType); found {
-			c.caches["issuers"].Delete(issuerType)
-		}
-	}
-
-	if c.caches != nil {
-		if _, found := c.caches["issuers"].Get(issuerType); found {
-			c.caches["issuers"].Delete(issuerType)
+		if _, found := c.caches["issuers"].Get(compositeCacheKey); found {
+			c.caches["issuers"].Delete(compositeCacheKey)
 		}
 	}
 

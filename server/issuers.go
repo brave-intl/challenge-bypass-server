@@ -55,7 +55,7 @@ func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, 
 }
 
 func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+	issuer, err := c.fetchIssuers(issuerType, 1)
 	if err != nil {
 		if err == errIssuerNotFound {
 			return nil, &handlers.AppError{
