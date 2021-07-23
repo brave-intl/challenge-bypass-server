@@ -2,6 +2,7 @@ module github.com/brave-intl/challenge-bypass-server
 
 require (
 	github.com/Microsoft/go-winio v0.4.14 // indirect
+	github.com/actgardner/gogen-avro/v9 v9.0.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20180720115003-f9ffefc3facf // indirect
 	github.com/aws/aws-sdk-go v1.17.7
 	github.com/brave-intl/bat-go v0.1.1
@@ -27,7 +28,7 @@ require (
 	github.com/rs/zerolog v1.19.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/sirupsen/logrus v1.4.2
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.7.0
 	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2 // indirect
 	golang.org/x/sys v0.0.0-20190912141932-bc967efca4b8 // indirect
 	google.golang.org/genproto v0.0.0-20190911173649-1774047e7e51 // indirect
