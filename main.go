@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
 	"github.com/sirupsen/logrus"
@@ -51,6 +52,14 @@ func main() {
 	srv.SetupCronTasks()
 
 	err = srv.ListenAndServe(serverCtx, logger)
+
+	if err != nil {
+		raven.CaptureErrorAndWait(err, nil)
+		logger.Panic(err)
+		return
+	}
+
+	err = kafka.StartConsumers(serverCtx, logger)
 
 	if err != nil {
 		raven.CaptureErrorAndWait(err, nil)

@@ -84,10 +84,10 @@ type CacheInterface interface {
 }
 
 var (
-	errIssuerNotFound      = errors.New("Issuer with the given name does not exist")
+	errIssuerNotFound       = errors.New("Issuer with the given name does not exist")
 	errIssuerCohortNotFound = errors.New("Issuer with the given name and cohort does not exist")
-	errDuplicateRedemption = errors.New("Duplicate Redemption")
-	errRedemptionNotFound  = errors.New("Redemption with the given id does not exist")
+	errDuplicateRedemption  = errors.New("Duplicate Redemption")
+	errRedemptionNotFound   = errors.New("Redemption with the given id does not exist")
 )
 
 // LoadDbConfig loads config into server variable
