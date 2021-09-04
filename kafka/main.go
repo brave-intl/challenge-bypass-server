@@ -1,50 +1,57 @@
-package server
+package kafka
 
 import (
 	"context"
 	"fmt"
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
+	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/segmentio/kafka-go"
 	"github.com/sirupsen/logrus"
+	"os"
 	"strings"
 	"time"
 )
 
 var brokers []string
 
-type Processor func(string)
+type Processor func([]byte, *server.Server, *logrus.Logger)
 
 type TopicMapping struct {
-	Topic     string
-	Processor Processor
-	Group     string
+	Topic       string
+	ResultTopic string
+	Processor   Processor
+	Group       string
 }
 
-func StartConsumers() error {
+func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 	env := os.Getenv("ENV")
 	if env == "" {
 		env = "development"
 	}
 	topicMappings := []TopicMapping{
 		TopicMapping{
-			Topic:     "request.redeem.payment." + env + ".cbp",
-			Processor: somefunc,
-			Group:     "cbpProcessors",
+			Topic:       "request.redeem.payment." + env + ".cbp",
+			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Processor:   func() {},
+			Group:       "cbpProcessors",
 		},
 		TopicMapping{
-			Topic:     "request.redeem.confirmation." + env + ".cbp",
-			Processor: somefunc,
-			Group:     "cbpProcessors",
+			Topic:       "request.redeem.confirmation." + env + ".cbp",
+			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Processor:   func() {},
+			Group:       "cbpProcessors",
 		},
 		TopicMapping{
-			Topic:     "request.sign.payment." + env + ".cbp",
-			Processor: somefunc,
-			Group:     "cbpProcessors",
+			Topic:       "request.sign.payment." + env + ".cbp",
+			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Processor:   BlindedTokenIssuerHandler,
+			Group:       "cbpProcessors",
 		},
 		TopicMapping{
-			Topic:     "request.sign.confirmation." + env + ".cbp",
-			Processor: somefunc,
-			Group:     "cbpProcessors",
+			Topic:       "request.sign.confirmation." + env + ".cbp",
+			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Processor:   BlindedTokenIssuerHandler,
+			Group:       "cbpProcessors",
 		},
 	}
 
@@ -62,7 +69,7 @@ func StartConsumers() error {
 					failureCount++
 					continue
 				}
-				go topicMapping.Processor(msg.Value)
+				go topicMapping.Processor(msg.Value, server, logger)
 			}
 		}()
 	}

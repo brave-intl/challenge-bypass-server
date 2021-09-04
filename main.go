@@ -59,7 +59,7 @@ func main() {
 		return
 	}
 
-	err = kafka.StartConsumers(serverCtx, logger)
+	err = kafka.StartConsumers(srv, logger)
 
 	if err != nil {
 		raven.CaptureErrorAndWait(err, nil)
