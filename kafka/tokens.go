@@ -27,12 +27,12 @@ func BlindedTokenIssuerHandler(
 			continue
 		}
 
-		if request.Issuer_cohort != "0" && request.Issuer_cohort != "1" {
+		if request.Issuer_cohort != 0 && request.Issuer_cohort != 1 {
 			logger.Error("Not supported Cohort")
 			continue
 		}
 
-		issuer, appErr := server.GetLatestIssuer(request.Issuer_type /*, request.Issuer_cohort*/)
+		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int(request.Issuer_cohort))
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
 				Output:            nil,
@@ -43,10 +43,10 @@ func BlindedTokenIssuerHandler(
 			continue
 		}
 
-		blinded_tokens := []*crypto.BlindedToken{&crypto.BlindedToken{
-			raw: request.Blinded_token,
-		}}
-		signedTokens, proof, err := btd.ApproveTokens(blinded_tokens, issuer.SigningKey)
+		blindedToken := crypto.BlindedToken{}
+		blindedToken.UnmarshalText(request.Blinded_token)
+		blindedTokens := []*crypto.BlindedToken{&blindedToken}
+		signedTokens, _, err := btd.ApproveTokens(blindedTokens, issuer.SigningKey)
 		if err != nil {
 			logger.Error("Could not approve new tokens")
 			continue

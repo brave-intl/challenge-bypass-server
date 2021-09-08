@@ -28,6 +28,7 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 	if env == "" {
 		env = "development"
 	}
+	logger.Infof("Starting %s Kafka consumers", env)
 	topicMappings := []TopicMapping{
 		TopicMapping{
 			Topic:       "request.redeem.payment." + env + ".cbp",
@@ -92,7 +93,7 @@ func newConsumer(topic string, groupId string, logger *logrus.Logger) *kafka.Rea
 			logger.Errorf("Failed to initialize TLS dialer: %e", err)
 		}
 	}
-	logger.Tracef("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topic, groupId, brokers)
+	logger.Infof("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topic, groupId, brokers)
 	kafkaLogger := logrus.New()
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,

@@ -52,8 +52,6 @@ func main() {
 
 	logger.WithFields(logrus.Fields{"prefix": "main"}).Info("Starting server")
 
-<<<<<<< HEAD
-=======
 	// add profiling flag to enable profiling routes
 	if os.Getenv("PPROF_ENABLE") != "" {
 		var addr = ":6061"
@@ -68,18 +66,19 @@ func main() {
 		}()
 	}
 
->>>>>>> 55ccb68a66ef02bc733a615b5c7c84e5d42dd8b5
 	srv.SetupCronTasks()
 
+	go func() {
+		err = kafka.StartConsumers(&srv, logger)
+
+		if err != nil {
+			raven.CaptureErrorAndWait(err, nil)
+			logger.Panic(err)
+			return
+		}
+	}()
+
 	err = srv.ListenAndServe(serverCtx, logger)
-
-	if err != nil {
-		raven.CaptureErrorAndWait(err, nil)
-		logger.Panic(err)
-		return
-	}
-
-	err = kafka.StartConsumers(srv, logger)
 
 	if err != nil {
 		raven.CaptureErrorAndWait(err, nil)

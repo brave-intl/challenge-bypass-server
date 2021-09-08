@@ -17,7 +17,7 @@
                         {"name": "associated_data", "type": "bytes", "doc": "contains METADATA"},
                         {"name": "blinded_token", "type": "bytes"},
                         {"name": "issuer_type", "type": "string"},
-                        {"name": "issuer_cohort", "type": "string"}
+                        {"name": "issuer_cohort", "type": "int"}
                     ]
                 }
             }
