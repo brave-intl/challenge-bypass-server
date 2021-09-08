@@ -3,12 +3,15 @@ package main
 import (
 	"context"
 	"flag"
+	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"strconv"
 
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
+	"github.com/rs/zerolog/log"
 	"github.com/sirupsen/logrus"
 )
 
@@ -49,6 +52,23 @@ func main() {
 
 	logger.WithFields(logrus.Fields{"prefix": "main"}).Info("Starting server")
 
+<<<<<<< HEAD
+=======
+	// add profiling flag to enable profiling routes
+	if os.Getenv("PPROF_ENABLE") != "" {
+		var addr = ":6061"
+		if os.Getenv("PPROF_PORT") != "" {
+			addr = os.Getenv("PPROF_PORT")
+		}
+
+		// pprof attaches routes to default serve mux
+		// host:6061/debug/pprof/
+		go func() {
+			log.Error().Err(http.ListenAndServe(addr, http.DefaultServeMux))
+		}()
+	}
+
+>>>>>>> 55ccb68a66ef02bc733a615b5c7c84e5d42dd8b5
 	srv.SetupCronTasks()
 
 	err = srv.ListenAndServe(serverCtx, logger)

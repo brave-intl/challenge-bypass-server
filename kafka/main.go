@@ -14,7 +14,7 @@ import (
 
 var brokers []string
 
-type Processor func([]byte, *server.Server, *logrus.Logger)
+type Processor func([]byte, string, *server.Server, *logrus.Logger)
 
 type TopicMapping struct {
 	Topic       string
@@ -32,13 +32,13 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 		TopicMapping{
 			Topic:       "request.redeem.payment." + env + ".cbp",
 			ResultTopic: "result.redeem.payment." + env + ".cbp",
-			Processor:   func() {},
+			Processor:   BlindedTokenIssuerHandler,
 			Group:       "cbpProcessors",
 		},
 		TopicMapping{
 			Topic:       "request.redeem.confirmation." + env + ".cbp",
 			ResultTopic: "result.redeem.payment." + env + ".cbp",
-			Processor:   func() {},
+			Processor:   BlindedTokenIssuerHandler,
 			Group:       "cbpProcessors",
 		},
 		TopicMapping{
@@ -57,26 +57,32 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 
 	for _, topicMapping := range topicMappings {
 		go func() {
-			consumer := newConsumer(topicMapping.Topic, topicMapping.Group)
+			consumer := newConsumer(topicMapping.Topic, topicMapping.Group, logger)
+			var (
+				failureCount = 0
+				failureLimit = 10
+			)
 			for {
 				// `ReadMessage` blocks until the next event. Do not block main.
 				msg, err := consumer.ReadMessage(context.Background())
 				if err != nil {
-					log.Error(err.Error())
+					logger.Error(err.Error())
 					if failureCount > failureLimit {
 						break
 					}
 					failureCount++
 					continue
 				}
-				go topicMapping.Processor(msg.Value, server, logger)
+				go topicMapping.Processor(msg.Value, topicMapping.ResultTopic, server, logger)
+				return
 			}
 		}()
 	}
+	return nil
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(topic string, groupId string) *kafka.Reader {
+func newConsumer(topic string, groupId string, logger *logrus.Logger) *kafka.Reader {
 	var dialer *kafka.Dialer
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	if os.Getenv("ENV") != "local" {
@@ -104,7 +110,7 @@ func newConsumer(topic string, groupId string) *kafka.Reader {
 }
 
 // Emit sends a message over the Kafka interface.
-func Emit(topic string, message []byte) error {
+func Emit(topic string, message []byte, logger *logrus.Logger) error {
 	partition := 0
 
 	if len(brokers) < 1 {

@@ -18,6 +18,7 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/pressly/lg"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/rs/zerolog"
 	"github.com/sirupsen/logrus"
 )
 
@@ -45,10 +46,9 @@ func init() {
 }
 
 type Server struct {
-	ListenPort   int            `json:"listen_port,omitempty"`
-	MaxTokens    int            `json:"max_tokens,omitempty"`
-	DbConfigPath string         `json:"db_config_path"`
-	Logger       *logrus.Logger `json:",omitempty"`
+	ListenPort   int    `json:"listen_port,omitempty"`
+	MaxTokens    int    `json:"max_tokens,omitempty"`
+	DbConfigPath string `json:"db_config_path"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DbConfig
 	db           *sqlx.DB
@@ -119,10 +119,6 @@ func (c *Server) InitDbConfig() error {
 func SetupLogger(ctx context.Context) (context.Context, *logrus.Logger) {
 	logger := logrus.New()
 
-	if os.Getenv("ENV") == "production" {
-		logger.SetLevel(logrus.WarnLevel)
-	}
-
 	//logger.Formatter = &logrus.JSONFormatter{}
 
 	// Redirect output from the standard logging package "log"
@@ -132,7 +128,7 @@ func SetupLogger(ctx context.Context) (context.Context, *logrus.Logger) {
 	return ctx, logger
 }
 
-func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (context.Context, *chi.Mux) {
+func (c *Server) setupRouter(ctx context.Context) (context.Context, *chi.Mux) {
 	c.initDb()
 	c.initDynamo()
 	c.SetupCronTasks()
@@ -144,18 +140,12 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	r.Use(chiware.Heartbeat("/"))
 	r.Use(chiware.Timeout(60 * time.Second))
 	r.Use(middleware.BearerToken)
-	if logger != nil {
-		// Also handles panic recovery
-		r.Use(middleware.RequestLogger(logger))
-	}
+	// Also handles panic recovery
+	logger := zerolog.New(os.Stderr).With().Timestamp().Logger()
+	r.Use(middleware.RequestLogger(&logger))
 
-	c.Logger = logger
-
-	r.Mount("/v1/blindedToken", c.tokenRouterV1())
-	r.Mount("/v1/issuer", c.issuerRouterV1())
-
-	r.Mount("/v2/blindedToken", c.tokenRouterV2())
-	r.Mount("/v2/issuer", c.issuerRouterV2())
+	r.Mount("/v1/blindedToken", c.tokenRouter())
+	r.Mount("/v1/issuer", c.issuerRouter())
 	r.Get("/metrics", middleware.Metrics())
 
 	return ctx, r
@@ -164,6 +154,6 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
 	addr := fmt.Sprintf(":%d", c.ListenPort)
-	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx, logger))}
+	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx))}
 	return srv.ListenAndServe()
 }

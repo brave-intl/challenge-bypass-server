@@ -28,10 +28,12 @@ type SigningRequest struct {
 
 	Issuer_name string `json:"issuer_name"`
 
+	Issuer_type string `json:"issuer_type"`
+
 	Issuer_cohort string `json:"issuer_cohort"`
 }
 
-const SigningRequestAvroCRC64Fingerprint = "\xe8\x8737P\x9fnl"
+const SigningRequestAvroCRC64Fingerprint = "\xf6ږ\xd4\xf7yD\x15"
 
 func NewSigningRequest() SigningRequest {
 	r := SigningRequest{}
@@ -75,6 +77,10 @@ func writeSigningRequest(r SigningRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
+	err = vm.WriteString(r.Issuer_type, w)
+	if err != nil {
+		return err
+	}
 	err = vm.WriteString(r.Issuer_cohort, w)
 	if err != nil {
 		return err
@@ -87,7 +93,7 @@ func (r SigningRequest) Serialize(w io.Writer) error {
 }
 
 func (r SigningRequest) Schema() string {
-	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"blinded_token\",\"type\":\"bytes\"},{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"string\"}],\"name\":\"brave.cbp.SigningRequest\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"blinded_token\",\"type\":\"bytes\"},{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"string\"}],\"name\":\"brave.cbp.SigningRequest\",\"type\":\"record\"}"
 }
 
 func (r SigningRequest) SchemaName() string {
@@ -112,6 +118,8 @@ func (r *SigningRequest) Get(i int) types.Field {
 	case 2:
 		return &types.String{Target: &r.Issuer_name}
 	case 3:
+		return &types.String{Target: &r.Issuer_type}
+	case 4:
 		return &types.String{Target: &r.Issuer_cohort}
 	}
 	panic("Unknown field index")
@@ -149,6 +157,10 @@ func (r SigningRequest) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	output["issuer_name"], err = json.Marshal(r.Issuer_name)
+	if err != nil {
+		return nil, err
+	}
+	output["issuer_type"], err = json.Marshal(r.Issuer_type)
 	if err != nil {
 		return nil, err
 	}
@@ -207,6 +219,20 @@ func (r *SigningRequest) UnmarshalJSON(data []byte) error {
 		}
 	} else {
 		return fmt.Errorf("no value specified for issuer_name")
+	}
+	val = func() json.RawMessage {
+		if v, ok := fields["issuer_type"]; ok {
+			return v
+		}
+		return nil
+	}()
+
+	if val != nil {
+		if err := json.Unmarshal([]byte(val), &r.Issuer_type); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("no value specified for issuer_type")
 	}
 	val = func() json.RawMessage {
 		if v, ok := fields["issuer_cohort"]; ok {

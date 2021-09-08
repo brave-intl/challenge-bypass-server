@@ -1,9 +1,12 @@
 package kafka
 
 import (
+	"bytes"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -13,7 +16,7 @@ func BlindedTokenIssuerHandler(
 	server *server.Server,
 	logger *logrus.Logger,
 ) {
-	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(data)
+	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		logger.Errorf("Failed Avro deserialization: %e", err)
 	}
@@ -24,12 +27,12 @@ func BlindedTokenIssuerHandler(
 			continue
 		}
 
-		if request.Issuer_cohort != 0 && request.IssuerCohort != 1 {
+		if request.Issuer_cohort != "0" && request.Issuer_cohort != "1" {
 			logger.Error("Not supported Cohort")
 			continue
 		}
 
-		issuer, appErr := server.getLatestIssuer(issuerType, request.IssuerCohort)
+		issuer, appErr := server.GetLatestIssuer(request.Issuer_type /*, request.Issuer_cohort*/)
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
 				Output:            nil,
@@ -40,22 +43,25 @@ func BlindedTokenIssuerHandler(
 			continue
 		}
 
-		signedTokens, proof, err := btd.ApproveTokens(request.BlindedTokens, issuer.SigningKey)
+		blinded_tokens := []*crypto.BlindedToken{&crypto.BlindedToken{
+			raw: request.Blinded_token,
+		}}
+		signedTokens, proof, err := btd.ApproveTokens(blinded_tokens, issuer.SigningKey)
 		if err != nil {
 			logger.Error("Could not approve new tokens")
 			continue
 		}
 		blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-			Output:            signedTokens,
-			Issuer_public_key: issuer.SigningKey,
+			Output:            utils.StructToBytes(signedTokens),
+			Issuer_public_key: utils.StructToBytes(issuer.SigningKey),
 			Status:            0,
-			Associated_data:   request.Associated_data,
+			Associated_data:   utils.StructToBytes(request.Associated_data),
 		})
 	}
-	err = Emit(resultTopic, avroSchema.SigningResultSet{
+	err = Emit(resultTopic, utils.StructToBytes(avroSchema.SigningResultSet{
 		Request_id: blindedTokenRequestSet.Request_id,
 		Data:       blindedTokenResults,
-	})
+	}), logger)
 	if err != nil {
 		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
 	}

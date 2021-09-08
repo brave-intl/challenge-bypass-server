@@ -27,7 +27,7 @@ type SigningRequestSet struct {
 	Data []SigningRequest `json:"data"`
 }
 
-const SigningRequestSetAvroCRC64Fingerprint = "\xa4\xa2l\xe9`Ď\x88"
+const SigningRequestSetAvroCRC64Fingerprint = "\x8f\xe5V\xaa(z\xc7\xe2"
 
 func NewSigningRequestSet() SigningRequestSet {
 	r := SigningRequestSet{}
@@ -77,7 +77,7 @@ func (r SigningRequestSet) Serialize(w io.Writer) error {
 }
 
 func (r SigningRequestSet) Schema() string {
-	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"blinded_token\",\"type\":\"bytes\"},{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"string\"}],\"name\":\"SigningRequest\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.SigningRequestSet\",\"type\":\"record\"}"
+	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"blinded_token\",\"type\":\"bytes\"},{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"string\"}],\"name\":\"SigningRequest\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.SigningRequestSet\",\"type\":\"record\"}"
 }
 
 func (r SigningRequestSet) SchemaName() string {
