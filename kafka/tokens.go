@@ -96,7 +96,7 @@ func BlindedTokenRedeemHandler(
 	if err != nil {
 		logger.Errorf("Failed Avro deserialization: %e", err)
 	}
-	//var redeemedTokenResults []avroSchema.RedeemResult
+	var redeemedTokenResults []avroSchema.RedeemResult
 	for _, request := range tokenRedeemRequestSet.Data {
 		if request.Issuer_type == "" {
 			logger.Error("Missing issuer type")
@@ -113,7 +113,7 @@ func BlindedTokenRedeemHandler(
 
 		var verified = false
 		var verifiedIssuer = &cbpServer.Issuer{}
-		//var verifiedCohort = 0
+		var verifiedCohort int32 = 0
 		issuers := server.MustGetIssuers(request.Issuer_type)
 		tokenPreimage := crypto.TokenPreimage{}
 		err := tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
@@ -139,7 +139,7 @@ func BlindedTokenRedeemHandler(
 			} else {
 				verified = true
 				verifiedIssuer = &issuer
-				//verifiedCohort = issuer.IssuerCohort
+				verifiedCohort = int32(issuer.IssuerCohort)
 				break
 			}
 		}
@@ -158,5 +158,25 @@ func BlindedTokenRedeemHandler(
 			logger.Error("Could not encode the blinded token")
 			panic(err)
 		}
+		publicKey := verifiedIssuer.SigningKey.PublicKey()
+		marshaledPublicKey, err := publicKey.MarshalText()
+		if err != nil {
+			logger.Error("Could not marshal public key text")
+			panic(err)
+		}
+		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+			Output:            []byte(request.Token),
+			Issuer_public_key: string(marshaledPublicKey),
+			Issuer_cohort:     verifiedCohort,
+			Status:            0,
+			Associated_data:   request.Associated_data,
+		})
+	}
+	err = Emit(resultTopic, utils.StructToBytes(avroSchema.RedeemResultSet{
+		Request_id: tokenRedeemRequestSet.Request_id,
+		Data:       redeemedTokenResults,
+	}), logger)
+	if err != nil {
+		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
 	}
 }
