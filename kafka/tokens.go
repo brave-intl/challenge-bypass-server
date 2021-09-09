@@ -5,16 +5,17 @@ import (
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
-	"github.com/brave-intl/challenge-bypass-server/server"
+	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/sirupsen/logrus"
 	"strings"
+	"time"
 )
 
 func BlindedTokenIssuerHandler(
 	data []byte,
 	resultTopic string,
-	server *server.Server,
+	server *cbpServer.Server,
 	logger *logrus.Logger,
 ) {
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
@@ -82,5 +83,80 @@ func BlindedTokenIssuerHandler(
 	}), logger)
 	if err != nil {
 		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
+	}
+}
+
+func BlindedTokenRedeemHandler(
+	data []byte,
+	resultTopic string,
+	server *cbpServer.Server,
+	logger *logrus.Logger,
+) {
+	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
+	if err != nil {
+		logger.Errorf("Failed Avro deserialization: %e", err)
+	}
+	//var redeemedTokenResults []avroSchema.RedeemResult
+	for _, request := range tokenRedeemRequestSet.Data {
+		if request.Issuer_type == "" {
+			logger.Error("Missing issuer type")
+			continue
+		}
+		if request.Token == "" {
+			logger.Error("Empty request")
+			continue
+		}
+
+		if request.Token_preimage == "" || request.Signature == "" {
+			logger.Error("Empty request")
+		}
+
+		var verified = false
+		var verifiedIssuer = &cbpServer.Issuer{}
+		//var verifiedCohort = 0
+		issuers := server.MustGetIssuers(request.Issuer_type)
+		tokenPreimage := crypto.TokenPreimage{}
+		err := tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
+		if err != nil {
+			logger.Errorf("Could not unmarshal text into preimage: %e", err)
+		}
+		verificationSignature := crypto.VerificationSignature{}
+		err = verificationSignature.UnmarshalText([]byte(request.Signature))
+		if err != nil {
+			logger.Errorf("Could not unmarshal text into verification signature: %e", err)
+		}
+		for _, issuer := range *issuers {
+			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+				continue
+			}
+			if err := btd.VerifyTokenRedemption(
+				&tokenPreimage,
+				&verificationSignature,
+				request.Token,
+				[]*crypto.SigningKey{issuer.SigningKey},
+			); err != nil {
+				verified = false
+			} else {
+				verified = true
+				verifiedIssuer = &issuer
+				//verifiedCohort = issuer.IssuerCohort
+				break
+			}
+		}
+
+		if !verified {
+			logger.Error("Could not verify that the token redemption is valid")
+		}
+
+		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, request.Token); err != nil {
+			if strings.Contains(err.Error(), "Duplicate") {
+				logger.Error(err)
+			}
+			logger.Error("Could not mark token redemption")
+		}
+		if err != nil {
+			logger.Error("Could not encode the blinded token")
+			panic(err)
+		}
 	}
 }

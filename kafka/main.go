@@ -33,7 +33,7 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 		TopicMapping{
 			Topic:       "request.redeem." + env + ".cbp",
 			ResultTopic: "result.redeem." + env + ".cbp",
-			Processor:   BlindedTokenIssuerHandler,
+			Processor:   BlindedTokenRedeemHandler,
 			Group:       "cbpProcessors",
 		},
 		TopicMapping{

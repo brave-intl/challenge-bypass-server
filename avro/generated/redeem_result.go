@@ -22,25 +22,27 @@ import (
 
 var _ = fmt.Printf
 
-type SigningResult struct {
+type RedeemResult struct {
 	Output Bytes `json:"output"`
 
-	Issuer_public_key Bytes `json:"issuer_public_key"`
+	Issuer_public_key string `json:"issuer_public_key"`
 
-	Status SigningResultStatus `json:"status"`
+	Issuer_cohort int32 `json:"issuer_cohort"`
+
+	Status RedeemResultStatus `json:"status"`
 	// contains METADATA
 	Associated_data Bytes `json:"associated_data"`
 }
 
-const SigningResultAvroCRC64Fingerprint = "\x8c\xc8\xccGQ\xed\xc6\x15"
+const RedeemResultAvroCRC64Fingerprint = "\x1c\xee\xb5k\xc0\xfcV\x1d"
 
-func NewSigningResult() SigningResult {
-	r := SigningResult{}
+func NewRedeemResult() RedeemResult {
+	r := RedeemResult{}
 	return r
 }
 
-func DeserializeSigningResult(r io.Reader) (SigningResult, error) {
-	t := NewSigningResult()
+func DeserializeRedeemResult(r io.Reader) (RedeemResult, error) {
+	t := NewRedeemResult()
 	deser, err := compiler.CompileSchemaBytes([]byte(t.Schema()), []byte(t.Schema()))
 	if err != nil {
 		return t, err
@@ -50,8 +52,8 @@ func DeserializeSigningResult(r io.Reader) (SigningResult, error) {
 	return t, err
 }
 
-func DeserializeSigningResultFromSchema(r io.Reader, schema string) (SigningResult, error) {
-	t := NewSigningResult()
+func DeserializeRedeemResultFromSchema(r io.Reader, schema string) (RedeemResult, error) {
+	t := NewRedeemResult()
 
 	deser, err := compiler.CompileSchemaBytes([]byte(schema), []byte(t.Schema()))
 	if err != nil {
@@ -62,17 +64,21 @@ func DeserializeSigningResultFromSchema(r io.Reader, schema string) (SigningResu
 	return t, err
 }
 
-func writeSigningResult(r SigningResult, w io.Writer) error {
+func writeRedeemResult(r RedeemResult, w io.Writer) error {
 	var err error
 	err = vm.WriteBytes(r.Output, w)
 	if err != nil {
 		return err
 	}
-	err = vm.WriteBytes(r.Issuer_public_key, w)
+	err = vm.WriteString(r.Issuer_public_key, w)
 	if err != nil {
 		return err
 	}
-	err = writeSigningResultStatus(r.Status, w)
+	err = vm.WriteInt(r.Issuer_cohort, w)
+	if err != nil {
+		return err
+	}
+	err = writeRedeemResultStatus(r.Status, w)
 	if err != nil {
 		return err
 	}
@@ -83,62 +89,64 @@ func writeSigningResult(r SigningResult, w io.Writer) error {
 	return err
 }
 
-func (r SigningResult) Serialize(w io.Writer) error {
-	return writeSigningResult(r, w)
+func (r RedeemResult) Serialize(w io.Writer) error {
+	return writeRedeemResult(r, w)
 }
 
-func (r SigningResult) Schema() string {
-	return "{\"fields\":[{\"name\":\"output\",\"type\":\"bytes\"},{\"name\":\"issuer_public_key\",\"type\":\"bytes\"},{\"name\":\"status\",\"type\":{\"name\":\"SigningResultStatus\",\"symbols\":[\"ok\",\"invalid_issuer\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.SigningResult\",\"type\":\"record\"}"
+func (r RedeemResult) Schema() string {
+	return "{\"fields\":[{\"name\":\"output\",\"type\":\"bytes\"},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemResult\",\"type\":\"record\"}"
 }
 
-func (r SigningResult) SchemaName() string {
-	return "brave.cbp.SigningResult"
+func (r RedeemResult) SchemaName() string {
+	return "brave.cbp.RedeemResult"
 }
 
-func (_ SigningResult) SetBoolean(v bool)    { panic("Unsupported operation") }
-func (_ SigningResult) SetInt(v int32)       { panic("Unsupported operation") }
-func (_ SigningResult) SetLong(v int64)      { panic("Unsupported operation") }
-func (_ SigningResult) SetFloat(v float32)   { panic("Unsupported operation") }
-func (_ SigningResult) SetDouble(v float64)  { panic("Unsupported operation") }
-func (_ SigningResult) SetBytes(v []byte)    { panic("Unsupported operation") }
-func (_ SigningResult) SetString(v string)   { panic("Unsupported operation") }
-func (_ SigningResult) SetUnionElem(v int64) { panic("Unsupported operation") }
+func (_ RedeemResult) SetBoolean(v bool)    { panic("Unsupported operation") }
+func (_ RedeemResult) SetInt(v int32)       { panic("Unsupported operation") }
+func (_ RedeemResult) SetLong(v int64)      { panic("Unsupported operation") }
+func (_ RedeemResult) SetFloat(v float32)   { panic("Unsupported operation") }
+func (_ RedeemResult) SetDouble(v float64)  { panic("Unsupported operation") }
+func (_ RedeemResult) SetBytes(v []byte)    { panic("Unsupported operation") }
+func (_ RedeemResult) SetString(v string)   { panic("Unsupported operation") }
+func (_ RedeemResult) SetUnionElem(v int64) { panic("Unsupported operation") }
 
-func (r *SigningResult) Get(i int) types.Field {
+func (r *RedeemResult) Get(i int) types.Field {
 	switch i {
 	case 0:
 		return &BytesWrapper{Target: &r.Output}
 	case 1:
-		return &BytesWrapper{Target: &r.Issuer_public_key}
+		return &types.String{Target: &r.Issuer_public_key}
 	case 2:
-		return &SigningResultStatusWrapper{Target: &r.Status}
+		return &types.Int{Target: &r.Issuer_cohort}
 	case 3:
+		return &RedeemResultStatusWrapper{Target: &r.Status}
+	case 4:
 		return &BytesWrapper{Target: &r.Associated_data}
 	}
 	panic("Unknown field index")
 }
 
-func (r *SigningResult) SetDefault(i int) {
+func (r *RedeemResult) SetDefault(i int) {
 	switch i {
 	}
 	panic("Unknown field index")
 }
 
-func (r *SigningResult) NullField(i int) {
+func (r *RedeemResult) NullField(i int) {
 	switch i {
 	}
 	panic("Not a nullable field index")
 }
 
-func (_ SigningResult) AppendMap(key string) types.Field { panic("Unsupported operation") }
-func (_ SigningResult) AppendArray() types.Field         { panic("Unsupported operation") }
-func (_ SigningResult) Finalize()                        {}
+func (_ RedeemResult) AppendMap(key string) types.Field { panic("Unsupported operation") }
+func (_ RedeemResult) AppendArray() types.Field         { panic("Unsupported operation") }
+func (_ RedeemResult) Finalize()                        {}
 
-func (_ SigningResult) AvroCRC64Fingerprint() []byte {
-	return []byte(SigningResultAvroCRC64Fingerprint)
+func (_ RedeemResult) AvroCRC64Fingerprint() []byte {
+	return []byte(RedeemResultAvroCRC64Fingerprint)
 }
 
-func (r SigningResult) MarshalJSON() ([]byte, error) {
+func (r RedeemResult) MarshalJSON() ([]byte, error) {
 	var err error
 	output := make(map[string]json.RawMessage)
 	output["output"], err = json.Marshal(r.Output)
@@ -146,6 +154,10 @@ func (r SigningResult) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	output["issuer_public_key"], err = json.Marshal(r.Issuer_public_key)
+	if err != nil {
+		return nil, err
+	}
+	output["issuer_cohort"], err = json.Marshal(r.Issuer_cohort)
 	if err != nil {
 		return nil, err
 	}
@@ -160,7 +172,7 @@ func (r SigningResult) MarshalJSON() ([]byte, error) {
 	return json.Marshal(output)
 }
 
-func (r *SigningResult) UnmarshalJSON(data []byte) error {
+func (r *RedeemResult) UnmarshalJSON(data []byte) error {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
 		return err
@@ -194,6 +206,20 @@ func (r *SigningResult) UnmarshalJSON(data []byte) error {
 		}
 	} else {
 		return fmt.Errorf("no value specified for issuer_public_key")
+	}
+	val = func() json.RawMessage {
+		if v, ok := fields["issuer_cohort"]; ok {
+			return v
+		}
+		return nil
+	}()
+
+	if val != nil {
+		if err := json.Unmarshal([]byte(val), &r.Issuer_cohort); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("no value specified for issuer_cohort")
 	}
 	val = func() json.RawMessage {
 		if v, ok := fields["status"]; ok {
