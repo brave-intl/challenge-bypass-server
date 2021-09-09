@@ -15,6 +15,12 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.14.1
 	github.com/jackc/fake v0.0.0-20150926172116-812a484cc733 // indirect
 	github.com/jackc/pgx v3.2.0+incompatible // indirect
+	github.com/go-chi/chi v3.3.3+incompatible
+	github.com/gocql/gocql v0.0.0-20190301043612-f6df8288f9b4
+	github.com/gogo/protobuf v1.3.0 // indirect
+	github.com/golang-migrate/migrate/v4 v4.6.2
+	github.com/google/go-cmp v0.3.1 // indirect
+	github.com/gorilla/mux v1.7.3 // indirect
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/kshvakov/clickhouse v1.3.5 // indirect
 	github.com/lib/pq v1.9.0
@@ -23,6 +29,9 @@ require (
 	github.com/prometheus/client_golang v1.9.0
 	github.com/robfig/cron/v3 v3.0.0
 	github.com/rs/zerolog v1.24.0
+	github.com/prometheus/client_golang v1.1.0
+	github.com/robfig/cron/v3 v3.0.0
+	github.com/rs/zerolog v1.19.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/segmentio/kafka-go v0.4.17 // indirect
 	github.com/sirupsen/logrus v1.7.0

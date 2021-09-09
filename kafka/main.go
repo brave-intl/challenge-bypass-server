@@ -31,26 +31,14 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 	logger.Infof("Starting %s Kafka consumers", env)
 	topicMappings := []TopicMapping{
 		TopicMapping{
-			Topic:       "request.redeem.payment." + env + ".cbp",
-			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Topic:       "request.redeem." + env + ".cbp",
+			ResultTopic: "result.redeem." + env + ".cbp",
 			Processor:   BlindedTokenIssuerHandler,
 			Group:       "cbpProcessors",
 		},
 		TopicMapping{
-			Topic:       "request.redeem.confirmation." + env + ".cbp",
-			ResultTopic: "result.redeem.payment." + env + ".cbp",
-			Processor:   BlindedTokenIssuerHandler,
-			Group:       "cbpProcessors",
-		},
-		TopicMapping{
-			Topic:       "request.sign.payment." + env + ".cbp",
-			ResultTopic: "result.redeem.payment." + env + ".cbp",
-			Processor:   BlindedTokenIssuerHandler,
-			Group:       "cbpProcessors",
-		},
-		TopicMapping{
-			Topic:       "request.sign.confirmation." + env + ".cbp",
-			ResultTopic: "result.redeem.payment." + env + ".cbp",
+			Topic:       "request.sign." + env + ".cbp",
+			ResultTopic: "result.sign." + env + ".cbp",
 			Processor:   BlindedTokenIssuerHandler,
 			Group:       "cbpProcessors",
 		},
