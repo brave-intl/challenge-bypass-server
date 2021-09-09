@@ -74,6 +74,7 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 					failureCount++
 					continue
 				}
+				logger.Infof("Processing message")
 				go topicMapping.Processor(msg.Value, topicMapping.ResultTopic, server, logger)
 				return
 			}
@@ -112,6 +113,7 @@ func newConsumer(topic string, groupId string, logger *logrus.Logger) *kafka.Rea
 
 // Emit sends a message over the Kafka interface.
 func Emit(topic string, message []byte, logger *logrus.Logger) error {
+	logger.Infof("Beginning data emission for topic %s", topic)
 	partition := 0
 
 	if len(brokers) < 1 {
@@ -136,5 +138,6 @@ func Emit(topic string, message []byte, logger *logrus.Logger) error {
 		logger.Fatal("Failed to close writer:", err)
 		return err
 	}
+	logger.Info("Data emitted")
 	return nil
 }

@@ -41,9 +41,9 @@ func (c *Server) getLatestIssuer(issuerType string, issuerCohort int) (*Issuer, 
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if err == errIssuerCohortNotFound {
-			c.Logger.Error("Issuer with given cohort not found")
+			c.Logger.Error("Issuer with given type and cohort not found")
 			return nil, &handlers.AppError{
-				Message: "Issuer with given cohort not found",
+				Message: "Issuer with given type and cohort not found",
 				Code:    404,
 			}
 		}

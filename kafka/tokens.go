@@ -8,6 +8,7 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/sirupsen/logrus"
+	"strings"
 )
 
 func BlindedTokenIssuerHandler(
@@ -28,7 +29,7 @@ func BlindedTokenIssuerHandler(
 		}
 
 		if request.Issuer_cohort != 0 && request.Issuer_cohort != 1 {
-			logger.Error("Not supported Cohort")
+			logger.Error("Provided cohort is not supported: %d", request.Issuer_cohort)
 			continue
 		}
 
@@ -46,14 +47,31 @@ func BlindedTokenIssuerHandler(
 		blindedToken := crypto.BlindedToken{}
 		blindedToken.UnmarshalText(request.Blinded_token)
 		blindedTokens := []*crypto.BlindedToken{&blindedToken}
+		// @TODO: If one token fails they will all fail. Assess this behavior
 		signedTokens, _, err := btd.ApproveTokens(blindedTokens, issuer.SigningKey)
 		if err != nil {
-			logger.Error("Could not approve new tokens")
+			logger.Error("Could not approve new tokens: %e", err)
 			continue
 		}
+		var marshaledTokens []string
+		for _, token := range signedTokens {
+			marshaledToken, err := token.MarshalText()
+			if err != nil {
+				logger.Error("Could not marshal new tokens to bytes: %e", err)
+				panic("Could not marshal new tokens to bytes")
+				//continue
+			}
+			marshaledTokens = append(marshaledTokens, string(marshaledToken[:]))
+		}
+		marshaledSigningKey, err := issuer.SigningKey.MarshalText()
+		if err != nil {
+			logger.Error("Could not marshal signing key: %e", err)
+			panic("Could not marshal signing key")
+			//continue
+		}
 		blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-			Output:            utils.StructToBytes(signedTokens),
-			Issuer_public_key: utils.StructToBytes(issuer.SigningKey),
+			Output:            []byte(strings.Join(marshaledTokens, ",")),
+			Issuer_public_key: marshaledSigningKey,
 			Status:            0,
 			Associated_data:   utils.StructToBytes(request.Associated_data),
 		})
