@@ -105,7 +105,7 @@ func BlindedTokenRedeemHandler(
 
 		if request.Token_preimage == nil || request.Signature == nil || request.Token == nil {
 			logger.Error("Empty request")
-                        continue
+			continue
 		}
 
 		var verified = false
