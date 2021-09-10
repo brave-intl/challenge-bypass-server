@@ -26,16 +26,16 @@ type RedeemRequest struct {
 	// contains METADATA
 	Associated_data Bytes `json:"associated_data"`
 
-	Token string `json:"token"`
+	Token Bytes `json:"token"`
 
 	Issuer_type string `json:"issuer_type"`
 
-	Token_preimage string `json:"token_preimage"`
+	Token_preimage Bytes `json:"token_preimage"`
 
-	Signature string `json:"signature"`
+	Signature Bytes `json:"signature"`
 }
 
-const RedeemRequestAvroCRC64Fingerprint = "KB$\x06\x1c`U\x94"
+const RedeemRequestAvroCRC64Fingerprint = "\x88\xd9\xe8vh\xe4\x00\xcd"
 
 func NewRedeemRequest() RedeemRequest {
 	r := RedeemRequest{}
@@ -71,7 +71,7 @@ func writeRedeemRequest(r RedeemRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = vm.WriteString(r.Token, w)
+	err = vm.WriteBytes(r.Token, w)
 	if err != nil {
 		return err
 	}
@@ -79,11 +79,11 @@ func writeRedeemRequest(r RedeemRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = vm.WriteString(r.Token_preimage, w)
+	err = vm.WriteBytes(r.Token_preimage, w)
 	if err != nil {
 		return err
 	}
-	err = vm.WriteString(r.Signature, w)
+	err = vm.WriteBytes(r.Signature, w)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (r RedeemRequest) Serialize(w io.Writer) error {
 }
 
 func (r RedeemRequest) Schema() string {
-	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"token\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"string\"},{\"name\":\"signature\",\"type\":\"string\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"token\",\"type\":\"bytes\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"bytes\"},{\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
 }
 
 func (r RedeemRequest) SchemaName() string {
@@ -116,13 +116,13 @@ func (r *RedeemRequest) Get(i int) types.Field {
 	case 0:
 		return &BytesWrapper{Target: &r.Associated_data}
 	case 1:
-		return &types.String{Target: &r.Token}
+		return &BytesWrapper{Target: &r.Token}
 	case 2:
 		return &types.String{Target: &r.Issuer_type}
 	case 3:
-		return &types.String{Target: &r.Token_preimage}
+		return &BytesWrapper{Target: &r.Token_preimage}
 	case 4:
-		return &types.String{Target: &r.Signature}
+		return &BytesWrapper{Target: &r.Signature}
 	}
 	panic("Unknown field index")
 }

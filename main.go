@@ -73,7 +73,7 @@ func main() {
 
 		if err != nil {
 			raven.CaptureErrorAndWait(err, nil)
-			logger.Panic(err)
+			logger.Error(err)
 			return
 		}
 	}()

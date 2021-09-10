@@ -102,13 +102,10 @@ func BlindedTokenRedeemHandler(
 			logger.Error("Missing issuer type")
 			continue
 		}
-		if request.Token == "" {
-			logger.Error("Empty request")
-			continue
-		}
 
-		if request.Token_preimage == "" || request.Signature == "" {
+		if request.Token_preimage == nil || request.Signature == nil || request.Token == nil {
 			logger.Error("Empty request")
+                        continue
 		}
 
 		var verified = false
@@ -132,7 +129,7 @@ func BlindedTokenRedeemHandler(
 			if err := btd.VerifyTokenRedemption(
 				&tokenPreimage,
 				&verificationSignature,
-				request.Token,
+				string(request.Token),
 				[]*crypto.SigningKey{issuer.SigningKey},
 			); err != nil {
 				verified = false
@@ -148,7 +145,7 @@ func BlindedTokenRedeemHandler(
 			logger.Error("Could not verify that the token redemption is valid")
 		}
 
-		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, request.Token); err != nil {
+		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Token)); err != nil {
 			if strings.Contains(err.Error(), "Duplicate") {
 				logger.Error(err)
 			}

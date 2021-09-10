@@ -29,7 +29,7 @@ type RedeemRequestSet struct {
 	Data []RedeemRequest `json:"data"`
 }
 
-const RedeemRequestSetAvroCRC64Fingerprint = "\xf3\xdd=\x88\xf0C\xb0\xde"
+const RedeemRequestSetAvroCRC64Fingerprint = "P \xfd`ņ3\xb8"
 
 func NewRedeemRequestSet() RedeemRequestSet {
 	r := RedeemRequestSet{}
@@ -79,7 +79,7 @@ func (r RedeemRequestSet) Serialize(w io.Writer) error {
 }
 
 func (r RedeemRequestSet) Schema() string {
-	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"token\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"string\"},{\"name\":\"signature\",\"type\":\"string\"}],\"name\":\"RedeemRequest\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemRequestSet\",\"type\":\"record\"}"
+	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"token\",\"type\":\"bytes\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"bytes\"},{\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"RedeemRequest\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemRequestSet\",\"type\":\"record\"}"
 }
 
 func (r RedeemRequestSet) SchemaName() string {
