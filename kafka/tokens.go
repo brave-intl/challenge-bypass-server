@@ -37,7 +37,7 @@ func BlindedTokenIssuerHandler(
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int(request.Issuer_cohort))
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-				Signed_tokens:            nil,
+				Signed_tokens:     nil,
 				Issuer_public_key: "",
 				Status:            2,
 				Associated_data:   request.Associated_data,
@@ -87,10 +87,16 @@ func BlindedTokenIssuerHandler(
 			Associated_data:   utils.StructToBytes(request.Associated_data),
 		})
 	}
-	err = Emit(resultTopic, utils.StructToBytes(avroSchema.SigningResultSet{
+	resultSet := avroSchema.SigningResultSet{
 		Request_id: blindedTokenRequestSet.Request_id,
 		Data:       blindedTokenResults,
-	}), logger)
+	}
+	var resultSetBuffer bytes.Buffer
+	err = resultSet.Serialize(&resultSetBuffer)
+	if err != nil {
+		logger.Errorf("Failed to serialize ResultSet: %s", resultSet)
+	}
+	err = Emit(resultTopic, resultSetBuffer.Bytes(), logger)
 	if err != nil {
 		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
 	}
