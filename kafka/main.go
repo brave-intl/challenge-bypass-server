@@ -3,13 +3,14 @@ package kafka
 import (
 	"context"
 	"fmt"
+	"os"
+	"strings"
+	"time"
+
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/segmentio/kafka-go"
 	"github.com/sirupsen/logrus"
-	"os"
-	"strings"
-	"time"
 )
 
 var brokers []string
@@ -64,7 +65,6 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 				}
 				logger.Infof("Processing message")
 				go topicMapping.Processor(msg.Value, topicMapping.ResultTopic, server, logger)
-				return
 			}
 		}()
 	}
