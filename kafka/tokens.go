@@ -169,10 +169,17 @@ func BlindedTokenRedeemHandler(
 			Associated_data:   request.Associated_data,
 		})
 	}
-	err = Emit(resultTopic, utils.StructToBytes(avroSchema.RedeemResultSet{
+	resultSet := avroSchema.RedeemResultSet{
 		Request_id: tokenRedeemRequestSet.Request_id,
 		Data:       redeemedTokenResults,
-	}), logger)
+	}
+	var resultSetBuffer bytes.Buffer
+	err = resultSet.Serialize(&resultSetBuffer)
+	if err != nil {
+		logger.Errorf("Failed to serialize ResultSet: %s", resultSet)
+	}
+
+	err = Emit(resultTopic, resultSetBuffer.Bytes(), logger)
 	if err != nil {
 		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
 	}
