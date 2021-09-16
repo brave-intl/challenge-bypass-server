@@ -6,7 +6,6 @@ import (
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
-	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/sirupsen/logrus"
 	"strings"
 	"time"
@@ -84,7 +83,7 @@ func BlindedTokenIssuerHandler(
 			Proof:             string(marshaledDLEQProof),
 			Issuer_public_key: string(marshaledPublicKey),
 			Status:            0,
-			Associated_data:   utils.StructToBytes(request.Associated_data),
+			Associated_data:   request.Associated_data,
 		})
 	}
 	resultSet := avroSchema.SigningResultSet{
