@@ -15,7 +15,7 @@ import (
  this behavior to share utility functions rather than passing an instance of the server
  as an argument here. That will require a bit of refactoring.
 */
-func BlindedTokenIssuerHandler(
+func SignedBlindedTokenIssuerHandler(
 	data []byte,
 	resultTopic string,
 	server *cbpServer.Server,

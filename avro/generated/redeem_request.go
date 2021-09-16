@@ -26,16 +26,16 @@ type RedeemRequest struct {
 	// contains METADATA
 	Associated_data Bytes `json:"associated_data"`
 
-	Signed_token string `json:"signed_token"`
-
 	Issuer_type string `json:"issuer_type"`
 
 	Token_preimage string `json:"token_preimage"`
 
+	Signature_source string `json:"signature_source"`
+
 	Signature string `json:"signature"`
 }
 
-const RedeemRequestAvroCRC64Fingerprint = "U\x8cgj\xc6\x00\x84B"
+const RedeemRequestAvroCRC64Fingerprint = "\x1b\u0600\x04\xab\x1e6I"
 
 func NewRedeemRequest() RedeemRequest {
 	r := RedeemRequest{}
@@ -71,15 +71,15 @@ func writeRedeemRequest(r RedeemRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = vm.WriteString(r.Signed_token, w)
-	if err != nil {
-		return err
-	}
 	err = vm.WriteString(r.Issuer_type, w)
 	if err != nil {
 		return err
 	}
 	err = vm.WriteString(r.Token_preimage, w)
+	if err != nil {
+		return err
+	}
+	err = vm.WriteString(r.Signature_source, w)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (r RedeemRequest) Serialize(w io.Writer) error {
 }
 
 func (r RedeemRequest) Schema() string {
-	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"signed_token\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"string\"},{\"name\":\"signature\",\"type\":\"string\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"string\"},{\"name\":\"signature_source\",\"type\":\"string\"},{\"name\":\"signature\",\"type\":\"string\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
 }
 
 func (r RedeemRequest) SchemaName() string {
@@ -116,11 +116,11 @@ func (r *RedeemRequest) Get(i int) types.Field {
 	case 0:
 		return &BytesWrapper{Target: &r.Associated_data}
 	case 1:
-		return &types.String{Target: &r.Signed_token}
-	case 2:
 		return &types.String{Target: &r.Issuer_type}
-	case 3:
+	case 2:
 		return &types.String{Target: &r.Token_preimage}
+	case 3:
+		return &types.String{Target: &r.Signature_source}
 	case 4:
 		return &types.String{Target: &r.Signature}
 	}
@@ -154,15 +154,15 @@ func (r RedeemRequest) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	output["signed_token"], err = json.Marshal(r.Signed_token)
-	if err != nil {
-		return nil, err
-	}
 	output["issuer_type"], err = json.Marshal(r.Issuer_type)
 	if err != nil {
 		return nil, err
 	}
 	output["token_preimage"], err = json.Marshal(r.Token_preimage)
+	if err != nil {
+		return nil, err
+	}
+	output["signature_source"], err = json.Marshal(r.Signature_source)
 	if err != nil {
 		return nil, err
 	}
@@ -195,20 +195,6 @@ func (r *RedeemRequest) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("no value specified for associated_data")
 	}
 	val = func() json.RawMessage {
-		if v, ok := fields["signed_token"]; ok {
-			return v
-		}
-		return nil
-	}()
-
-	if val != nil {
-		if err := json.Unmarshal([]byte(val), &r.Signed_token); err != nil {
-			return err
-		}
-	} else {
-		return fmt.Errorf("no value specified for signed_token")
-	}
-	val = func() json.RawMessage {
 		if v, ok := fields["issuer_type"]; ok {
 			return v
 		}
@@ -235,6 +221,20 @@ func (r *RedeemRequest) UnmarshalJSON(data []byte) error {
 		}
 	} else {
 		return fmt.Errorf("no value specified for token_preimage")
+	}
+	val = func() json.RawMessage {
+		if v, ok := fields["signature_source"]; ok {
+			return v
+		}
+		return nil
+	}()
+
+	if val != nil {
+		if err := json.Unmarshal([]byte(val), &r.Signature_source); err != nil {
+			return err
+		}
+	} else {
+		return fmt.Errorf("no value specified for signature_source")
 	}
 	val = func() json.RawMessage {
 		if v, ok := fields["signature"]; ok {

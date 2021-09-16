@@ -14,14 +14,16 @@
                     "type": "record",
                     "name": "RedeemResult",
                     "fields": [
-                        {"name": "payment_token", "type": "string"},
                         {"name": "issuer_public_key", "type": "string"},
                         {"name": "issuer_cohort", "type": "int"},
-                        {"name": "status", "type": {
-                            "name": "RedeemResultStatus",
-                            "type": "enum",
-                            "symbols": ["ok", "duplicate_redemption"]
-                        }},
+                        {
+                            "name": "status",
+                            "type": {
+                                "name": "RedeemResultStatus",
+                                "type": "enum",
+                                "symbols": ["ok", "duplicate_redemption"]
+                            }
+                        },
                         {"name": "associated_data", "type": "bytes", "doc": "contains METADATA"}
                     ]
                 }

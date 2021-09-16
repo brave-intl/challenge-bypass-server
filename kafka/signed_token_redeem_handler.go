@@ -15,7 +15,7 @@ import (
  BlindedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
  tokens provided.
 */
-func BlindedTokenRedeemHandler(
+func SignedTokenRedeemHandler(
 	data []byte,
 	resultTopic string,
 	server *cbpServer.Server,
@@ -37,7 +37,7 @@ func BlindedTokenRedeemHandler(
 			continue
 		}
 
-		if request.Token_preimage == "" || request.Signature == "" || request.Signed_token == "" {
+		if request.Token_preimage == "" || request.Signature == "" || request.Signature_source == "" {
 			logger.Error("Empty request")
 			continue
 		}
@@ -60,7 +60,7 @@ func BlindedTokenRedeemHandler(
 			if err := btd.VerifyTokenRedemption(
 				&tokenPreimage,
 				&verificationSignature,
-				string(request.Signed_token),
+				string(request.Signature_source),
 				[]*crypto.SigningKey{issuer.SigningKey},
 			); err != nil {
 				verified = false
@@ -76,7 +76,7 @@ func BlindedTokenRedeemHandler(
 			logger.Error("Could not verify that the token redemption is valid")
 		}
 
-		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Signed_token)); err != nil {
+		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Signature_source)); err != nil {
 			if strings.Contains(err.Error(), "Duplicate") {
 				logger.Error(err)
 			}
@@ -93,7 +93,6 @@ func BlindedTokenRedeemHandler(
 			panic(err)
 		}
 		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
-			Payment_token:     request.Signed_token,
 			Issuer_public_key: string(marshaledPublicKey),
 			Issuer_cohort:     verifiedCohort,
 			Status:            0,

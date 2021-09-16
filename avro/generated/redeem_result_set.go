@@ -29,7 +29,7 @@ type RedeemResultSet struct {
 	Data []RedeemResult `json:"data"`
 }
 
-const RedeemResultSetAvroCRC64Fingerprint = "\xcckL2\xa7,\xe5S"
+const RedeemResultSetAvroCRC64Fingerprint = "$\\(s\v\x85\xf7\x18"
 
 func NewRedeemResultSet() RedeemResultSet {
 	r := RedeemResultSet{}
@@ -79,7 +79,7 @@ func (r RedeemResultSet) Serialize(w io.Writer) error {
 }
 
 func (r RedeemResultSet) Schema() string {
-	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"name\":\"payment_token\",\"type\":\"string\"},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"RedeemResult\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemResultSet\",\"type\":\"record\"}"
+	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"RedeemResult\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemResultSet\",\"type\":\"record\"}"
 }
 
 func (r RedeemResultSet) SchemaName() string {
