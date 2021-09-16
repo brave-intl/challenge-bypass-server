@@ -7,10 +7,14 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/sirupsen/logrus"
-	"strings"
-	"time"
 )
 
+/*
+ BlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+ @TODO: It would be better for the Server implementation and the Kafka implementation of
+ this behavior to share utility functions rather than passing an instance of the server
+ as an argument here. That will require a bit of refactoring.
+*/
 func BlindedTokenIssuerHandler(
 	data []byte,
 	resultTopic string,
@@ -95,105 +99,6 @@ func BlindedTokenIssuerHandler(
 	if err != nil {
 		logger.Errorf("Failed to serialize ResultSet: %s", resultSet)
 	}
-	err = Emit(resultTopic, resultSetBuffer.Bytes(), logger)
-	if err != nil {
-		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
-	}
-}
-
-func BlindedTokenRedeemHandler(
-	data []byte,
-	resultTopic string,
-	server *cbpServer.Server,
-	logger *logrus.Logger,
-) {
-	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
-	if err != nil {
-		logger.Errorf("Failed Avro deserialization: %e", err)
-	}
-	var redeemedTokenResults []avroSchema.RedeemResult
-	for _, request := range tokenRedeemRequestSet.Data {
-		if request.Issuer_type == "" {
-			logger.Error("Missing issuer type")
-			continue
-		}
-
-		if request.Token_preimage == nil || request.Signature == nil || request.Token == nil {
-			logger.Error("Empty request")
-			continue
-		}
-
-		var verified = false
-		var verifiedIssuer = &cbpServer.Issuer{}
-		var verifiedCohort int32 = 0
-		issuers := server.MustGetIssuers(request.Issuer_type)
-		tokenPreimage := crypto.TokenPreimage{}
-		err := tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
-		if err != nil {
-			logger.Errorf("Could not unmarshal text into preimage: %e", err)
-		}
-		verificationSignature := crypto.VerificationSignature{}
-		err = verificationSignature.UnmarshalText([]byte(request.Signature))
-		if err != nil {
-			logger.Errorf("Could not unmarshal text into verification signature: %e", err)
-		}
-		for _, issuer := range *issuers {
-			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
-				continue
-			}
-			if err := btd.VerifyTokenRedemption(
-				&tokenPreimage,
-				&verificationSignature,
-				string(request.Token),
-				[]*crypto.SigningKey{issuer.SigningKey},
-			); err != nil {
-				verified = false
-			} else {
-				verified = true
-				verifiedIssuer = &issuer
-				verifiedCohort = int32(issuer.IssuerCohort)
-				break
-			}
-		}
-
-		if !verified {
-			logger.Error("Could not verify that the token redemption is valid")
-		}
-
-		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Token)); err != nil {
-			if strings.Contains(err.Error(), "Duplicate") {
-				logger.Error(err)
-			}
-			logger.Error("Could not mark token redemption")
-		}
-		if err != nil {
-			logger.Error("Could not encode the blinded token")
-			panic(err)
-		}
-		publicKey := verifiedIssuer.SigningKey.PublicKey()
-		marshaledPublicKey, err := publicKey.MarshalText()
-		if err != nil {
-			logger.Error("Could not marshal public key text")
-			panic(err)
-		}
-		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
-			Output:            []byte(request.Token),
-			Issuer_public_key: string(marshaledPublicKey),
-			Issuer_cohort:     verifiedCohort,
-			Status:            0,
-			Associated_data:   request.Associated_data,
-		})
-	}
-	resultSet := avroSchema.RedeemResultSet{
-		Request_id: tokenRedeemRequestSet.Request_id,
-		Data:       redeemedTokenResults,
-	}
-	var resultSetBuffer bytes.Buffer
-	err = resultSet.Serialize(&resultSetBuffer)
-	if err != nil {
-		logger.Errorf("Failed to serialize ResultSet: %s", resultSet)
-	}
-
 	err = Emit(resultTopic, resultSetBuffer.Bytes(), logger)
 	if err != nil {
 		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)

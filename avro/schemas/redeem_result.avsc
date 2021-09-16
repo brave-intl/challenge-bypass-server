@@ -14,7 +14,7 @@
                     "type": "record",
                     "name": "RedeemResult",
                     "fields": [
-                        {"name": "output", "type": "bytes"},
+                        {"name": "payment_token", "type": "string"},
                         {"name": "issuer_public_key", "type": "string"},
                         {"name": "issuer_cohort", "type": "int"},
                         {"name": "status", "type": {

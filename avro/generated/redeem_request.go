@@ -26,16 +26,16 @@ type RedeemRequest struct {
 	// contains METADATA
 	Associated_data Bytes `json:"associated_data"`
 
-	Token Bytes `json:"token"`
+	Signed_token string `json:"signed_token"`
 
 	Issuer_type string `json:"issuer_type"`
 
-	Token_preimage Bytes `json:"token_preimage"`
+	Token_preimage string `json:"token_preimage"`
 
-	Signature Bytes `json:"signature"`
+	Signature string `json:"signature"`
 }
 
-const RedeemRequestAvroCRC64Fingerprint = "\x88\xd9\xe8vh\xe4\x00\xcd"
+const RedeemRequestAvroCRC64Fingerprint = "U\x8cgj\xc6\x00\x84B"
 
 func NewRedeemRequest() RedeemRequest {
 	r := RedeemRequest{}
@@ -71,7 +71,7 @@ func writeRedeemRequest(r RedeemRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = vm.WriteBytes(r.Token, w)
+	err = vm.WriteString(r.Signed_token, w)
 	if err != nil {
 		return err
 	}
@@ -79,11 +79,11 @@ func writeRedeemRequest(r RedeemRequest, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	err = vm.WriteBytes(r.Token_preimage, w)
+	err = vm.WriteString(r.Token_preimage, w)
 	if err != nil {
 		return err
 	}
-	err = vm.WriteBytes(r.Signature, w)
+	err = vm.WriteString(r.Signature, w)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func (r RedeemRequest) Serialize(w io.Writer) error {
 }
 
 func (r RedeemRequest) Schema() string {
-	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"token\",\"type\":\"bytes\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"bytes\"},{\"name\":\"signature\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"},{\"name\":\"signed_token\",\"type\":\"string\"},{\"name\":\"issuer_type\",\"type\":\"string\"},{\"name\":\"token_preimage\",\"type\":\"string\"},{\"name\":\"signature\",\"type\":\"string\"}],\"name\":\"brave.cbp.RedeemRequest\",\"type\":\"record\"}"
 }
 
 func (r RedeemRequest) SchemaName() string {
@@ -116,13 +116,13 @@ func (r *RedeemRequest) Get(i int) types.Field {
 	case 0:
 		return &BytesWrapper{Target: &r.Associated_data}
 	case 1:
-		return &BytesWrapper{Target: &r.Token}
+		return &types.String{Target: &r.Signed_token}
 	case 2:
 		return &types.String{Target: &r.Issuer_type}
 	case 3:
-		return &BytesWrapper{Target: &r.Token_preimage}
+		return &types.String{Target: &r.Token_preimage}
 	case 4:
-		return &BytesWrapper{Target: &r.Signature}
+		return &types.String{Target: &r.Signature}
 	}
 	panic("Unknown field index")
 }
@@ -154,7 +154,7 @@ func (r RedeemRequest) MarshalJSON() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	output["token"], err = json.Marshal(r.Token)
+	output["signed_token"], err = json.Marshal(r.Signed_token)
 	if err != nil {
 		return nil, err
 	}
@@ -195,18 +195,18 @@ func (r *RedeemRequest) UnmarshalJSON(data []byte) error {
 		return fmt.Errorf("no value specified for associated_data")
 	}
 	val = func() json.RawMessage {
-		if v, ok := fields["token"]; ok {
+		if v, ok := fields["signed_token"]; ok {
 			return v
 		}
 		return nil
 	}()
 
 	if val != nil {
-		if err := json.Unmarshal([]byte(val), &r.Token); err != nil {
+		if err := json.Unmarshal([]byte(val), &r.Signed_token); err != nil {
 			return err
 		}
 	} else {
-		return fmt.Errorf("no value specified for token")
+		return fmt.Errorf("no value specified for signed_token")
 	}
 	val = func() json.RawMessage {
 		if v, ok := fields["issuer_type"]; ok {

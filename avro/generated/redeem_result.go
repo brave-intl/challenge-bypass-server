@@ -23,7 +23,7 @@ import (
 var _ = fmt.Printf
 
 type RedeemResult struct {
-	Output Bytes `json:"output"`
+	Payment_token string `json:"payment_token"`
 
 	Issuer_public_key string `json:"issuer_public_key"`
 
@@ -34,7 +34,7 @@ type RedeemResult struct {
 	Associated_data Bytes `json:"associated_data"`
 }
 
-const RedeemResultAvroCRC64Fingerprint = "\x1c\xee\xb5k\xc0\xfcV\x1d"
+const RedeemResultAvroCRC64Fingerprint = "\xab\xdd\x19\xdc\x0f\xe9\xecy"
 
 func NewRedeemResult() RedeemResult {
 	r := RedeemResult{}
@@ -66,7 +66,7 @@ func DeserializeRedeemResultFromSchema(r io.Reader, schema string) (RedeemResult
 
 func writeRedeemResult(r RedeemResult, w io.Writer) error {
 	var err error
-	err = vm.WriteBytes(r.Output, w)
+	err = vm.WriteString(r.Payment_token, w)
 	if err != nil {
 		return err
 	}
@@ -94,7 +94,7 @@ func (r RedeemResult) Serialize(w io.Writer) error {
 }
 
 func (r RedeemResult) Schema() string {
-	return "{\"fields\":[{\"name\":\"output\",\"type\":\"bytes\"},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemResult\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"name\":\"payment_token\",\"type\":\"string\"},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemResult\",\"type\":\"record\"}"
 }
 
 func (r RedeemResult) SchemaName() string {
@@ -113,7 +113,7 @@ func (_ RedeemResult) SetUnionElem(v int64) { panic("Unsupported operation") }
 func (r *RedeemResult) Get(i int) types.Field {
 	switch i {
 	case 0:
-		return &BytesWrapper{Target: &r.Output}
+		return &types.String{Target: &r.Payment_token}
 	case 1:
 		return &types.String{Target: &r.Issuer_public_key}
 	case 2:
@@ -149,7 +149,7 @@ func (_ RedeemResult) AvroCRC64Fingerprint() []byte {
 func (r RedeemResult) MarshalJSON() ([]byte, error) {
 	var err error
 	output := make(map[string]json.RawMessage)
-	output["output"], err = json.Marshal(r.Output)
+	output["payment_token"], err = json.Marshal(r.Payment_token)
 	if err != nil {
 		return nil, err
 	}
@@ -180,18 +180,18 @@ func (r *RedeemResult) UnmarshalJSON(data []byte) error {
 
 	var val json.RawMessage
 	val = func() json.RawMessage {
-		if v, ok := fields["output"]; ok {
+		if v, ok := fields["payment_token"]; ok {
 			return v
 		}
 		return nil
 	}()
 
 	if val != nil {
-		if err := json.Unmarshal([]byte(val), &r.Output); err != nil {
+		if err := json.Unmarshal([]byte(val), &r.Payment_token); err != nil {
 			return err
 		}
 	} else {
-		return fmt.Errorf("no value specified for output")
+		return fmt.Errorf("no value specified for payment_token")
 	}
 	val = func() json.RawMessage {
 		if v, ok := fields["issuer_public_key"]; ok {
