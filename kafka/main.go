@@ -49,12 +49,12 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 		// This has to be outside the goroutine to ensure that each consumer gets
 		// different values. @TODO: Figure out why this is. If this is inside the
 		// goroutine all consumers use the same topicMapping values.
-		consumer := newConsumer(topicMapping.Topic, topicMapping.Group, logger)
-		go func() {
+		go func(topicData TopicMapping) {
 			var (
 				failureCount = 0
 				failureLimit = 10
 			)
+			consumer := newConsumer(topicData.Topic, topicData.Group, logger)
 			for {
 				// `ReadMessage` blocks until the next event. Do not block main.
 				msg, err := consumer.ReadMessage(context.Background())
@@ -67,9 +67,9 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 					continue
 				}
 				logger.Infof("Processing message")
-				go topicMapping.Processor(msg.Value, topicMapping.ResultTopic, server, logger)
+				go topicData.Processor(msg.Value, topicData.ResultTopic, server, logger)
 			}
-		}()
+		}(topicMapping)
 	}
 	return nil
 }
