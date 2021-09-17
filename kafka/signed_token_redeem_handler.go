@@ -2,13 +2,14 @@ package kafka
 
 import (
 	"bytes"
+	"strings"
+	"time"
+
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/sirupsen/logrus"
-	"strings"
-	"time"
 )
 
 /*
@@ -75,7 +76,6 @@ func SignedTokenRedeemHandler(
 		if !verified {
 			logger.Error("Could not verify that the token redemption is valid")
 		}
-
 		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Signature_source)); err != nil {
 			if strings.Contains(err.Error(), "Duplicate") {
 				logger.Error(err)
