@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"bytes"
+
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
@@ -42,7 +43,7 @@ func SignedBlindedTokenIssuerHandler(
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
-				Status:            2,
+				Status:            1,
 				Associated_data:   request.Associated_data,
 			})
 			continue
