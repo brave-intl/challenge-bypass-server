@@ -79,6 +79,13 @@ func SignedTokenRedeemHandler(
 		if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Signature_source)); err != nil {
 			if strings.Contains(err.Error(), "Duplicate") {
 				logger.Error(err)
+				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+					Issuer_public_key: "",
+					Issuer_cohort:     0,
+					Status:            1,
+					Associated_data:   request.Associated_data,
+				})
+				continue
 			}
 			logger.Error("Could not mark token redemption")
 		}
