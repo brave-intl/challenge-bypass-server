@@ -6,7 +6,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/segmentio/kafka-go"
