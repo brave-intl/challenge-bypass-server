@@ -34,7 +34,7 @@ type SigningResult struct {
 	Associated_data Bytes `json:"associated_data"`
 }
 
-const SigningResultAvroCRC64Fingerprint = "\xd5LN\xa1\xdfb\xa6K"
+const SigningResultAvroCRC64Fingerprint = "!:\xad/\x80\x85\x98\xa9"
 
 func NewSigningResult() SigningResult {
 	r := SigningResult{}
@@ -96,7 +96,7 @@ func (r SigningResult) Serialize(w io.Writer) error {
 }
 
 func (r SigningResult) Schema() string {
-	return "{\"fields\":[{\"name\":\"signed_tokens\",\"type\":{\"items\":{\"name\":\"signed_token\",\"type\":\"string\"},\"type\":\"array\"}},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"proof\",\"type\":\"string\"},{\"name\":\"status\",\"type\":{\"name\":\"SigningResultStatus\",\"symbols\":[\"ok\",\"invalid_issuer\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.SigningResult\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"name\":\"signed_tokens\",\"type\":{\"items\":{\"name\":\"signed_token\",\"type\":\"string\"},\"type\":\"array\"}},{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"proof\",\"type\":\"string\"},{\"name\":\"status\",\"type\":{\"name\":\"SigningResultStatus\",\"symbols\":[\"ok\",\"invalid_issuer\",\"error\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.SigningResult\",\"type\":\"record\"}"
 }
 
 func (r SigningResult) SchemaName() string {

@@ -29,7 +29,7 @@
                         {"name": "status", "type": {
                             "name": "SigningResultStatus",
                             "type": "enum",
-                            "symbols": ["ok", "invalid_issuer"]
+                            "symbols": ["ok", "invalid_issuer", "error"]
                         }},
                         {"name": "associated_data", "type": "bytes", "doc": "contains METADATA"}
                     ]

@@ -32,7 +32,7 @@ type RedeemResult struct {
 	Associated_data Bytes `json:"associated_data"`
 }
 
-const RedeemResultAvroCRC64Fingerprint = "L\xbe\xe9\xe1N\xe7Y\x98"
+const RedeemResultAvroCRC64Fingerprint = "\xb5\xef\x1c${\xb7a\\"
 
 func NewRedeemResult() RedeemResult {
 	r := RedeemResult{}
@@ -88,7 +88,7 @@ func (r RedeemResult) Serialize(w io.Writer) error {
 }
 
 func (r RedeemResult) Schema() string {
-	return "{\"fields\":[{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemResult\",\"type\":\"record\"}"
+	return "{\"fields\":[{\"name\":\"issuer_public_key\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\",\"unverified\",\"error\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"brave.cbp.RedeemResult\",\"type\":\"record\"}"
 }
 
 func (r RedeemResult) SchemaName() string {

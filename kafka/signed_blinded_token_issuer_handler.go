@@ -24,17 +24,17 @@ func SignedBlindedTokenIssuerHandler(
 ) {
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
-		logger.Errorf("Failed Avro deserialization: %e", err)
+		logger.Errorf("Request %s: Failed Avro deserialization: %e", blindedTokenRequestSet.Request_id, err)
 	}
 	var blindedTokenResults []avroSchema.SigningResult
 	for _, request := range blindedTokenRequestSet.Data {
 		if request.Blinded_tokens == nil {
-			logger.Error("Empty request")
+			logger.Error("Request %s: Empty request")
 			continue
 		}
 
 		if request.Issuer_cohort != 0 && request.Issuer_cohort != 1 {
-			logger.Error("Provided cohort is not supported: %d", request.Issuer_cohort)
+			logger.Error("Request %s: Provided cohort is not supported: %d", blindedTokenRequestSet.Request_id, request.Issuer_cohort)
 			continue
 		}
 
@@ -60,19 +60,25 @@ func SignedBlindedTokenIssuerHandler(
 		// @TODO: If one token fails they will all fail. Assess this behavior
 		signedTokens, dleqProof, err := btd.ApproveTokens(blindedTokens, issuer.SigningKey)
 		if err != nil {
-			logger.Error("Could not approve new tokens: %e", err)
+			logger.Error("Request %s: Could not approve new tokens: %e", blindedTokenRequestSet.Request_id, err)
+			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
+				Signed_tokens:     nil,
+				Issuer_public_key: "",
+				Status:            2,
+				Associated_data:   request.Associated_data,
+			})
 			continue
 		}
 		marshaledDLEQProof, err := dleqProof.MarshalText()
 		if err != nil {
-			logger.Error("Could not marshal DLEQ proof: %e", err)
+			logger.Error("Request %s: Could not marshal DLEQ proof: %e", blindedTokenRequestSet.Request_id, err)
 			panic("Could not marshal DLEQ proof")
 		}
 		var marshaledTokens []string
 		for _, token := range signedTokens {
 			marshaledToken, err := token.MarshalText()
 			if err != nil {
-				logger.Error("Could not marshal new tokens to bytes: %e", err)
+				logger.Error("Request %s: Could not marshal new tokens to bytes: %e", blindedTokenRequestSet.Request_id, err)
 				panic("Could not marshal new tokens to bytes")
 			}
 			marshaledTokens = append(marshaledTokens, string(marshaledToken[:]))
@@ -80,7 +86,7 @@ func SignedBlindedTokenIssuerHandler(
 		publicKey := issuer.SigningKey.PublicKey()
 		marshaledPublicKey, err := publicKey.MarshalText()
 		if err != nil {
-			logger.Error("Could not marshal signing key: %e", err)
+			logger.Error("Request %s: Could not marshal signing key: %e", blindedTokenRequestSet.Request_id, err)
 			panic("Could not marshal signing key")
 		}
 		blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
@@ -98,10 +104,10 @@ func SignedBlindedTokenIssuerHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		logger.Errorf("Failed to serialize ResultSet: %s", resultSet)
+		logger.Errorf("Request %s: Failed to serialize ResultSet: %s", blindedTokenRequestSet.Request_id, resultSet)
 	}
 	err = Emit(resultTopic, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		logger.Errorf("Failed to emit results to topic %s: %e", resultTopic, err)
+		logger.Errorf("Request %s: Failed to emit results to topic %s: %e", blindedTokenRequestSet.Request_id, resultTopic, err)
 	}
 }
