@@ -46,8 +46,7 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 
 	for _, topicMapping := range topicMappings {
 		// This has to be outside the goroutine to ensure that each consumer gets
-		// different values. @TODO: Figure out why this is. If this is inside the
-		// goroutine all consumers use the same topicMapping values.
+		// different values.
 		go func(topicData TopicMapping) {
 			var (
 				failureCount = 0
