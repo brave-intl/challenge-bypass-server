@@ -76,6 +76,10 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 func newConsumer(topic string, groupId string, logger *logrus.Logger) *kafka.Reader {
 	var dialer *kafka.Dialer
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+        // This is a short-lived hack to allow kafka connections to work in ECS
+        // The ECS task definition sets Kafka cert information via a single JSON
+        // variable. We parse that and persist it to the file and environment
+        // variables expected by bat-go.
 	compositeCert := os.Getenv("KAFKA_SSL_CERTIFICATE")
 	if compositeCert != "" {
 		marshaledCert, err := json.Marshal(compositeCert)
