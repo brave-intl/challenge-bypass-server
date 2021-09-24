@@ -3,13 +3,13 @@ package kafka
 import (
 	"context"
 	"fmt"
-	"os"
-	"strings"
-	"time"
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/segmentio/kafka-go"
 	"github.com/sirupsen/logrus"
+	"os"
+	"strings"
+	"time"
 )
 
 var brokers []string
@@ -76,6 +76,32 @@ func StartConsumers(server *server.Server, logger *logrus.Logger) error {
 func newConsumer(topic string, groupId string, logger *logrus.Logger) *kafka.Reader {
 	var dialer *kafka.Dialer
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+	compositeCert := os.Getenv("KAFKA_SSL_CERTIFICATE")
+	if compositeCert != "" {
+		marshaledCert, err := json.Marshal(compositeCert)
+		kafkaKey, ok := marshaledCert["key"]
+		kafkaCert, ok := marshaledCert["certificate"]
+		if ok != true {
+			logger.Errorf("Failed to get certificate data from ECS environment variable.")
+		} else {
+			if err := os.WriteFile("/etc/kafkaKey", []byte(kafkaKey), 0666); err != nil {
+				logger.Error(err)
+			} else {
+				err = os.SetEnv("KAFKA_SSL_KEY_LOCATION", "/etc/kafkaKey")
+				if err != nil {
+					logger.Errorf("Failed to set key location environment variable: %e", err)
+				}
+			}
+			if err := os.WriteFile("/etc/kafkaCert", []byte(kafkaCert), 0666); err != nil {
+				logger.Error(err)
+			} else {
+				err = os.SetEnv("KAFKA_SSL_CERTIFICATE_LOCATION", "/etc/kafkaCert")
+				if err != nil {
+					logger.Errorf("Failed to set certificate location environment variable: %e", err)
+				}
+			}
+		}
+	}
 	if os.Getenv("ENV") != "local" {
 		tlsDialer, _, err := batgo_kafka.TLSDialer()
 		dialer = tlsDialer
