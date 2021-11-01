@@ -1,4 +1,4 @@
-FROM rustlang/rust:nightly as rust_builder
+FROM rustlang/rust@sha256:ff3e6405319286ee5ff427ffdda577760507774f4c1dd7bab12ebc54ad31a696 as rust_builder
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools
 ARG CACHE_DATE=2016-01-01
