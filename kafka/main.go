@@ -18,13 +18,7 @@ import (
 
 var brokers []string
 
-type Processor func(
-	[]byte,
-	*kafka.Writer,
-	*server.Server,
-	*zerolog.Logger,
-	func(string) (*[]server.Issuer, error),
-) error
+type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) error
 
 type TopicMapping struct {
 	Topic          string
@@ -68,7 +62,6 @@ func StartConsumers(server *server.Server, logger *zerolog.Logger) error {
 	for _, topicMapping := range topicMappings {
 		topics = append(topics, topicMapping.Topic)
 	}
-	issuerGetter := initIssuersGetter(server.FetchAllIssuers)
 
 	consumerCount, err := strconv.Atoi(os.Getenv("KAFKA_CONSUMERS_PER_NODE"))
 	if err != nil {
@@ -103,7 +96,7 @@ func StartConsumers(server *server.Server, logger *zerolog.Logger) error {
 				logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
-						err := topicMapping.Processor(msg.Value, topicMapping.ResultProducer, server, logger, issuerGetter)
+						err := topicMapping.Processor(msg.Value, topicMapping.ResultProducer, server, logger)
 						if err == nil {
 							logger.Trace().Msg(fmt.Sprintf("Processing completed. Committing offset %d", msg.Offset))
 							if err := consumer.CommitMessages(ctx, msg); err != nil {

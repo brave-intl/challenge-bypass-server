@@ -24,7 +24,6 @@ func SignedTokenRedeemHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
-	issuerGetter func(string) (*[]cbpServer.Issuer, error),
 ) error {
 	const (
 		OK                   = 0
@@ -75,11 +74,10 @@ func SignedTokenRedeemHandler(
 			continue
 		}
 
-		issuers, err := issuerGetter(tokenRedeemRequestSet.Request_id)
+		issuers, err := server.FetchAllIssuers()
 		if err != nil {
-			return err
+			return errors.New(fmt.Sprintf("Request %s: Failed to fetch all issuers", tokenRedeemRequestSet.Request_id))
 		}
-
 		tokenPreimage := crypto.TokenPreimage{}
 		err = tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 		if err != nil {

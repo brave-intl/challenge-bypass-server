@@ -24,7 +24,6 @@ func SignedBlindedTokenIssuerHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
-	issuerGetter func(string) (*[]cbpServer.Issuer, error),
 ) error {
 	const (
 		OK             = 0
@@ -58,7 +57,6 @@ func SignedBlindedTokenIssuerHandler(
 			continue
 		}
 
-		// @TODO: Use issuer_cache
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int(request.Issuer_cohort))
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
