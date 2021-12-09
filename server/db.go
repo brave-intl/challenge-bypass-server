@@ -554,28 +554,28 @@ func setupConvertDBIssuer() func(issuer) (*Issuer, error) {
 		if cachedIssuer, ok := issuerCache[stringifiedSigningKey]; ok {
 			// If the last fetch was more than 1 hour ago, refresh
 			if cachedIssuer.lastFetch.Before(time.Now().In(loc).Add(-1 * time.Hour)) {
-				Issuer, err := parseIssuer(issuer)
+				parsedIssuer, err := parseIssuer(issuer)
 				if err != nil {
 					return nil, err
 				}
 				issuerCache[stringifiedSigningKey] = IssuerCache{
 					lastFetch: time.Now().In(loc),
-					issuer:    Issuer,
+					issuer:    parsedIssuer,
 				}
-				return &Issuer, nil
+				return &parsedIssuer, nil
 			} else {
 				return &cachedIssuer.issuer, nil
 			}
 		} else {
-			Issuer, err := parseIssuer(issuer)
+			parsedIssuer, err := parseIssuer(issuer)
 			if err != nil {
 				return nil, err
 			}
 			issuerCache[stringifiedSigningKey] = IssuerCache{
 				lastFetch: time.Now().In(loc),
-				issuer:    Issuer,
+				issuer:    parsedIssuer,
 			}
-			return &Issuer, nil
+			return &parsedIssuer, nil
 		}
 	}
 }
