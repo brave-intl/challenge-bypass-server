@@ -11,7 +11,7 @@ import (
 // server object (@TODO: break this functionality out of the API) and returns a function
 // that will conditionally call that serverIssueFetcher function or return out of local
 // cache depending on how long it has been since the last fetch of issuers. The local cache
-// for this implementation is simple a closure over local variables.
+// for this implementation is a simple closure over local variables.
 func initIssuersGetter(serverIssueFetcher func() (*[]cbpServer.Issuer, error)) func(string) (*[]cbpServer.Issuer, error) {
 	var (
 		issuers             *[]cbpServer.Issuer
