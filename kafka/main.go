@@ -96,24 +96,19 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
-						go func(
-							msg kafka.Message,
-							topicMapping TopicMapping,
-							providedServer *server.Server,
-							logger *zerolog.Logger,
-						) {
-							err := topicMapping.Processor(
-								msg.Value,
-								topicMapping.ResultProducer,
-								providedServer,
-								logger,
-							)
-							if err != nil {
-								logger.Error().Err(err).Msg("Processing failed.")
+						err := topicMapping.Processor(
+							msg.Value,
+							topicMapping.ResultProducer,
+							providedServer,
+							logger,
+						)
+						if err != nil {
+							logger.Error().Err(err).Msg("Processing failed.")
+						} else {
+							logger.Info().Msg(fmt.Sprintf("Processing completed. Committing"))
+							if err := consumer.CommitMessages(ctx, msg); err != nil {
+								logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
 							}
-						}(msg, topicMapping, providedServer, logger)
-						if err := consumer.CommitMessages(ctx, msg); err != nil {
-							logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
 						}
 					}
 				}
