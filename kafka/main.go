@@ -103,11 +103,13 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 							logger,
 						)
 						if err != nil {
-							logger.Error().Err(err).Msg("Processing failed.")
+							logger.Error().Err(err).Msg("Processing failed. Not committing.")
 						} else {
-							logger.Info().Msg(fmt.Sprintf("Processing completed. Committing"))
+							logger.Info().Msg(fmt.Sprintf("Processing completed. Committing."))
 							if err := consumer.CommitMessages(ctx, msg); err != nil {
 								logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
+							} else {
+								logger.Info().Msg(fmt.Sprintf("Committed offset %d for topic %s.", msg.Offset, msg.Topic))
 							}
 						}
 					}
