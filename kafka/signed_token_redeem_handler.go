@@ -28,17 +28,26 @@ func SignedTokenRedeemHandler(
 ) error {
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed Avro deserialization: %e", tokenRedeemRequestSet.Request_id, err))
+		return errors.New(fmt.Sprintf(
+			"Request %s: Failed Avro deserialization: %e",
+			tokenRedeemRequestSet.Request_id, err,
+		))
 	}
 	defer func() {
 		if recover() != nil {
-			err = errors.New(fmt.Sprintf("Request %s: Redeem attempt panicked", tokenRedeemRequestSet.Request_id))
+			err = errors.New(fmt.Sprintf(
+				"Request %s: Redeem attempt panicked",
+				tokenRedeemRequestSet.Request_id,
+			))
 		}
 	}()
 	if len(tokenRedeemRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		return errors.New(fmt.Sprintf("Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.", tokenRedeemRequestSet.Request_id))
+		return errors.New(fmt.Sprintf(
+			"Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.",
+			tokenRedeemRequestSet.Request_id,
+		))
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
@@ -74,12 +83,21 @@ func SignedTokenRedeemHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed to serialize ResultSet: %e", tokenRedeemRequestSet.Request_id, err))
+		return errors.New(fmt.Sprintf(
+			"Request %s: Failed to serialize ResultSet: %e",
+			tokenRedeemRequestSet.Request_id,
+			err,
+		))
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed to emit results to topic %s: %e", tokenRedeemRequestSet.Request_id, producer.Topic, err))
+		return errors.New(fmt.Sprintf(
+			"Request %s: Failed to emit results to topic %s: %e",
+			tokenRedeemRequestSet.Request_id,
+			producer.Topic,
+			err,
+		))
 	}
 	return nil
 }
@@ -129,22 +147,18 @@ func handleTokenRedeemRequest(
 	tokenPreimage := crypto.TokenPreimage{}
 	err := tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 	if err != nil {
-		errorSet <- errors.New(
-			fmt.Sprintf(
-				"Request %s: Could not unmarshal text into preimage: %e",
-				requestId, err,
-			),
-		)
+		errorSet <- errors.New(fmt.Sprintf(
+			"Request %s: Could not unmarshal text into preimage: %e",
+			requestId, err,
+		))
 	}
 	verificationSignature := crypto.VerificationSignature{}
 	err = verificationSignature.UnmarshalText([]byte(request.Signature))
 	if err != nil {
-		errorSet <- errors.New(
-			fmt.Sprintf(
-				"Request %s: Could not unmarshal text into verification signature: %e",
-				requestId, err,
-			),
-		)
+		errorSet <- errors.New(fmt.Sprintf(
+			"Request %s: Could not unmarshal text into verification signature: %e",
+			requestId, err,
+		))
 	}
 	for _, issuer := range *issuers {
 		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -154,14 +168,17 @@ func handleTokenRedeemRequest(
 		issuerPublicKey := issuer.SigningKey.PublicKey()
 		marshaledPublicKey, err := issuerPublicKey.MarshalText()
 		if err != nil {
-			errorSet <- errors.New(
-				fmt.Sprintf(
-					"Request %s: Could not unmarshal issuer public key into text: %e",
-					requestId, err,
-				),
-			)
+			errorSet <- errors.New(fmt.Sprintf(
+				"Request %s: Could not unmarshal issuer public key into text: %e",
+				requestId, err,
+			))
 		}
-		logger.Trace().Msg(fmt.Sprintf("Request %s: Issuer: %s, Request: %s", requestId, string(marshaledPublicKey), request.Public_key))
+		logger.Trace().Msg(fmt.Sprintf(
+			"Request %s: Issuer: %s, Request: %s",
+			requestId,
+			string(marshaledPublicKey),
+			request.Public_key,
+		))
 		if string(marshaledPublicKey) == request.Public_key {
 			if err := btd.VerifyTokenRedemption(
 				&tokenPreimage,
@@ -180,7 +197,10 @@ func handleTokenRedeemRequest(
 	}
 
 	if !verified {
-		logger.Error().Msg(fmt.Sprintf("Request %s: Could not verify that the token redemption is valid", requestId))
+		logger.Error().Msg(fmt.Sprintf(
+			"Request %s: Could not verify that the token redemption is valid",
+			requestId,
+		))
 		tokenRedeemResults <- avroSchema.RedeemResult{
 			Issuer_name:     "",
 			Issuer_cohort:   0,
@@ -191,9 +211,17 @@ func handleTokenRedeemRequest(
 		logger.Trace().Msg(fmt.Sprintf("Request %s: Validated", requestId))
 	}
 	if err := server.RedeemToken(verifiedIssuer, &tokenPreimage, string(request.Binding)); err != nil {
-		logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed: %e", requestId, err))
+		logger.Error().Err(err).Msg(fmt.Sprintf(
+			"Request %s: Token redemption failed: %e",
+			requestId,
+			err,
+		))
 		if strings.Contains(err.Error(), "Duplicate") {
-			logger.Error().Msg(fmt.Sprintf("Request %s: Duplicate redemption: %e", requestId, err))
+			logger.Error().Msg(fmt.Sprintf(
+				"Request %s: Duplicate redemption: %e",
+				requestId,
+				err,
+			))
 			tokenRedeemResults <- avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
@@ -201,7 +229,10 @@ func handleTokenRedeemRequest(
 				Associated_data: request.Associated_data,
 			}
 		}
-		logger.Error().Msg(fmt.Sprintf("Request %s: Could not mark token redemption", requestId))
+		logger.Error().Msg(fmt.Sprintf(
+			"Request %s: Could not mark token redemption",
+			requestId,
+		))
 		tokenRedeemResults <- avroSchema.RedeemResult{
 			Issuer_name:     "",
 			Issuer_cohort:   0,
