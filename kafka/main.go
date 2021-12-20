@@ -74,6 +74,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	for i := 1; i <= consumerCount; i++ {
 		go func(topicMappings []TopicMapping) {
 			consumer := newConsumer(topics, adsConsumerGroupV1, logger)
+			logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 			var (
 				failureCount = 0
 				failureLimit = 10
@@ -93,7 +94,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					continue
 				}
 				logger.Info().Msg(fmt.Sprintf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset))
-				logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
 						err := topicMapping.Processor(
