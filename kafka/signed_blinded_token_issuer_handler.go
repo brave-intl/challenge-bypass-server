@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	batgo_handlers "github.com/brave-intl/bat-go/utils/handlers"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
@@ -25,19 +26,31 @@ func SignedBlindedTokenIssuerHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
-) error {
+) *batgo_handlers.AppError {
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed Avro deserialization: %e", blindedTokenRequestSet.Request_id, err))
+		return batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Failed Avro deserialization",
+				blindedTokenRequestSet.Request_id,
+			),
+			PERMANENT,
+		)
 	}
 	if len(blindedTokenRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		return errors.New(fmt.Sprintf("Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.", blindedTokenRequestSet.Request_id))
+		message := fmt.Sprintf("Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.", blindedTokenRequestSet.Request_id)
+		return batgo_handlers.WrapError(
+			errors.New(message),
+			message,
+			PERMANENT,
+		)
 	}
 	var wg sync.WaitGroup
 	blindedTokenResultsChannel := make(chan avroSchema.SigningResult)
-	errorSet := make(chan error)
+	errorSet := make(chan *batgo_handlers.AppError)
 
 	for _, request := range blindedTokenRequestSet.Data {
 		wg.Add(1)
@@ -65,11 +78,27 @@ func SignedBlindedTokenIssuerHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed to serialize ResultSet: %s", blindedTokenRequestSet.Request_id, resultSet))
+		return batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Failed to serialize ResultSet: %s",
+				blindedTokenRequestSet.Request_id,
+				resultSet,
+			),
+			PERMANENT,
+		)
 	}
 	err = Emit(producer, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed to emit results to topic %s: %e", blindedTokenRequestSet.Request_id, producer.Topic, err))
+		return batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Failed to emit results to topic %s",
+				blindedTokenRequestSet.Request_id,
+				producer.Topic,
+			),
+			TEMPORARY,
+		)
 	}
 	return nil
 }
@@ -79,7 +108,7 @@ func handleBlindedTokenRequest(
 	request avroSchema.SigningRequest,
 	requestId string,
 	blindedTokenResults chan avroSchema.SigningResult,
-	errorSet chan error,
+	errorSet chan *batgo_handlers.AppError,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
 ) {
@@ -90,16 +119,24 @@ func handleBlindedTokenRequest(
 		ERROR          = 2
 	)
 	if request.Blinded_tokens == nil {
-		errorSet <- errors.New(fmt.Sprintf("Request %s: Empty request", requestId))
+		message := fmt.Sprintf("Request %s: Empty request", requestId)
+		errorSet <- batgo_handlers.WrapError(
+			errors.New(message),
+			message,
+			PERMANENT,
+		)
 	}
 
 	if request.Issuer_cohort != 0 && request.Issuer_cohort != 1 {
-		errorSet <- errors.New(
-			fmt.Sprintf(
-				"Request %s: Provided cohort is not supported: %d",
-				requestId,
-				request.Issuer_cohort,
-			),
+		message := fmt.Sprintf(
+			"Request %s: Provided cohort is not supported: %d",
+			requestId,
+			request.Issuer_cohort,
+		)
+		errorSet <- batgo_handlers.WrapError(
+			errors.New(message),
+			message,
+			PERMANENT,
 		)
 	}
 
@@ -143,24 +180,26 @@ func handleBlindedTokenRequest(
 	}
 	marshaledDLEQProof, err := dleqProof.MarshalText()
 	if err != nil {
-		errorSet <- errors.New(
+		errorSet <- batgo_handlers.WrapError(
+			err,
 			fmt.Sprintf(
-				"Request %s: Could not marshal DLEQ proof: %e",
+				"Request %s: Could not marshal DLEQ proof",
 				requestId,
-				err,
 			),
+			PERMANENT,
 		)
 	}
 	var marshaledTokens []string
 	for _, token := range signedTokens {
 		marshaledToken, err := token.MarshalText()
 		if err != nil {
-			errorSet <- errors.New(
+			errorSet <- batgo_handlers.WrapError(
+				err,
 				fmt.Sprintf(
-					"Request %s: Could not marshal new tokens to bytes: %e",
+					"Request %s: Could not marshal new tokens to bytes",
 					requestId,
-					err,
 				),
+				PERMANENT,
 			)
 		}
 		marshaledTokens = append(marshaledTokens, string(marshaledToken[:]))
@@ -168,12 +207,13 @@ func handleBlindedTokenRequest(
 	publicKey := issuer.SigningKey.PublicKey()
 	marshaledPublicKey, err := publicKey.MarshalText()
 	if err != nil {
-		errorSet <- errors.New(
+		errorSet <- batgo_handlers.WrapError(
+			err,
 			fmt.Sprintf(
-				"Request %s: Could not marshal signing key: %e",
+				"Request %s: Could not marshal signing key",
 				requestId,
-				err,
 			),
+			PERMANENT,
 		)
 	}
 	blindedTokenResults <- avroSchema.SigningResult{

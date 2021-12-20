@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	batgo_handlers "github.com/brave-intl/bat-go/utils/handlers"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
@@ -25,37 +26,44 @@ func SignedTokenRedeemHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
-) error {
+) *batgo_handlers.AppError {
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		return errors.New(fmt.Sprintf(
-			"Request %s: Failed Avro deserialization: %e",
-			tokenRedeemRequestSet.Request_id, err,
-		))
+		return batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Failed Avro deserialization: %e",
+				tokenRedeemRequestSet.Request_id, err,
+			),
+			PERMANENT,
+		)
 	}
-	defer func() {
-		if recover() != nil {
-			err = errors.New(fmt.Sprintf(
-				"Request %s: Redeem attempt panicked",
-				tokenRedeemRequestSet.Request_id,
-			))
-		}
-	}()
 	if len(tokenRedeemRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		return errors.New(fmt.Sprintf(
+		message := fmt.Sprintf(
 			"Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.",
-			tokenRedeemRequestSet.Request_id,
-		))
+			tokenRedeemRequestSet.Request_id)
+		return batgo_handlers.WrapError(
+			errors.New(message),
+			message,
+			PERMANENT,
+		)
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
-		return errors.New(fmt.Sprintf("Request %s: Failed to fetch all issuers", tokenRedeemRequestSet.Request_id))
+		return batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Failed to fetch all issuers",
+				tokenRedeemRequestSet.Request_id,
+			),
+			TEMPORARY,
+		)
 	}
 	var wg sync.WaitGroup
 	tokenRedeemResultsChannel := make(chan avroSchema.RedeemResult)
-	errorSet := make(chan error)
+	errorSet := make(chan *batgo_handlers.AppError)
 	for _, request := range tokenRedeemRequestSet.Data {
 		wg.Add(1)
 		handleTokenRedeemRequest(
@@ -83,21 +91,27 @@ func SignedTokenRedeemHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		return errors.New(fmt.Sprintf(
-			"Request %s: Failed to serialize ResultSet: %e",
-			tokenRedeemRequestSet.Request_id,
+		return batgo_handlers.WrapError(
 			err,
-		))
+			fmt.Sprintf(
+				"Request %s: Failed to serialize ResultSet.",
+				tokenRedeemRequestSet.Request_id,
+			),
+			PERMANENT,
+		)
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		return errors.New(fmt.Sprintf(
-			"Request %s: Failed to emit results to topic %s: %e",
-			tokenRedeemRequestSet.Request_id,
-			producer.Topic,
+		return batgo_handlers.WrapError(
 			err,
-		))
+			fmt.Sprintf(
+				"Request %s: Failed to emit results to topic %s.",
+				tokenRedeemRequestSet.Request_id,
+				producer.Topic,
+			),
+			TEMPORARY,
+		)
 	}
 	return nil
 }
@@ -108,17 +122,11 @@ func handleTokenRedeemRequest(
 	requestId string,
 	issuers *[]cbpServer.Issuer,
 	tokenRedeemResults chan avroSchema.RedeemResult,
-	errorSet chan error,
+	errorSet chan *batgo_handlers.AppError,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
 ) {
 	defer wg.Done()
-	const (
-		OK                   = 0
-		DUPLICATE_REDEMPTION = 1
-		UNVERIFIED           = 2
-		ERROR                = 3
-	)
 	var (
 		verified             = false
 		verifiedIssuer       = &cbpServer.Issuer{}
@@ -147,18 +155,26 @@ func handleTokenRedeemRequest(
 	tokenPreimage := crypto.TokenPreimage{}
 	err := tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 	if err != nil {
-		errorSet <- errors.New(fmt.Sprintf(
-			"Request %s: Could not unmarshal text into preimage: %e",
-			requestId, err,
-		))
+		errorSet <- batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Could not unmarshal text into preimage",
+				requestId,
+			),
+			PERMANENT,
+		)
 	}
 	verificationSignature := crypto.VerificationSignature{}
 	err = verificationSignature.UnmarshalText([]byte(request.Signature))
 	if err != nil {
-		errorSet <- errors.New(fmt.Sprintf(
-			"Request %s: Could not unmarshal text into verification signature: %e",
-			requestId, err,
-		))
+		errorSet <- batgo_handlers.WrapError(
+			err,
+			fmt.Sprintf(
+				"Request %s: Could not unmarshal text into verification signature",
+				requestId,
+			),
+			PERMANENT,
+		)
 	}
 	for _, issuer := range *issuers {
 		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -168,10 +184,14 @@ func handleTokenRedeemRequest(
 		issuerPublicKey := issuer.SigningKey.PublicKey()
 		marshaledPublicKey, err := issuerPublicKey.MarshalText()
 		if err != nil {
-			errorSet <- errors.New(fmt.Sprintf(
-				"Request %s: Could not unmarshal issuer public key into text: %e",
-				requestId, err,
-			))
+			errorSet <- batgo_handlers.WrapError(
+				err,
+				fmt.Sprintf(
+					"Request %s: Could not unmarshal issuer public key into text",
+					requestId,
+				),
+				PERMANENT,
+			)
 		}
 		logger.Trace().Msg(fmt.Sprintf(
 			"Request %s: Issuer: %s, Request: %s",

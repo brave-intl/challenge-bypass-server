@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	batgo_handlers "github.com/brave-intl/bat-go/utils/handlers"
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
@@ -18,7 +19,12 @@ import (
 
 var brokers []string
 
-type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) error
+type Processor func(
+	[]byte,
+	*kafka.Writer,
+	*server.Server,
+	*zerolog.Logger,
+) *batgo_handlers.AppError
 
 type TopicMapping struct {
 	Topic          string
