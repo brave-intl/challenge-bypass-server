@@ -24,7 +24,7 @@ type Processor func(
 	*kafka.Writer,
 	*server.Server,
 	*zerolog.Logger,
-) *batgo_handlers.AppError
+) []*batgo_handlers.AppError
 
 type TopicMapping struct {
 	Topic          string
@@ -102,18 +102,25 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				logger.Info().Msg(fmt.Sprintf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset))
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
-						err := topicMapping.Processor(
+						appErrors := topicMapping.Processor(
 							msg.Value,
 							topicMapping.ResultProducer,
 							providedServer,
 							logger,
 						)
-						if err != nil {
-							logger.Error().Err(err).Msg("Processing failed. Not committing.")
-						} else {
-							logger.Info().Msg(fmt.Sprintf("Processing completed. Committing."))
+						shallCommit := true
+						if appErrors != nil {
+							for _, appErr := range appErrors {
+								if appErr.Code == TEMPORARY {
+									logger.Error().Err(appErr.Cause).Msg("Processing failed with temporary error. Not committing. Will retry.")
+									shallCommit = false
+								}
+							}
+						}
+						if shallCommit {
+							logger.Info().Msg(fmt.Sprintf("Processing completed without error. Committing."))
 							if err := consumer.CommitMessages(ctx, msg); err != nil {
-								logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
+								logger.Error().Err(err).Msg("Failed to commit")
 							} else {
 								logger.Info().Msg(fmt.Sprintf("Committed offset %d for topic %s.", msg.Offset, msg.Topic))
 							}
