@@ -65,7 +65,7 @@ func SignedBlindedTokenIssuerHandler(
 			errorChannel,
 			server,
 			logger,
-		)(wg)
+		)
 	}
 	wg.Wait()
 
