@@ -103,6 +103,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
 						appErrors := topicMapping.Processor(
+                                                        // Readbatch instead of using msg.Value
+                                                        // Batch has getMessage (readMessage?) which is a msg that we can run value on. Iterate on this top level valueh
 							msg.Value,
 							topicMapping.ResultProducer,
 							providedServer,

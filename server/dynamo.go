@@ -107,6 +107,8 @@ func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, p
 	}
 
 	input := &dynamodb.PutItemInput{
+                // @ME emit different error messages depending on whether the ID is the same and the data is different or the ID is the same AND the data is the same.
+                // Batch persistence if possible
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(id)"),
 		TableName:           aws.String("redemptions"),

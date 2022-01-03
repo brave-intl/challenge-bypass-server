@@ -57,7 +57,7 @@ func SignedBlindedTokenIssuerHandler(
 
 	for _, request := range blindedTokenRequestSet.Data {
 		wg.Add(1)
-		handleBlindedTokenRequest(
+		go handleBlindedTokenRequest(
 			wg,
 			request,
 			blindedTokenRequestSet.Request_id,
@@ -65,7 +65,7 @@ func SignedBlindedTokenIssuerHandler(
 			errorChannel,
 			server,
 			logger,
-		)
+		)(wg)
 	}
 	wg.Wait()
 
