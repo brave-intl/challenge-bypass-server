@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	batgo_handlers "github.com/brave-intl/bat-go/utils/handlers"
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
@@ -18,7 +19,12 @@ import (
 
 var brokers []string
 
-type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) error
+type Processor func(
+	[]byte,
+	*kafka.Writer,
+	*server.Server,
+	*zerolog.Logger,
+) []*batgo_handlers.AppError
 
 type TopicMapping struct {
 	Topic          string
@@ -74,6 +80,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	for i := 1; i <= consumerCount; i++ {
 		go func(topicMappings []TopicMapping) {
 			consumer := newConsumer(topics, adsConsumerGroupV1, logger)
+			logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 			var (
 				failureCount = 0
 				failureLimit = 10
@@ -93,27 +100,32 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					continue
 				}
 				logger.Info().Msg(fmt.Sprintf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset))
-				logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", consumer.Stats()))
 				for _, topicMapping := range topicMappings {
 					if msg.Topic == topicMapping.Topic {
-						go func(
-							msg kafka.Message,
-							topicMapping TopicMapping,
-							providedServer *server.Server,
-							logger *zerolog.Logger,
-						) {
-							err := topicMapping.Processor(
-								msg.Value,
-								topicMapping.ResultProducer,
-								providedServer,
-								logger,
-							)
-							if err != nil {
-								logger.Error().Err(err).Msg("Processing failed.")
+						appErrors := topicMapping.Processor(
+                                                        // Readbatch instead of using msg.Value
+                                                        // Batch has getMessage (readMessage?) which is a msg that we can run value on. Iterate on this top level valueh
+							msg.Value,
+							topicMapping.ResultProducer,
+							providedServer,
+							logger,
+						)
+						shallCommit := true
+						if appErrors != nil {
+							for _, appErr := range appErrors {
+								if appErr.Code == TEMPORARY {
+									logger.Error().Err(appErr.Cause).Msg("Processing failed with temporary error. Not committing. Will retry.")
+									shallCommit = false
+								}
 							}
-						}(msg, topicMapping, providedServer, logger)
-						if err := consumer.CommitMessages(ctx, msg); err != nil {
-							logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
+						}
+						if shallCommit {
+							logger.Info().Msg(fmt.Sprintf("Processing completed without error. Committing."))
+							if err := consumer.CommitMessages(ctx, msg); err != nil {
+								logger.Error().Err(err).Msg("Failed to commit")
+							} else {
+								logger.Info().Msg(fmt.Sprintf("Committed offset %d for topic %s.", msg.Offset, msg.Topic))
+							}
 						}
 					}
 				}
