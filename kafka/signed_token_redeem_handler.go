@@ -42,6 +42,8 @@ func SignedTokenRedeemHandler(
 		}
 	}()
 	var redeemedTokenResults []avroSchema.RedeemResult
+	// For the time being, we are only accepting one message at a time in this data set.
+	// Therefore, we will error if more than a single message is present in the message.
 	if len(tokenRedeemRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
@@ -53,6 +55,9 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
+
+	// Iterate over requests (only one at this point but the schema can support more
+	// in the future if needed)
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
 			verified       = false
@@ -72,6 +77,7 @@ func SignedTokenRedeemHandler(
 			continue
 		}
 
+		// preimage, signature, and binding are all required to proceed
 		if request.Token_preimage == "" || request.Signature == "" || request.Binding == "" {
 			logger.Error().
 				Err(fmt.Errorf("request %s: empty request", tokenRedeemRequestSet.Request_id)).
@@ -87,12 +93,14 @@ func SignedTokenRedeemHandler(
 
 		tokenPreimage := crypto.TokenPreimage{}
 		err = tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
+		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
+		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)

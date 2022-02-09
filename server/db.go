@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
 	timeutils "github.com/brave-intl/bat-go/utils/time"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -115,6 +116,7 @@ type RedemptionV2 struct {
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
+	Offset    int64     `json:"offset"`
 }
 
 // CacheInterface cach functions
