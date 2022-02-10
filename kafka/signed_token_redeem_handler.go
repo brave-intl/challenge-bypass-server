@@ -10,6 +10,7 @@ import (
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	kafka "github.com/segmentio/kafka-go"
 )
@@ -21,7 +22,7 @@ func SignedTokenRedeemHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
-) error {
+) *utils.ProcessingError {
 	const (
 		redeemOk                  = 0
 		redeemDuplicateRedemption = 1
@@ -30,7 +31,8 @@ func SignedTokenRedeemHandler(
 	)
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("request %s: failed avro deserialization: %w", tokenRedeemRequestSet.Request_id, err)
+		message := fmt.Sprintf("Request %s: Failed Avro deserialization", tokenRedeemRequestSet.Request_id)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
 	defer func() {
 		if recover() != nil {
@@ -43,17 +45,19 @@ func SignedTokenRedeemHandler(
 	if len(tokenRedeemRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		return fmt.Errorf("request %s: data array unexpectedly contained more than a single message. this array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.", tokenRedeemRequestSet.Request_id)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
-		return fmt.Errorf("request %s: failed to fetch all issuers: %w", tokenRedeemRequestSet.Request_id, err)
+		message := fmt.Sprintf("Request %s: Failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
-			verified             = false
-			verifiedIssuer       = &cbpServer.Issuer{}
-			verifiedCohort int32 = 0
+			verified       = false
+			verifiedIssuer = &cbpServer.Issuer{}
+			verifiedCohort int32
 		)
 		if request.Public_key == "" {
 			logger.Error().
@@ -84,14 +88,14 @@ func SignedTokenRedeemHandler(
 		tokenPreimage := crypto.TokenPreimage{}
 		err = tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 		if err != nil {
-			return fmt.Errorf("request %s: could not unmarshal text into preimage: %w",
-				tokenRedeemRequestSet.Request_id, err)
+			message := fmt.Sprintf("Request %s: Could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
+			return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		if err != nil {
-			return fmt.Errorf("request %s: could not unmarshal text into verification signature: %w",
-				tokenRedeemRequestSet.Request_id, err)
+			message := fmt.Sprintf("Request %s: Could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
+			return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 		}
 		for _, issuer := range *issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -117,9 +121,16 @@ func SignedTokenRedeemHandler(
 			// Only attempt token verification with the issuer that was provided.
 			issuerPublicKey := signingKey.PublicKey()
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
+			// Unmarshaling failure is a data issue and is probably permanent.
 			if err != nil {
-				return fmt.Errorf("request %s: could not unmarshal issuer public key into text: %w",
-					tokenRedeemRequestSet.Request_id, err)
+				message := fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				temporary, backoff := utils.ErrorIsTemporary(err, logger)
+				return &utils.ProcessingError{
+					OriginalError:  err,
+					FailureMessage: message,
+					Temporary:      temporary,
+					Backoff:        backoff,
+				}
 			}
 
 			logger.Trace().
@@ -200,14 +211,20 @@ func SignedTokenRedeemHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		return fmt.Errorf("request %s: failed to serialize result set: %w",
-			tokenRedeemRequestSet.Request_id, err)
+		message := fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		return fmt.Errorf("request %s: failed to emit results to topic %s: %w",
-			tokenRedeemRequestSet.Request_id, producer.Topic, err)
+		message := fmt.Sprintf("Request %s: Failed to emit results to topic %s", tokenRedeemRequestSet.Request_id, producer.Topic)
+		temporary, backoff := utils.ErrorIsTemporary(err, logger)
+		return &utils.ProcessingError{
+			OriginalError:  err,
+			FailureMessage: message,
+			Temporary:      temporary,
+			Backoff:        backoff,
+		}
 	}
 	return nil
 }

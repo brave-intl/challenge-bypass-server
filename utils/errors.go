@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"errors"
 	"fmt"
 	"time"
 
@@ -23,8 +22,8 @@ type ProcessingError struct {
 // Error makes ProcessingError an error
 func (e ProcessingError) Error() string {
 	msg := fmt.Sprintf("error: %s", e.FailureMessage)
-	if e.OriginalError != nil {
-		msg = fmt.Sprintf("%s: %s", msg, e.OriginalError)
+	if e.Cause() != nil {
+		msg = fmt.Sprintf("%s: %s", msg, e.Cause())
 	}
 	return msg
 }
@@ -38,7 +37,6 @@ func (e ProcessingError) Cause() error {
 func ProcessingErrorFromErrorWithMessage(
 	err error,
 	message string,
-	kafkaMessage kafka.Message,
 	logger *zerolog.Logger,
 ) *ProcessingError {
 	temporary, backoff := ErrorIsTemporary(err, logger)
@@ -47,27 +45,26 @@ func ProcessingErrorFromErrorWithMessage(
 		FailureMessage: message,
 		Temporary:      temporary,
 		Backoff:        backoff,
-		KafkaMessage:   kafkaMessage,
+		KafkaMessage:   kafka.Message{},
 	}
 }
 
-// ErrorIsTemporary takes an error and determines
+// ErrorIsTemporary takes an error and determines if it is temporary based on a set of
+// known errors
 func ErrorIsTemporary(err error, logger *zerolog.Logger) (bool, time.Duration) {
-	var (
-		dynamoProvisionedThroughput *awsDynamoTypes.ProvisionedThroughputExceededException
-		dynamoRequestLimitExceeded  *awsDynamoTypes.RequestLimitExceeded
-		dynamoInternalServerError   *awsDynamoTypes.InternalServerError
-	)
-
-	if errors.As(err, &dynamoProvisionedThroughput) {
+	var ok bool
+	err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException)
+	if ok {
 		logger.Error().Err(err).Msg("Temporary message processing failure")
 		return true, 1 * time.Minute
 	}
-	if errors.As(err, &dynamoRequestLimitExceeded) {
+	err, ok = err.(*awsDynamoTypes.RequestLimitExceeded)
+	if ok {
 		logger.Error().Err(err).Msg("Temporary message processing failure")
 		return true, 1 * time.Minute
 	}
-	if errors.As(err, &dynamoInternalServerError) {
+	err, ok = err.(*awsDynamoTypes.InternalServerError)
+	if ok {
 		logger.Error().Err(err).Msg("Temporary message processing failure")
 		return true, 1 * time.Minute
 	}

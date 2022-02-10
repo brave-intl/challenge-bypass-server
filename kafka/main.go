@@ -9,6 +9,7 @@ import (
 
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
@@ -19,7 +20,7 @@ var brokers []string
 
 // Processor is an interface that represents functions which can be used to process kafka
 // messages in our pipeline.
-type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) error
+type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) *utils.ProcessingError
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
@@ -122,16 +123,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					}
 				}
 			}
-
-			// The below block will close the producer connection when the error threshold is reached.
-			// @TODO: Test to determine if this Close() impacts the other goroutines that were passed
-			// the same topicMappings before re-enabling this block.
-			//for _, topicMapping := range topicMappings {
-			//	logger.Trace().Msg(fmt.Sprintf("Closing producer connection %v", topicMapping))
-			//	if err := topicMapping.ResultProducer.Close(); err != nil {
-			//		logger.Error().Msg(fmt.Sprintf("Failed to close writer: %e", err))
-			//	}
-			//}
 		}(topicMappings)
 	}
 
