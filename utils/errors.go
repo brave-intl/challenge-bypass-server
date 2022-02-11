@@ -2,6 +2,7 @@ package utils
 
 import (
 	"fmt"
+
 	"time"
 
 	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
@@ -33,10 +34,10 @@ func (e ProcessingError) Cause() error {
 	return e.OriginalError
 }
 
-// ProcessingErrorFromErrorWithMessage converts an error into a ProcessingError
 func ProcessingErrorFromErrorWithMessage(
 	err error,
 	message string,
+	kafkaMessage kafka.Message,
 	logger *zerolog.Logger,
 ) *ProcessingError {
 	temporary, backoff := ErrorIsTemporary(err, logger)
