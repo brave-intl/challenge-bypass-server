@@ -111,12 +111,6 @@ func SignedTokenRedeemHandler(
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
 			if err != nil {
 				logger.Error().Msg(fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text: %e", tokenRedeemRequestSet.Request_id, err))
-				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
-					Issuer_name:     "",
-					Issuer_cohort:   0,
-					Status:          ERROR,
-					Associated_data: request.Associated_data,
-				})
 				continue
 			}
 			logger.Trace().Msg(fmt.Sprintf("Request %s: Issuer: %s, Request: %s", tokenRedeemRequestSet.Request_id, string(marshaledPublicKey), request.Public_key))
