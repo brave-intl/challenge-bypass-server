@@ -81,12 +81,26 @@ func SignedTokenRedeemHandler(
 		tokenPreimage := crypto.TokenPreimage{}
 		err = tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 		if err != nil {
-			return errors.New(fmt.Sprintf("Request %s: Could not unmarshal text into preimage: %e", tokenRedeemRequestSet.Request_id, err))
+			logger.Error().Msg(fmt.Sprintf("Request %s: Could not unmarshal text into preimage: %e", tokenRedeemRequestSet.Request_id, err))
+			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+				Issuer_name:     "",
+				Issuer_cohort:   0,
+				Status:          ERROR,
+				Associated_data: request.Associated_data,
+			})
+			continue
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		if err != nil {
-			return errors.New(fmt.Sprintf("Request %s: Could not unmarshal text into verification signature: %e", tokenRedeemRequestSet.Request_id, err))
+			logger.Error().Msg(fmt.Sprintf("Request %s: Could not unmarshal text into verification signature: %e", tokenRedeemRequestSet.Request_id, err))
+			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+				Issuer_name:     "",
+				Issuer_cohort:   0,
+				Status:          ERROR,
+				Associated_data: request.Associated_data,
+			})
+			continue
 		}
 		for _, issuer := range *issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -96,7 +110,14 @@ func SignedTokenRedeemHandler(
 			issuerPublicKey := issuer.SigningKey.PublicKey()
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
 			if err != nil {
-				return errors.New(fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text: %e", tokenRedeemRequestSet.Request_id, err))
+				logger.Error().Msg(fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text: %e", tokenRedeemRequestSet.Request_id, err))
+				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+					Issuer_name:     "",
+					Issuer_cohort:   0,
+					Status:          ERROR,
+					Associated_data: request.Associated_data,
+				})
+				continue
 			}
 			logger.Trace().Msg(fmt.Sprintf("Request %s: Issuer: %s, Request: %s", tokenRedeemRequestSet.Request_id, string(marshaledPublicKey), request.Public_key))
 			if string(marshaledPublicKey) == request.Public_key {
