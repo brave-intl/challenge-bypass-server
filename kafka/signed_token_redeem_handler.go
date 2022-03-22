@@ -60,7 +60,7 @@ func SignedTokenRedeemHandler(
 	// in the future if needed)
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
-			redemptionStatus       = avroSchema.RedeemResultStatusOk
+			redemptionStatus       = avroSchema.RedeemResultStatusUnverified
 			verifiedIssuer         = &cbpServer.Issuer{}
 			verifiedCohort   int32 = 0
 		)
