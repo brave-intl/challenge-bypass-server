@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,6 +13,7 @@ import (
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/go-chi/chi"
+	uuid "github.com/satori/go.uuid"
 )
 
 const (
@@ -191,7 +193,10 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload); err != nil {
+		// HTTP requests will not have an offset, which was added to RedeemToken
+		// to manage the new Kafka flow and its associated uniqueness constraints.
+		// Setting to 0 until the HTTP flow is deprecated.
+		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, 0); err != nil {
 			if err == errDuplicateRedemption {
 				return &handlers.AppError{
 					Message: err.Error(),
@@ -307,9 +312,18 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 		}
 
 		if issuer.Version == 2 {
-			redemption, err := c.fetchRedemptionV2(issuer, tokenID)
+			issuerUUID, err := uuid.FromString(issuer.ID)
+			if err != nil {
+				c.Logger.Error("Bad issuer id")
+				return &handlers.AppError{
+					Message: fmt.Sprintf("Bad issuer id: %s", err.Error()),
+					Code:    http.StatusBadRequest,
+				}
+			}
+			redemption, err := c.fetchRedemptionV2(uuid.NewV5(issuerUUID, tokenID))
 			if err != nil {
 				if err == errRedemptionNotFound {
+					c.Logger.Error("Redemption not found")
 					return &handlers.AppError{
 						Message: err.Error(),
 						Code:    http.StatusBadRequest,
