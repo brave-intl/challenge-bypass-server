@@ -15,37 +15,6 @@ import (
 )
 
 /*
- RedemptionStatus is an enum that represents the redemption status of a given token.
- These values are part of a contract with downstream consumers and the value assignment
- for a given variant must never change without a change to ads-serve to accomodate.
-*/
-type RedemptionStatus int64
-
-const (
-	Verified RedemptionStatus = iota
-	Duplicate
-	Unverified
-	Error
-	Unknown
-)
-
-func (r RedemptionStatus) String() string {
-	switch r {
-	case Verified:
-		return "verified"
-	case Duplicate:
-		return "duplicate"
-	case Unverified:
-		return "unverified"
-	case Error:
-		return "error"
-	case Unknown:
-		return "unknown"
-	}
-	return "undefined"
-}
-
-/*
  BlindedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
  tokens provided. If it encounters an error, it returns a utils.ProcessingError that indicates
  whether the error is temporary and the attmept should be retried, or if the error is
@@ -63,7 +32,10 @@ func SignedTokenRedeemHandler(
 	// Deserialize request into usable struct
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed Avro deserialization", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf(
+			"Request %s: Failed Avro deserialization",
+			tokenRedeemRequestSet.Request_id,
+		)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 	var redeemedTokenResults []avroSchema.RedeemResult
@@ -77,7 +49,10 @@ func SignedTokenRedeemHandler(
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf(
+			"Request %s: Failed to fetch all issuers",
+			tokenRedeemRequestSet.Request_id,
+		)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 
@@ -85,9 +60,9 @@ func SignedTokenRedeemHandler(
 	// in the future if needed)
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
-			redemptionStatus RedemptionStatus = Unknown
-			verifiedIssuer                    = &cbpServer.Issuer{}
-			verifiedCohort   int32            = 0
+			redemptionStatus       = avroSchema.RedeemResultStatusOk
+			verifiedIssuer         = &cbpServer.Issuer{}
+			verifiedCohort   int32 = 0
 		)
 		if request.Public_key == "" {
 			logger.Error().Msg(fmt.Sprintf(
@@ -97,7 +72,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          Error,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -112,7 +87,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          Error,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -130,21 +105,25 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   -1,
-				Status:          Unverified,
+				Status:          avroSchema.RedeemResultStatusUnverified,
 				Associated_data: request.Associated_data,
 			})
 			continue
 		}
+
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
-			message := fmt.Sprintf("Request %s: Could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
+			message := fmt.Sprintf(
+				"Request %s: Could not unmarshal text into verification signature",
+				tokenRedeemRequestSet.Request_id,
+			)
 			logger.Error().Err(err).Msg(message)
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   -1,
-				Status:          Unverified,
+				Status:          avroSchema.RedeemResultStatusUnverified,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -159,9 +138,20 @@ func SignedTokenRedeemHandler(
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
 			// Unmarshaling failure is a data issue and is probably permanent.
 			if err != nil {
-				message := fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+				message := fmt.Sprintf(
+					"Request %s: Could not unmarshal issuer public key into text",
+					tokenRedeemRequestSet.Request_id,
+				)
+				logger.Error().Err(err).Msg(message)
+				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+					Issuer_name:     "",
+					Issuer_cohort:   -1,
+					Status:          avroSchema.RedeemResultStatusUnverified,
+					Associated_data: request.Associated_data,
+				})
+				continue
 			}
+
 			if string(marshaledPublicKey) == request.Public_key {
 				if err := btd.VerifyTokenRedemption(
 					&tokenPreimage,
@@ -169,9 +159,9 @@ func SignedTokenRedeemHandler(
 					string(request.Binding),
 					[]*crypto.SigningKey{issuer.SigningKey},
 				); err != nil {
-					redemptionStatus = Unverified
+					redemptionStatus = avroSchema.RedeemResultStatusUnverified
 				} else {
-					redemptionStatus = Verified
+					redemptionStatus = avroSchema.RedeemResultStatusOk
 					verifiedIssuer = &issuer
 					verifiedCohort = int32(issuer.IssuerCohort)
 					break
@@ -179,7 +169,7 @@ func SignedTokenRedeemHandler(
 			}
 		}
 
-		if !redemptionStatus == Verified {
+		if !redemptionStatus == avroSchema.RedeemResultStatusOk {
 			logger.Error().Msg(fmt.Sprintf(
 				"Request %s: Could not verify that the token redemption is valid",
 				tokenRedeemRequestSet.Request_id,
@@ -187,40 +177,57 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          Unverified,
+				Status:          avroSchema.RedeemResultStatusUnverified,
 				Associated_data: request.Associated_data,
 			})
 			continue
 		} else {
-			logger.Info().Msg(fmt.Sprintf("Request %s: Validated", tokenRedeemRequestSet.Request_id))
+			logger.Info().Msg(fmt.Sprintf(
+				"Request %s: Validated",
+				tokenRedeemRequestSet.Request_id,
+			))
 		}
+
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
-			message := fmt.Sprintf("Request %s: Failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
+			message := fmt.Sprintf(
+				"Request %s: Failed to check redemption equivalence",
+				tokenRedeemRequestSet.Request_id,
+			)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 		}
+
 		// If the discovered equivalence is not one of the tolerableEquivalence
 		// options this redemption is considered a duplicate.
 		if !containsEquivalnce(tolerableEquivalence, equivalence) {
-			logger.Error().Msg(fmt.Sprintf("Request %s: Duplicate redemption: %e", tokenRedeemRequestSet.Request_id, err))
+			logger.Error().Msg(fmt.Sprintf(
+				"Request %s: Duplicate redemption: %e",
+				tokenRedeemRequestSet.Request_id,
+				err,
+			))
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          Duplicate,
+				Status:          avroSchema.RedeemResultStatusDuplicate_redemption,
 				Associated_data: request.Associated_data,
 			})
 			continue
 		}
+
 		if err := server.PersistRedemption(*redemption); err != nil {
-			logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed", tokenRedeemRequestSet.Request_id))
+			logger.Error().Err(err).Msg(fmt.Sprintf(
+				"Request %s: Token redemption failed",
+				tokenRedeemRequestSet.Request_id,
+			))
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          Error,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
 		}
+
 		logger.Info().Msg(fmt.Sprintf(
 			"Request %s: Redeemed",
 			tokenRedeemRequestSet.Request_id,
@@ -229,10 +236,11 @@ func SignedTokenRedeemHandler(
 		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 			Issuer_name:     issuerName,
 			Issuer_cohort:   verifiedCohort,
-			Status:          redemptionStatus,
+			Status:          avroSchema.RedeemResultStatusOk,
 			Associated_data: request.Associated_data,
 		})
 	}
+
 	resultSet := avroSchema.RedeemResultSet{
 		Request_id: tokenRedeemRequestSet.Request_id,
 		Data:       redeemedTokenResults,
