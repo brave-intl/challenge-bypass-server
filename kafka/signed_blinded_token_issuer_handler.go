@@ -14,10 +14,10 @@ import (
 )
 
 /*
- BlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
- @TODO: It would be better for the Server implementation and the Kafka implementation of
- this behavior to share utility functions rather than passing an instance of the server
- as an argument here. That will require a bit of refactoring.
+SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+@TODO: It would be better for the Server implementation and the Kafka implementation of
+this behavior to share utility functions rather than passing an instance of the server
+as an argument here. That will require a bit of refactoring.
 */
 func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
@@ -60,10 +60,10 @@ func SignedBlindedTokenIssuerHandler(
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int(request.Issuer_cohort))
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-				Signed_tokens:     nil,
-				Issuer_public_key: "",
-				Status:            INVALID_ISSUER,
-				Associated_data:   request.Associated_data,
+				Signed_tokens:   nil,
+				Public_key:      "",
+				Status:          INVALID_ISSUER,
+				Associated_data: request.Associated_data,
 			})
 			continue
 		}
@@ -80,10 +80,10 @@ func SignedBlindedTokenIssuerHandler(
 					blindedTokenRequestSet.Request_id, err,
 				))
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-					Signed_tokens:     nil,
-					Issuer_public_key: "",
-					Status:            ERROR,
-					Associated_data:   request.Associated_data,
+					Signed_tokens:   nil,
+					Public_key:      "",
+					Status:          ERROR,
+					Associated_data: request.Associated_data,
 				})
 				continue
 			}
@@ -98,10 +98,10 @@ func SignedBlindedTokenIssuerHandler(
 				err,
 			))
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-				Signed_tokens:     nil,
-				Issuer_public_key: "",
-				Status:            ERROR,
-				Associated_data:   request.Associated_data,
+				Signed_tokens:   nil,
+				Public_key:      "",
+				Status:          ERROR,
+				Associated_data: request.Associated_data,
 			})
 			continue
 		}
@@ -120,6 +120,7 @@ func SignedBlindedTokenIssuerHandler(
 				message := fmt.Sprintf(
 					"Request %s: Could not marshal new tokens to bytes: %e",
 					blindedTokenRequestSet.Request_id,
+					err,
 				)
 				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 			}
@@ -131,15 +132,16 @@ func SignedBlindedTokenIssuerHandler(
 			message := fmt.Sprintf(
 				"Request %s: Could not marshal signing key: %e",
 				blindedTokenRequestSet.Request_id,
+				err,
 			)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 		}
 		blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-			Signed_tokens:     marshaledTokens,
-			Proof:             string(marshaledDLEQProof),
-			Issuer_public_key: string(marshaledPublicKey),
-			Status:            OK,
-			Associated_data:   request.Associated_data,
+			Signed_tokens:   marshaledTokens,
+			Proof:           string(marshaledDLEQProof),
+			Public_key:      string(marshaledPublicKey),
+			Status:          OK,
+			Associated_data: request.Associated_data,
 		})
 	}
 	resultSet := avroSchema.SigningResultSet{
