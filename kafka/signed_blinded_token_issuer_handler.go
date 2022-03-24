@@ -60,10 +60,10 @@ func SignedBlindedTokenIssuerHandler(
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int(request.Issuer_cohort))
 		if appErr != nil {
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-				Signed_tokens:   nil,
-				Public_key:      "",
-				Status:          INVALID_ISSUER,
-				Associated_data: request.Associated_data,
+				Signed_tokens:     nil,
+				Issuer_public_key: "",
+				Status:            INVALID_ISSUER,
+				Associated_data:   request.Associated_data,
 			})
 			continue
 		}
@@ -80,10 +80,10 @@ func SignedBlindedTokenIssuerHandler(
 					blindedTokenRequestSet.Request_id, err,
 				))
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-					Signed_tokens:   nil,
-					Public_key:      "",
-					Status:          ERROR,
-					Associated_data: request.Associated_data,
+					Signed_tokens:     nil,
+					Issuer_public_key: "",
+					Status:            ERROR,
+					Associated_data:   request.Associated_data,
 				})
 				continue
 			}
@@ -98,10 +98,10 @@ func SignedBlindedTokenIssuerHandler(
 				err,
 			))
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-				Signed_tokens:   nil,
-				Public_key:      "",
-				Status:          ERROR,
-				Associated_data: request.Associated_data,
+				Signed_tokens:     nil,
+				Issuer_public_key: "",
+				Status:            ERROR,
+				Associated_data:   request.Associated_data,
 			})
 			continue
 		}
@@ -137,11 +137,11 @@ func SignedBlindedTokenIssuerHandler(
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 		}
 		blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
-			Signed_tokens:   marshaledTokens,
-			Proof:           string(marshaledDLEQProof),
-			Public_key:      string(marshaledPublicKey),
-			Status:          OK,
-			Associated_data: request.Associated_data,
+			Signed_tokens:     marshaledTokens,
+			Proof:             string(marshaledDLEQProof),
+			Issuer_public_key: string(marshaledPublicKey),
+			Status:            OK,
+			Associated_data:   request.Associated_data,
 		})
 	}
 	resultSet := avroSchema.SigningResultSet{
