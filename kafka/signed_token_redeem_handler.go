@@ -169,7 +169,7 @@ func SignedTokenRedeemHandler(
 			}
 		}
 
-		if !redemptionStatus == avroSchema.RedeemResultStatusOk {
+		if redemptionStatus != avroSchema.RedeemResultStatusOk {
 			logger.Error().Msg(fmt.Sprintf(
 				"Request %s: Could not verify that the token redemption is valid",
 				tokenRedeemRequestSet.Request_id,
