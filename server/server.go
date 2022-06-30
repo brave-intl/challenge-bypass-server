@@ -111,6 +111,19 @@ func (c *Server) InitDbConfig() error {
 		}
 	}
 
+	if cacheEnabled := os.Getenv("CACHE_ENABLED"); cacheEnabled == "true" {
+		cachingConfig := CachingConfig{
+			Enabled:       true,
+			ExpirationSec: 10,
+		}
+		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheEnabled != "" {
+			if secs, err := strconv.Atoi(cacheDurationSecs); err == nil {
+				cachingConfig.ExpirationSec = secs
+			}
+		}
+		conf.CachingConfig = cachingConfig
+	}
+
 	c.LoadDbConfig(conf)
 
 	return nil
