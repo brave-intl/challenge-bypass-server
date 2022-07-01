@@ -348,16 +348,10 @@ func (c *Server) rotateIssuers() error {
 	cfg := c.dbConfig
 
 	tx := c.db.MustBegin()
+	// no harm in rollback if a commit was performed
+	defer tx.Rollback()
 
 	var err error = nil
-
-	defer func() {
-		if err != nil {
-			err = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
 
 	fetchedIssuers := []issuer{}
 	err = tx.Select(
@@ -416,7 +410,7 @@ func (c *Server) rotateIssuers() error {
 		}
 	}
 
-	return nil
+	return tx.Commit()
 }
 
 func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int, expiresAt *time.Time) error {
