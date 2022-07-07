@@ -13,6 +13,7 @@ func (msg *MockStatsGetter) Stats() sql.DBStats {
 	if msg.MockStats == nil {
 		return sql.DBStats{}
 	}
+
 	return msg.MockStats()
 }
 
@@ -34,10 +35,12 @@ func TestStatsCollectorInit(t *testing.T) {
 		if sg.DBName == "testdb" {
 			foundTest = true
 		}
+
 		if sg.DBName == "testdb1" {
 			foundTest1 = true
 		}
 	}
+
 	if !foundTest1 || !foundTest {
 		t.Error("failed to find the two required db names from stats getter")
 	}

@@ -1,0 +1,21 @@
+linters:
+  disable-all: true
+  enable:
+    - dogsled
+    - exportloopref
+    - forbidigo
+    - govet
+    - gofmt
+    - gocritic
+    - godox
+    - misspell
+    - staticcheck
+    - unconvert
+  presets:
+    - bugs
+    - unused
+    - style
+    - format
+    - performance
+    - complexity
+  fast: false
