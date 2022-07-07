@@ -22,7 +22,7 @@ type StatsGetter interface {
 	Stats() sql.DBStats
 }
 
-// SG - StatsGetter Attributes
+// SG - StatsGetter Attributes.
 type SG struct {
 	DBName string
 	Stats  StatsGetter
@@ -44,7 +44,7 @@ type StatsCollector struct {
 	closedMaxLifetimeDesc *prometheus.Desc
 }
 
-// AddStatsGetter - Add a new db name and stats getter pair which will be reported on
+// AddStatsGetter - Add a new db name and stats getter pair which will be reported on.
 func (sc *StatsCollector) AddStatsGetter(dbName string, sg StatsGetter) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()

@@ -20,6 +20,12 @@ docker-compose up
 make docker-test
 ```
 
+## Linting
+
+This project uses [golangci-lint](https://golangci-lint.run/) for linting, this is run by CI and should be run before raising a PR. 
+
+To run locally use `make lint` which runs linting using docker however if you want to run it locally using a binary release (which can be faster) follow the [installation instructions for your platform](https://golangci-lint.run/usage/install/) and then run `golangci-lint run -v ./...`   
+
 ## Deployment
 
 For testing purposes this repo can be deployed to Heroku. The settings set in environment variables `DBCONFIG` and `DATABASE_URL` override other options.
