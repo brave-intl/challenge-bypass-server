@@ -1,19 +1,16 @@
 linters:
   disable-all: true
   enable:
+    - bodyclose
+    - deadcode
     - dogsled
     - exportloopref
     - govet
     - gofmt
+    - goimports
     - gocritic
     - godox
     - misspell
     - staticcheck
+    - stylecheck
     - unconvert
-#  presets:
-#    - bugs
-#    - unused
-#    - style
-#    - format
-#    - performance
-#    - complexity
