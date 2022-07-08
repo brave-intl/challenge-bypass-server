@@ -10,11 +10,10 @@ linters:
     - misspell
     - staticcheck
     - unconvert
-  presets:
-    - bugs
-    - unused
-    - style
-    - format
-    - performance
-    - complexity
-  fast: false
+#  presets:
+#    - bugs
+#    - unused
+#    - style
+#    - format
+#    - performance
+#    - complexity
