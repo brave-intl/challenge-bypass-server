@@ -21,7 +21,7 @@ require (
 	github.com/pressly/lg v1.1.1
 	github.com/prometheus/client_golang v1.11.1
 	github.com/robfig/cron/v3 v3.0.0
-	github.com/rs/zerolog v1.24.0
+	github.com/rs/zerolog v1.27.0
 	github.com/satori/go.uuid v1.2.0
 	github.com/segmentio/kafka-go v0.4.17
 	github.com/sirupsen/logrus v1.8.1
@@ -47,6 +47,8 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/klauspost/compress v1.11.13 // indirect
 	github.com/linkedin/goavro v2.1.0+incompatible // indirect
+	github.com/mattn/go-colorable v0.1.12 // indirect
+	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
 	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799 // indirect
 	github.com/pierrec/lz4 v2.6.0+incompatible // indirect
