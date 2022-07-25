@@ -16,7 +16,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jmoiron/sqlx v1.3.4
-	github.com/lib/pq v1.10.3
+	github.com/lib/pq v1.10.6
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pressly/lg v1.1.1
 	github.com/prometheus/client_golang v1.11.1
