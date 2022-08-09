@@ -453,7 +453,7 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int
 		&foundIssuerType,
 		`SELECT true FROM issuers
 			WHERE issuer_type = $1
-		`,
+		`, issuerType,
 	)
 	if err != nil {
 		// no rows is fine, other errors not ok
