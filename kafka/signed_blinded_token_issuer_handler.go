@@ -30,7 +30,7 @@ func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf(
-			"Request %s: Failed Avro deserialization",
+			"request %s: failed Avro deserialization",
 			blindedTokenRequestSet.Request_id,
 		)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, log)
@@ -43,7 +43,7 @@ func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
 		message := fmt.Sprintf(
-			"Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.",
+			"request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected",
 			blindedTokenRequestSet.Request_id,
 		)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, &logger)
@@ -320,7 +320,7 @@ OUTER:
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf(
-			"Request %s: Failed to serialize ResultSet: %+v",
+			"request %s: failed to serialize ResultSet: %+v",
 			blindedTokenRequestSet.Request_id,
 			resultSet,
 		)
@@ -330,7 +330,7 @@ OUTER:
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
 		message := fmt.Sprintf(
-			"Request %s: Failed to emit results to topic %s",
+			"request %s: failed to emit results to topic %s",
 			blindedTokenRequestSet.Request_id,
 			producer.Topic,
 		)
