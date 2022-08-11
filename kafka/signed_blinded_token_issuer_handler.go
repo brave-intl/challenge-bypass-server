@@ -180,6 +180,16 @@ OUTER:
 					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
 				}
 
+				var marshalledBlindedTokens []string
+				for _, token := range blindedTokensSlice {
+					marshaledToken, err := token.MarshalText()
+					if err != nil {
+						return fmt.Errorf("request %s: could not marshal blinded token slice to bytes: %w",
+							blindedTokenRequestSet.Request_id, err)
+					}
+					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+				}
+
 				var marshaledSignedTokens []string
 				for _, token := range signedTokens {
 					marshaledToken, err := token.MarshalText()
@@ -267,6 +277,16 @@ OUTER:
 						Temporary:      temporary,
 						Backoff:        backoff,
 					}
+				}
+				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+			}
+
+			var marshalledBlindedTokens []string
+			for _, token := range blindedTokens {
+				marshaledToken, err := token.MarshalText()
+				if err != nil {
+					return fmt.Errorf("request %s: could not marshal blinded token slice to bytes: %w",
+						blindedTokenRequestSet.Request_id, err)
 				}
 				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
 			}
