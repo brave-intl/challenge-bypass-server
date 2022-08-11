@@ -211,7 +211,7 @@ func SignedTokenRedeemHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, logger)
 	}
 
