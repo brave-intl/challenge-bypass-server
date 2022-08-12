@@ -193,7 +193,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          DUPLICATE_REDEMPTION,
+				Status:          redeemDuplicateRedemption,
 				Associated_data: request.Associated_data,
 			})
 			continue
