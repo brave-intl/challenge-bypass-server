@@ -14,6 +14,15 @@ import (
 	"github.com/google/uuid"
 )
 
+type Equivalence int64
+
+const (
+	UnknownEquivalence Equivalence = iota
+	NoEquivalence
+	IdEquivalence
+	IdAndAllValueEquivalence
+)
+
 // InitDynamo initialzes the dynamo database connection
 func (c *Server) InitDynamo() {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
