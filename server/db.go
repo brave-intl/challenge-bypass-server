@@ -116,7 +116,6 @@ type RedemptionV2 struct {
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
-	Offset    int64     `json:"offset"`
 }
 
 // CacheInterface cach functions
