@@ -266,13 +266,3 @@ func SignedTokenRedeemHandler(
 	}
 	return nil
 }
-
-func containsEquivalnce(equivSlice []cbpServer.Equivalence, eqiv cbpServer.Equivalence) bool {
-	for _, e := range equivSlice {
-		if e == eqiv {
-			return true
-		}
-	}
-
-	return false
-}
