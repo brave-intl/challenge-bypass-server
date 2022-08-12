@@ -20,7 +20,6 @@ import (
 func SignedTokenRedeemHandler(
 	data []byte,
 	producer *kafka.Writer,
-	tolerableEquivalence []cbpServer.Equivalence,
 	server *cbpServer.Server,
 	logger *zerolog.Logger,
 ) *utils.ProcessingError {
