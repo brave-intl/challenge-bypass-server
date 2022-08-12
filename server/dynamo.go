@@ -1,7 +1,6 @@
 package server
 
 import (
-	"errors"
 	"os"
 	"time"
 
@@ -14,13 +13,20 @@ import (
 	"github.com/google/uuid"
 )
 
+// Equivalence represents the type of equality discovered when checking DynamoDB data
 type Equivalence int64
 
 const (
+	// UnknownEquivalence means equivalence could not be determined
 	UnknownEquivalence Equivalence = iota
+	// NoEquivalence means means there was no matching record of any kind in Dynamo
 	NoEquivalence
-	IdEquivalence
-	IdAndAllValueEquivalence
+	// IDEquivalence means a record with the same ID as the subject was found, but one
+	// or more of its other fields did not match the subject
+	IDEquivalence
+	// IDAndAllValueEquivalence means a record that matched all of the fields of the
+	// subject was found
+	IDAndAllValueEquivalence
 )
 
 // InitDynamo initialzes the dynamo database connection
@@ -119,6 +125,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *Issuer, preimage *crypto.TokenPre
 	return nil
 }
 
+// PersistRedemption saves the redemption in the database
 func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	av, err := dynamodbattribute.MarshalMap(redemption)
 	if err != nil {
@@ -144,44 +151,37 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	return nil
 }
 
-// checkRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
+// CheckRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
-func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
+func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string) (*RedemptionV2, Equivalence, error) {
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
 		return nil, UnknownEquivalence, err
 	}
 
-	issuerUUID, err := uuid.FromString(issuer.ID)
-	if err != nil {
-		c.Logger.Error("Bad issuer id")
-		return nil, UnknownEquivalence, errors.New("Bad issuer id")
-	}
-	id := uuid.NewV5(issuerUUID, string(preimageTxt))
+	id := uuid.NewSHA1(*issuer.ID, preimageTxt)
 
 	redemption := RedemptionV2{
-		IssuerID:  issuer.ID,
+		IssuerID:  issuer.ID.String(),
 		ID:        id.String(),
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
 		TTL:       issuer.ExpiresAt.Unix(),
-		Offset:    offset,
 	}
 
-	existingRedemption, err := c.fetchRedemptionV2(issuer, id.String())
+	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)
 
 	// If err is nil that means that the record does exist in the database and we need
 	// to determine whether the body is equivalent to what was provided or just the
 	// id.
 	if err == nil {
 		if redemption == *existingRedemption {
-			return &redemption, IdAndAllValueEquivalence, nil
-		} else {
-			return &redemption, IdEquivalence, nil
+			return &redemption, IDAndAllValueEquivalence, nil
 		}
+		return &redemption, IDEquivalence, nil
 	}
 	return &redemption, NoEquivalence, nil
 }

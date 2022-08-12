@@ -178,14 +178,14 @@ func SignedTokenRedeemHandler(
 		} else {
 			logger.Trace().Msgf("request %s: validated", tokenRedeemRequestSet.Request_id)
 		}
-		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
+		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding))
 		if err != nil {
 			message := fmt.Sprintf("Request %s: Failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
-			return &ProcessingError{
-				Cause:          err,
+			return &utils.ProcessingError{
+				OriginalError:  err,
 				FailureMessage: message,
 				Temporary:      false,
-				KafkaMessage:   msg,
+				KafkaMessage:   kafka.Message{},
 			}
 		}
 		if containsEquivalnce(tolerableEquivalence, equivalence) {

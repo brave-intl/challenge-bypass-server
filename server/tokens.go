@@ -405,12 +405,11 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 					Message: err.Error(),
 					Code:    http.StatusConflict,
 				}
-			} else {
-				return &handlers.AppError{
-					Cause:   err,
-					Message: "Could not mark token redemption",
-					Code:    http.StatusInternalServerError,
-				}
+			}
+			return &handlers.AppError{
+				Cause:   err,
+				Message: "Could not mark token redemption",
+				Code:    http.StatusInternalServerError,
 			}
 		}
 
