@@ -24,10 +24,11 @@ func SignedTokenRedeemHandler(
 	logger *zerolog.Logger,
 ) *utils.ProcessingError {
 	const (
-		redeemOk                  = 0
-		redeemDuplicateRedemption = 1
-		redeemUnverified          = 2
-		redeemError               = 3
+		redeemOk                     = 0
+		redeemDuplicateRedemptionID  = 1
+		redeemDuplicateRedemptionAll = 2
+		redeemUnverified             = 3
+		redeemError                  = 4
 	)
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
@@ -187,16 +188,27 @@ func SignedTokenRedeemHandler(
 				KafkaMessage:   kafka.Message{},
 			}
 		}
-		if containsEquivalnce(tolerableEquivalence, equivalence) {
-			logger.Error().Msg(fmt.Sprintf("Request %s: Duplicate redemption: %e", tokenRedeemRequestSet.Request_id, err))
+
+		// Continue if there is a duplicate
+		switch equivalence {
+		case cbpServer.IDEquivalence:
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemDuplicateRedemption,
+				Status:          redeemDuplicateRedemptionID,
+				Associated_data: request.Associated_data,
+			})
+			continue
+		case cbpServer.IDAndAllValueEquivalence:
+			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
+				Issuer_name:     "",
+				Issuer_cohort:   0,
+				Status:          redeemDuplicateRedemptionAll,
 				Associated_data: request.Associated_data,
 			})
 			continue
 		}
+
 		if err := server.PersistRedemption(*redemption); err != nil {
 			logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed: %e", tokenRedeemRequestSet.Request_id, err))
 			if strings.Contains(err.Error(), "Duplicate") {
@@ -206,7 +218,7 @@ func SignedTokenRedeemHandler(
 				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 					Issuer_name:     "",
 					Issuer_cohort:   0,
-					Status:          redeemDuplicateRedemption,
+					Status:          redeemDuplicateRedemptionID,
 					Associated_data: request.Associated_data,
 				})
 			}
