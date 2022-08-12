@@ -26,9 +26,9 @@ func SignedTokenRedeemHandler(
 	const (
 		redeemOk                     = 0
 		redeemDuplicateRedemptionID  = 1
-		redeemDuplicateRedemptionAll = 2
-		redeemUnverified             = 3
-		redeemError                  = 4
+		redeemUnverified             = 2
+		redeemError                  = 3
+		redeemDuplicateRedemptionAll = 4
 	)
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
