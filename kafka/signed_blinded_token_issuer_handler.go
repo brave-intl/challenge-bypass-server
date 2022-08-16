@@ -27,7 +27,7 @@ func SignedBlindedTokenIssuerHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	results chan *utils.ProcessingError,
-	logger *zerolog.Logger,
+	log *zerolog.Logger,
 ) *utils.ProcessingError {
 	const (
 		issuerOk      = 0
@@ -41,10 +41,10 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: failed Avro deserialization",
 			blindedTokenRequestSet.Request_id,
 		)
-		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, log)
 	}
 
-	handlerLogger := logger.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
+	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
 
 	var blindedTokenResults []avroSchema.SigningResultV2
 	if len(blindedTokenRequestSet.Data) > 1 {
@@ -54,13 +54,13 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected",
 			blindedTokenRequestSet.Request_id,
 		)
-		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 	}
 
 OUTER:
 	for _, request := range blindedTokenRequestSet.Data {
 		if request.Blinded_tokens == nil {
-			handlerLogger.Error().Err(errors.New("blinded tokens is empty")).Msg("")
+			logger.Error().Err(errors.New("blinded tokens is empty")).Msg("")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -72,7 +72,7 @@ OUTER:
 
 		// check to see if issuer cohort will overflow
 		if request.Issuer_cohort > math.MaxInt16 || request.Issuer_cohort < math.MinInt16 {
-			handlerLogger.Error().Msg("invalid cohort")
+			logger.Error().Msg("invalid cohort")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -84,7 +84,7 @@ OUTER:
 
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int16(request.Issuer_cohort))
 		if appErr != nil {
-			handlerLogger.Error().Err(appErr).Msg("error retrieving issuer")
+			logger.Error().Err(appErr).Msg("error retrieving issuer")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -97,7 +97,7 @@ OUTER:
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
 			if len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap) != 0 {
-				handlerLogger.Error().Err(errors.New("error request contains invalid number of blinded tokens")).Msg("")
+				logger.Error().Err(errors.New("error request contains invalid number of blinded tokens")).Msg("")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -115,7 +115,7 @@ OUTER:
 			blindedToken := crypto.BlindedToken{}
 			err := blindedToken.UnmarshalText([]byte(stringBlindedToken))
 			if err != nil {
-				handlerLogger.Error().Err(fmt.Errorf("failed to unmarshal blinded tokens: %w", err)).
+				logger.Error().Err(fmt.Errorf("failed to unmarshal blinded tokens: %w", err)).
 					Msg("signed blinded token issuer handler")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
@@ -149,7 +149,7 @@ OUTER:
 				signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, signingKey)
 				if err != nil {
 					// @TODO: If one token fails they will all fail. Assess this behavior
-					handlerLogger.Error().Err(fmt.Errorf("error could not approve new tokens: %w", err)).
+					logger.Error().Err(fmt.Errorf("error could not approve new tokens: %w", err)).
 						Msg("signed blinded token issuer handler")
 					blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 						Signed_tokens:     nil,
@@ -163,7 +163,7 @@ OUTER:
 				marshaledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
-					temporary, backoff := utils.ErrorIsTemporary(err, &handlerLogger)
+					temporary, backoff := utils.ErrorIsTemporary(err, &logger)
 					return &utils.ProcessingError{
 						OriginalError:  err,
 						FailureMessage: message,
@@ -177,7 +177,7 @@ OUTER:
 					marshaledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						temporary, backoff := utils.ErrorIsTemporary(err, &handlerLogger)
+						temporary, backoff := utils.ErrorIsTemporary(err, &logger)
 						return &utils.ProcessingError{
 							OriginalError:  err,
 							FailureMessage: message,
@@ -193,7 +193,7 @@ OUTER:
 					marshaledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						temporary, backoff := utils.ErrorIsTemporary(err, &handlerLogger)
+						temporary, backoff := utils.ErrorIsTemporary(err, &logger)
 						return &utils.ProcessingError{
 							OriginalError:  err,
 							FailureMessage: message,
@@ -208,7 +208,7 @@ OUTER:
 				marshaledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
-					temporary, backoff := utils.ErrorIsTemporary(err, &handlerLogger)
+					temporary, backoff := utils.ErrorIsTemporary(err, &logger)
 					return &utils.ProcessingError{
 						OriginalError:  err,
 						FailureMessage: message,
@@ -238,7 +238,7 @@ OUTER:
 			// @TODO: If one token fails they will all fail. Assess this behavior
 			signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokens, signingKey)
 			if err != nil {
-				handlerLogger.Error().
+				logger.Error().
 					Err(fmt.Errorf("error could not approve new tokens: %w", err)).
 					Msg("signed blinded token issuer handler")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -254,7 +254,7 @@ OUTER:
 			if err != nil {
 				message := fmt.Sprintf("request %s: could not marshal dleq proof: %s",
 					blindedTokenRequestSet.Request_id, err)
-				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 			}
 
 			var marshalledBlindedTokens []string
@@ -262,7 +262,7 @@ OUTER:
 				marshaledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-					return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+					return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 				}
 				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
 			}
@@ -272,7 +272,7 @@ OUTER:
 				marshaledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
-					return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+					return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 				}
 				marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken[:]))
 			}
@@ -281,7 +281,7 @@ OUTER:
 			marshaledPublicKey, err := publicKey.MarshalText()
 			if err != nil {
 				message := fmt.Sprintf("error could not marshal signing key: %s", err)
-				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 			}
 
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -308,17 +308,17 @@ OUTER:
 			blindedTokenRequestSet.Request_id,
 			resultSet,
 		)
-		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 	}
 
-	err = Emit(producer, resultSetBuffer.Bytes(), &handlerLogger)
+	err = Emit(producer, resultSetBuffer.Bytes(), &logger)
 	if err != nil {
 		message := fmt.Sprintf(
 			"request %s: failed to emit results to topic %s",
 			blindedTokenRequestSet.Request_id,
 			producer.Topic,
 		)
-		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 	}
 
 	return nil
