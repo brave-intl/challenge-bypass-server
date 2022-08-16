@@ -25,7 +25,6 @@ import (
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
-	tolerableEquivalence []cbpServer.Equivalence,
 	server *cbpServer.Server,
 	results chan *ProcessingError,
 	logger *zerolog.Logger,
@@ -202,7 +201,7 @@ func SignedTokenRedeemHandler(
 			})
 			continue
 		} else {
-			logger.Info().Msg(fmt.Sprintf("Request %s: Validated", tokenRedeemRequestSet.Request_id))
+			logger.Info().Msg(fmt.Sprintf("request %s: validated", tokenRedeemRequestSet.Request_id))
 		}
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
@@ -213,18 +212,6 @@ func SignedTokenRedeemHandler(
 				Temporary:      false,
 				KafkaMessage:   msg,
 			}
-		}
-		// If the discovered equivalence is not one of the tolerableEquivalence
-		// options this redemption is considered a duplicate.
-		if !containsEquivalnce(tolerableEquivalence, equivalence) {
-			logger.Error().Msg(fmt.Sprintf("Request %s: Duplicate redemption: %e", tokenRedeemRequestSet.Request_id, err))
-			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
-				Issuer_name:     "",
-				Issuer_cohort:   0,
-				Status:          DUPLICATE_REDEMPTION,
-				Associated_data: request.Associated_data,
-			})
-			continue
 		}
 		if err := server.PersistRedemption(*redemption); err != nil {
 			logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed: %e", tokenRedeemRequestSet.Request_id, err))

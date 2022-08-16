@@ -25,7 +25,6 @@ import (
 func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
-	tolerableEquivalence []cbpServer.Equivalence,
 	server *cbpServer.Server,
 	results chan *ProcessingError,
 	logger *zerolog.Logger,
@@ -39,7 +38,7 @@ func SignedBlindedTokenIssuerHandler(
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf(
-			"Request %s: Failed Avro deserialization",
+			"request %s: failed Avro deserialization",
 			blindedTokenRequestSet.Request_id,
 		)
 		return &ProcessingError{
@@ -128,7 +127,7 @@ OUTER:
 			if err != nil {
 				logger.Error().Err(fmt.Errorf("failed to unmarshal blinded tokens: %w", err)).
 					Msg("signed blinded token issuer handler")
-				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResult{
+				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
 					Status:            issuerError,

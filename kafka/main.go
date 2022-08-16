@@ -23,7 +23,6 @@ var brokers []string
 type Processor func(
 	kafka.Message,
 	*kafka.Writer,
-	[]server.Equivalence,
 	*server.Server,
 	chan *ProcessingError,
 	*zerolog.Logger,
@@ -47,11 +46,10 @@ func (e ProcessingError) Error() string {
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
-	Topic                string
-	ResultProducer       *kafka.Writer
-	Processor            Processor
-	Group                string
-	TolerableEquivalence []server.Equivalence
+	Topic          string
+	ResultProducer *kafka.Writer
+	Processor      Processor
+	Group          string
 }
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
@@ -74,10 +72,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}),
 			Processor: SignedTokenRedeemHandler,
 			Group:     adsConsumerGroupV1,
-			// Either the record does not exist and there is NoEquivalence,
-			// or this is a retry of a previous record including a matching
-			// offset.
-			TolerableEquivalence: []server.Equivalence{server.NoEquivalence, server.IdAndAllValueEquivalence},
 		},
 		{
 			Topic: adsRequestSignV1Topic,
@@ -86,9 +80,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				Topic:   adsResultSignV1Topic,
 				Dialer:  getDialer(logger),
 			}),
-			Processor:            SignedBlindedTokenIssuerHandler,
-			Group:                adsConsumerGroupV1,
-			TolerableEquivalence: []server.Equivalence{},
+			Processor: SignedBlindedTokenIssuerHandler,
+			Group:     adsConsumerGroupV1,
 		},
 	}
 	var topics []string
@@ -131,8 +124,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					break BatchProcessingLoop
 				}
 			}
-			logger.Info().Msg(fmt.Sprintf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset))
-			logger.Info().Msg(fmt.Sprintf("Reader Stats: %#v", reader.Stats()))
+			logger.Info().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+			logger.Info().Msgf("Reader Stats: %#v", reader.Stats())
 			wgDoneDeferred := false
 			// Check if any of the existing topicMappings match the fetched message
 			for _, topicMapping := range topicMappings {
@@ -148,7 +141,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 						err := topicMapping.Processor(
 							msg,
 							topicMapping.ResultProducer,
-							topicMapping.TolerableEquivalence,
 							providedServer,
 							results,
 							logger,
@@ -181,7 +173,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		// has the lowest offset. Only run sort if there is more than one temporary
 		// error.
 		if len(temporaryErrors) > 0 {
-			logger.Error().Msg(fmt.Sprintf("Temporary errors: %#v", temporaryErrors))
+			logger.Error().Msgf("Temporary errors: %#v", temporaryErrors)
 			if len(temporaryErrors) > 1 {
 				sort.Slice(temporaryErrors, func(i, j int) bool {
 					return temporaryErrors[i].KafkaMessage.Offset < temporaryErrors[j].KafkaMessage.Offset
@@ -193,7 +185,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			for _, message := range batch {
 				if message.Offset == temporaryErrors[0].KafkaMessage.Offset-1 {
 					if err := reader.CommitMessages(ctx, message); err != nil {
-						logger.Error().Msg(fmt.Sprintf("Failed to commit: %s", err))
+						logger.Error().Msgf("Failed to commit: %s", err)
 					}
 				}
 			}
@@ -201,7 +193,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			sort.Slice(batch, func(i, j int) bool {
 				return batch[i].Offset < batch[j].Offset
 			})
-			logger.Info().Msg(fmt.Sprintf("Committing offset", batch[0].Offset))
+			logger.Info().Msgf("Committing offset", batch[0].Offset)
 			if err := reader.CommitMessages(ctx, batch[0]); err != nil {
 				logger.Error().Err(err).Msg("Failed to commit")
 			}
