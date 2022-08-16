@@ -185,8 +185,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}
 		}
 	}
-
-	return nil
 }
 
 // Pull messages out of the Reader's underlying batch so that they can be processed in parallel

@@ -245,7 +245,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, offset); err != nil {
+		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, 0); err != nil {
 			if errors.Is(err, errDuplicateRedemption) {
 				return &handlers.AppError{
 					Message: err.Error(),
@@ -326,7 +326,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, offset); err != nil {
+		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, 0); err != nil {
 			if errors.Is(err, errDuplicateRedemption) {
 				return &handlers.AppError{
 					Message: err.Error(),
