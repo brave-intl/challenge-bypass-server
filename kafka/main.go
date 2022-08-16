@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -12,6 +11,7 @@ import (
 
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
@@ -20,29 +20,14 @@ import (
 
 var brokers []string
 
+// Processor is a function that is used to process Kafka messages
 type Processor func(
 	kafka.Message,
 	*kafka.Writer,
 	*server.Server,
-	chan *ProcessingError,
+	chan *utils.ProcessingError,
 	*zerolog.Logger,
-) *ProcessingError
-
-type ProcessingError struct {
-	Cause          error
-	FailureMessage string
-	Temporary      bool
-	KafkaMessage   kafka.Message
-}
-
-// Error makes ProcessingError an error
-func (e ProcessingError) Error() string {
-	msg := fmt.Sprintf("error: %s", e.FailureMessage)
-	if e.Cause != nil {
-		msg = fmt.Sprintf("%s: %s", msg, e.Cause)
-	}
-	return msg
-}
+) *utils.ProcessingError
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
@@ -101,7 +86,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	for {
 		var (
 			wg      sync.WaitGroup
-			results = make(chan *ProcessingError)
+			results = make(chan *utils.ProcessingError)
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
@@ -161,7 +146,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		}
 		close(results)
 		// Iterate over any failures and get the earliest temporary failure offset
-		var temporaryErrors []*ProcessingError
+		var temporaryErrors []*utils.ProcessingError
 		for processingError := range results {
 			if processingError.Temporary {
 				continue
