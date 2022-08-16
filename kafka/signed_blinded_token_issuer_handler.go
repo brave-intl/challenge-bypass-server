@@ -293,34 +293,33 @@ OUTER:
 				Associated_data:   request.Associated_data,
 			})
 		}
-
-		resultSet := avroSchema.SigningResultV2Set{
-			Request_id: blindedTokenRequestSet.Request_id,
-			Data:       blindedTokenResults,
-		}
-
-		var resultSetBuffer bytes.Buffer
-		err = resultSet.Serialize(&resultSetBuffer)
-		if err != nil {
-			message := fmt.Sprintf(
-				"request %s: failed to serialize ResultSet: %+v",
-				blindedTokenRequestSet.Request_id,
-				resultSet,
-			)
-			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
-		}
-
-		err = Emit(producer, resultSetBuffer.Bytes(), &handlerLogger)
-		if err != nil {
-			message := fmt.Sprintf(
-				"request %s: failed to emit results to topic %s",
-				blindedTokenRequestSet.Request_id,
-				producer.Topic,
-			)
-			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
-		}
-
-		return nil
 	}
+
+	resultSet := avroSchema.SigningResultV2Set{
+		Request_id: blindedTokenRequestSet.Request_id,
+		Data:       blindedTokenResults,
+	}
+
+	var resultSetBuffer bytes.Buffer
+	err = resultSet.Serialize(&resultSetBuffer)
+	if err != nil {
+		message := fmt.Sprintf(
+			"request %s: failed to serialize ResultSet: %+v",
+			blindedTokenRequestSet.Request_id,
+			resultSet,
+		)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+	}
+
+	err = Emit(producer, resultSetBuffer.Bytes(), &handlerLogger)
+	if err != nil {
+		message := fmt.Sprintf(
+			"request %s: failed to emit results to topic %s",
+			blindedTokenRequestSet.Request_id,
+			producer.Topic,
+		)
+		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+	}
+
 	return nil
 }
