@@ -903,8 +903,8 @@ func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.Token
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
-	} else if issuerForRedemption.Version == 2 {
-		return c.redeemTokenV2(issuerForRedemption, preimage, payload, offset)
+	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
+		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
 	return errors.New("Wrong Issuer Version")
 }

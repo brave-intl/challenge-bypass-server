@@ -2,7 +2,6 @@ package utils
 
 import (
 	"fmt"
-
 	"time"
 
 	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"

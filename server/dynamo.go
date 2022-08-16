@@ -83,7 +83,7 @@ func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
 	return &redemption, nil
 }
 
-func (c *Server) redeemTokenV2(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
+func (c *Server) redeemTokenWithDynamo(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
@@ -152,7 +152,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	return nil
 }
 
-// checkRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
+// CheckRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
 func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {

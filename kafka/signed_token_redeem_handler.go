@@ -39,7 +39,7 @@ func SignedTokenRedeemHandler(
 	// Deserialize request into usable struct
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed Avro deserialization", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 	var redeemedTokenResults []avroSchema.RedeemResult
@@ -48,12 +48,12 @@ func SignedTokenRedeemHandler(
 	if len(tokenRedeemRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		message := fmt.Sprintf("Request %s: Data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected.", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 
@@ -96,14 +96,14 @@ func SignedTokenRedeemHandler(
 		err = tokenPreimage.UnmarshalText([]byte(request.Token_preimage))
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
-			message := fmt.Sprintf("Request %s: Could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
+			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
-			message := fmt.Sprintf("Request %s: Could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
+			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
 			return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 		}
 		for _, issuer := range *issuers {
@@ -132,7 +132,7 @@ func SignedTokenRedeemHandler(
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
 			// Unmarshaling failure is a data issue and is probably permanent.
 			if err != nil {
-				message := fmt.Sprintf("Request %s: Could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
 				return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 			}
 
@@ -238,13 +238,13 @@ func SignedTokenRedeemHandler(
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed to serialize ResultSet", tokenRedeemRequestSet.Request_id)
+		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), logger)
 	if err != nil {
-		message := fmt.Sprintf("Request %s: Failed to emit results to topic %s", tokenRedeemRequestSet.Request_id, producer.Topic)
+		message := fmt.Sprintf("request %s: failed to emit results to topic %s", tokenRedeemRequestSet.Request_id, producer.Topic)
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 	return nil
