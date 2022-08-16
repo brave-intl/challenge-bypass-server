@@ -311,7 +311,7 @@ OUTER:
 		return utils.ProcessingErrorFromErrorWithMessage(err, message, msg, &logger)
 	}
 
-	err = Emit(producer, resultSetBuffer.Bytes(), &logger)
+	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
 		message := fmt.Sprintf(
 			"request %s: failed to emit results to topic %s",
