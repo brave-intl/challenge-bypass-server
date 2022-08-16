@@ -159,7 +159,7 @@ func SignedTokenRedeemHandler(
 			if err != nil {
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
 				temporary, backoff := utils.ErrorIsTemporary(err, logger)
-				return &utils.ProcessingError{
+				return &ProcessingError{
 					OriginalError:  err,
 					FailureMessage: message,
 					Temporary:      temporary,
@@ -205,7 +205,7 @@ func SignedTokenRedeemHandler(
 		}
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
-			message := fmt.Sprintf("Request %s: Failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
+			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 			return &ProcessingError{
 				Cause:          err,
 				FailureMessage: message,
@@ -214,9 +214,9 @@ func SignedTokenRedeemHandler(
 			}
 		}
 		if err := server.PersistRedemption(*redemption); err != nil {
-			logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed: %e", tokenRedeemRequestSet.Request_id, err))
+			logger.Error().Err(err).Msgf("request %s: token redemption failed: %e", tokenRedeemRequestSet.Request_id, err)
 			if strings.Contains(err.Error(), "Duplicate") {
-				logger.Error().Msg(fmt.Sprintf("Request %s: Duplicate redemption: %e", tokenRedeemRequestSet.Request_id, err))
+				logger.Error().Msgf("request %s: duplicate redemption: %e", tokenRedeemRequestSet.Request_id, err)
 				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 					Issuer_name:     "",
 					Issuer_cohort:   0,
@@ -247,7 +247,7 @@ func SignedTokenRedeemHandler(
 		}
 
 		if err := server.PersistRedemption(*redemption); err != nil {
-			logger.Error().Err(err).Msg(fmt.Sprintf("Request %s: Token redemption failed: %e", tokenRedeemRequestSet.Request_id, err))
+			logger.Error().Err(err).Msgf("request %s: token redemption failed: %e", tokenRedeemRequestSet.Request_id, err)
 			if strings.Contains(err.Error(), "Duplicate") {
 				logger.Error().Err(fmt.Errorf("request %s: duplicate redemption: %w",
 					tokenRedeemRequestSet.Request_id, err)).
