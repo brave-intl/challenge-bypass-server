@@ -437,8 +437,37 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int, maxTokens int
 		return err
 	}
 
+	// create a tx,
+	tx := c.db.MustBegin()
+
+	defer func() {
+		if err != nil {
+			err = tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
+
+	var foundIssuerType bool
+	err = tx.Get(
+		&foundIssuerType,
+		`SELECT true FROM issuers
+			WHERE issuer_type = $1
+		`, issuerType,
+	)
+	if err != nil {
+		// no rows is fine, other errors not ok
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+
+	if foundIssuerType {
+		return errors.New("issuer has already been created")
+	}
+
 	queryTimer := prometheus.NewTimer(createIssuerDBDuration)
-	rows, err := c.db.Query(
+	rows, err := tx.Query(
 		`INSERT INTO issuers(issuer_type, issuer_cohort, signing_key, max_tokens, expires_at, version) VALUES ($1, $2, $3, $4, $5, 2)`,
 		issuerType,
 		issuerCohort,
