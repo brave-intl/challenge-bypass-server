@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -26,7 +27,15 @@ type Processor func(
 	*kafka.Writer,
 	*server.Server,
 	*zerolog.Logger,
-) *utils.ProcessingError
+) (*ProcessingResult, *utils.ProcessingError)
+
+// ProcessingResult contains a message and the topic to which the message should be
+// emitted
+type ProcessingResult struct {
+	ResultProducer *kafka.Writer
+	Message        []byte
+	RequestID      string
+}
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
@@ -84,8 +93,9 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	// failures are not categorized as temporary.
 	for {
 		var (
-			wg           sync.WaitGroup
-			errorResults = make(chan *utils.ProcessingError)
+			wg             sync.WaitGroup
+			errorResults   = make(chan *utils.ProcessingError)
+			successResults = make(chan *ProcessingResult)
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
@@ -122,7 +132,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 						logger *zerolog.Logger,
 					) {
 						defer wg.Done()
-						err := topicMapping.Processor(
+						res, err := topicMapping.Processor(
 							msg,
 							topicMapping.ResultProducer,
 							providedServer,
@@ -132,6 +142,10 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 							logger.Error().Err(err).Msg("Processing failed.")
 							errorResults <- err
 						}
+						if res != nil {
+							successResults <- res
+						}
+
 					}(msg, topicMapping, providedServer, logger)
 				}
 			}
@@ -143,7 +157,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}
 		}
 		close(errorResults)
-		// Iterate over any failures and get the earliest temporary failure offset
+		close(successResults)
+		// Iterate over any failures and create an error slice
 		var temporaryErrors []*utils.ProcessingError
 		for processingError := range errorResults {
 			if processingError.Temporary {
@@ -152,6 +167,35 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				continue
 			}
 		}
+		// Iterate over any results create a slice for emission
+		var successResultSet []*ProcessingResult
+		for _, successResult := range successResultSet {
+			successResultSet = append(successResultSet, successResult)
+		}
+
+		// Emit the results of the processing before handling errors and commits.
+		// This is to ensure that we never commit anything that was not both processed
+		// and emitted.
+		if len(successResultSet) > 0 {
+			for _, successResult := range successResultSet {
+				err = Emit(successResult.ResultProducer, successResult.Message, logger)
+				if err != nil {
+					message := fmt.Sprintf(
+						"request %s: failed to emit results to topic %s",
+						successResult.RequestID,
+						successResult.ResultProducer.Topic,
+					)
+					logger.Error().Err(err).Msgf(message)
+					// If the emission fails for any messages we must
+					// not commit and should retry. This will result in
+					// message reprocessing and duplicate errors being
+					// emitted to consumers. They will need to handle
+					// this case.
+					continue
+				}
+			}
+		}
+
 		// If there are temporary errors, sort them so that the first item in the
 		// list has the lowest offset. Only run sort if there is more than one
 		// temporary error.
