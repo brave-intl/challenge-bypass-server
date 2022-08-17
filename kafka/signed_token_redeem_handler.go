@@ -241,11 +241,6 @@ func SignedTokenRedeemHandler(
 		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
 	}
 
-	err = Emit(producer, resultSetBuffer.Bytes(), logger)
-	if err != nil {
-		message := fmt.Sprintf("request %s: failed to emit results to topic %s", tokenRedeemRequestSet.Request_id, producer.Topic)
-		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
-	}
 	return &ProcessingResult{
 		Message:        resultSetBuffer.Bytes(),
 		ResultProducer: producer,
