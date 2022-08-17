@@ -93,9 +93,9 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	// failures are not categorized as temporary.
 	for {
 		var (
-			wg             sync.WaitGroup
-			errorResults   = make(chan *utils.ProcessingError)
-			successResults = make(chan *ProcessingResult)
+			wg                sync.WaitGroup
+			errorResults      = make(chan *utils.ProcessingError)
+			processingResults = make(chan *ProcessingResult)
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
@@ -143,7 +143,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 							errorResults <- err
 						}
 						if res != nil {
-							successResults <- res
+							processingResults <- res
 						}
 
 					}(msg, topicMapping, providedServer, logger)
@@ -157,7 +157,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}
 		}
 		close(errorResults)
-		close(successResults)
+		close(processingResults)
 		// Iterate over any failures and create an error slice
 		var temporaryErrors []*utils.ProcessingError
 		for processingError := range errorResults {
@@ -168,22 +168,22 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}
 		}
 		// Iterate over any results create a slice for emission
-		var successResultSet []*ProcessingResult
-		for _, successResult := range successResultSet {
-			successResultSet = append(successResultSet, successResult)
+		var resultSet []*ProcessingResult
+		for processingResult := range processingResults {
+			resultSet = append(resultSet, processingResult)
 		}
 
 		// Emit the results of the processing before handling errors and commits.
 		// This is to ensure that we never commit anything that was not both processed
 		// and emitted.
-		if len(successResultSet) > 0 {
-			for _, successResult := range successResultSet {
-				err = Emit(successResult.ResultProducer, successResult.Message, logger)
+		if len(resultSet) > 0 {
+			for _, processingResult := range resultSet {
+				err = Emit(processingResult.ResultProducer, processingResult.Message, logger)
 				if err != nil {
 					message := fmt.Sprintf(
 						"request %s: failed to emit results to topic %s",
-						successResult.RequestID,
-						successResult.ResultProducer.Topic,
+						processingResult.RequestID,
+						processingResult.ResultProducer.Topic,
 					)
 					logger.Error().Err(err).Msgf(message)
 					// If the emission fails for any messages we must
