@@ -93,7 +93,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		batch, err := batchFromReader(ctx, reader, 20, logger)
 		if err != nil {
 			logger.Error().Err(err).Msg("Batching failed")
-			// This should be an app error that needs to communicate if its failure is
+			// This should be an error that needs to communicate if its failure is
 			// temporary or permanent. If temporary we need to handle it and if
 			// permanent we need to commit and move on.
 		}
@@ -147,39 +147,44 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		var temporaryErrors []*utils.ProcessingError
 		for processingError := range errorResults {
 			if processingError.Temporary {
-				continue
-			} else {
 				temporaryErrors = append(temporaryErrors, processingError)
+			} else {
+				continue
 			}
 		}
 		// If there are temporary errors, sort them so that the first item in the
-		// has the lowest offset. Only run sort if there is more than one temporary
-		// error.
+		// list has the lowest offset. Only run sort if there is more than one
+		// temporary error.
 		if len(temporaryErrors) > 0 {
-			logger.Error().Msgf("Temporary errors: %#v", temporaryErrors)
+			logger.Error().Msgf("temporary errors: %#v", temporaryErrors)
 			if len(temporaryErrors) > 1 {
 				sort.Slice(temporaryErrors, func(i, j int) bool {
 					return temporaryErrors[i].KafkaMessage.Offset < temporaryErrors[j].KafkaMessage.Offset
 				})
 			}
-			// Iterate over the batch to find the message that came before the first
-			// temporary failure and commit it. This will ensure that the temporary
-			// failure is picked up as the first item in the next batch.
+			// Iterate over the batch to find the message that came before the
+			// first temporary failure and commit it. This will ensure that
+			// the temporary failure is picked up as the first item in the next
+			// batch.
 			for _, message := range batch {
 				if message.Offset == temporaryErrors[0].KafkaMessage.Offset-1 {
-					time.Sleep(temporaryErrors[0].Backoff)
 					if err := reader.CommitMessages(ctx, message); err != nil {
-						logger.Error().Msgf("Failed to commit: %s", err)
+						logger.Error().Msgf("failed to commit: %s", err)
 					}
+					// Before retrying the temporary failure, wait the
+					// prescribed time.
+					time.Sleep(temporaryErrors[0].Backoff)
 				}
 			}
+			// If there are no temporary errors sort the batch in descending order by
+			// offset and then commit the offset of the first item in the list.
 		} else if len(batch) > 0 {
 			sort.Slice(batch, func(i, j int) bool {
 				return batch[i].Offset < batch[j].Offset
 			})
 			logger.Info().Msgf("Committing offset", batch[0].Offset)
 			if err := reader.CommitMessages(ctx, batch[0]); err != nil {
-				logger.Error().Err(err).Msg("Failed to commit")
+				logger.Error().Err(err).Msg("failed to commit")
 			}
 		}
 	}
@@ -200,8 +205,8 @@ func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logge
 		if err != nil {
 			if err == io.EOF {
 				logger.Info().Msg("Batch complete")
-			} else if err.Error() != "context deadline exceeded" {
-				logger.Error().Err(err).Msg("Batch item error")
+			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
+				logger.Error().Err(err).Msg("batch item error")
 			}
 			continue
 		}
@@ -240,7 +245,7 @@ func Emit(producer *kafka.Writer, message []byte, logger *zerolog.Logger) error 
 	messageKey := uuid.New()
 	marshaledMessageKey, err := messageKey.MarshalBinary()
 	if err != nil {
-		logger.Error().Msgf("Failed to marshal UUID into binary. Using default key value. %e", err)
+		logger.Error().Msgf("failed to marshal UUID into binary. Using default key value: %e", err)
 		marshaledMessageKey = []byte("default")
 	}
 
@@ -252,7 +257,7 @@ func Emit(producer *kafka.Writer, message []byte, logger *zerolog.Logger) error 
 		},
 	)
 	if err != nil {
-		logger.Error().Msgf("Failed to write messages: %e", err)
+		logger.Error().Msgf("failed to write messages: %e", err)
 		return err
 	}
 
@@ -267,7 +272,7 @@ func getDialer(logger *zerolog.Logger) *kafka.Dialer {
 		tlsDialer, _, err := batgo_kafka.TLSDialer()
 		dialer = tlsDialer
 		if err != nil {
-			logger.Error().Msgf("Failed to initialize TLS dialer: %e", err)
+			logger.Error().Msgf("failed to initialize TLS dialer: %e", err)
 		}
 	} else {
 		logger.Info().Msg("Generating Dialer")
