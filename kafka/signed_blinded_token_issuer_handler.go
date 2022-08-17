@@ -26,7 +26,6 @@ func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
-	results chan *utils.ProcessingError,
 	log *zerolog.Logger,
 ) *utils.ProcessingError {
 	const (

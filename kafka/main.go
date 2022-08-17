@@ -25,7 +25,6 @@ type Processor func(
 	kafka.Message,
 	*kafka.Writer,
 	*server.Server,
-	chan *utils.ProcessingError,
 	*zerolog.Logger,
 ) *utils.ProcessingError
 
@@ -79,14 +78,14 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	// `kafka-go` exposes messages one at a time through its normal interfaces despite
 	// collecting messages with batching from Kafka. To process these messages in
 	// parallel we use the `FetchMessage` method in a loop to collect a set of messages
-	// for processing. Successes and permanent failures are committed and temporary
+	// for processing. Successes and permanent failures are committed. Temporary
 	// failures are not committed and are retried. Miscategorization of errors can
 	// cause the consumer to become stuck forever, so it's important that permanent
 	// failures are not categorized as temporary.
 	for {
 		var (
-			wg      sync.WaitGroup
-			results = make(chan *utils.ProcessingError)
+			wg           sync.WaitGroup
+			errorResults = make(chan *utils.ProcessingError)
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
@@ -127,12 +126,11 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 							msg,
 							topicMapping.ResultProducer,
 							providedServer,
-							results,
 							logger,
 						)
 						if err != nil {
 							logger.Error().Err(err).Msg("Processing failed.")
-							results <- err
+							errorResults <- err
 						}
 					}(msg, topicMapping, providedServer, logger)
 				}
@@ -144,10 +142,10 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				wg.Done()
 			}
 		}
-		close(results)
+		close(errorResults)
 		// Iterate over any failures and get the earliest temporary failure offset
 		var temporaryErrors []*utils.ProcessingError
-		for processingError := range results {
+		for processingError := range errorResults {
 			if processingError.Temporary {
 				continue
 			} else {
@@ -196,7 +194,8 @@ func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logge
 		err      error
 	)
 	for i := 0; i < count; i++ {
-		innerctx, _ := context.WithTimeout(ctx, 100*time.Millisecond)
+		innerctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
 		message, err := reader.FetchMessage(innerctx)
 		if err != nil {
 			if err == io.EOF {

@@ -25,7 +25,6 @@ func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
-	results chan *utils.ProcessingError,
 	logger *zerolog.Logger,
 ) *utils.ProcessingError {
 	const (
