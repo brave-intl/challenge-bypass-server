@@ -25,7 +25,7 @@ func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
-	logger *zerolog.Logger,
+	log *zerolog.Logger,
 ) (*ProcessingResult, *utils.ProcessingError) {
 	const (
 		redeemOk                     = 0
@@ -39,8 +39,11 @@ func SignedTokenRedeemHandler(
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
-		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 	}
+
+	logger := log.With().Str("request_id", tokenRedeemRequestSet.Request_id).Logger()
+
 	var redeemedTokenResults []avroSchema.RedeemResult
 	// For the time being, we are only accepting one message at a time in this data set.
 	// Therefore, we will error if more than a single message is present in the message.
@@ -48,12 +51,12 @@ func SignedTokenRedeemHandler(
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
 		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
-		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
-		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 	}
 
 	// Iterate over requests (only one at this point but the schema can support more
@@ -96,14 +99,14 @@ func SignedTokenRedeemHandler(
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
-			return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+			return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
-			return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+			return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 		}
 		for _, issuer := range *issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -132,7 +135,7 @@ func SignedTokenRedeemHandler(
 			// Unmarshaling failure is a data issue and is probably permanent.
 			if err != nil {
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+				return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 			}
 
 			logger.Trace().
@@ -174,7 +177,7 @@ func SignedTokenRedeemHandler(
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
-			return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+			return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 		}
 
 		// Continue if there is a duplicate
@@ -238,7 +241,7 @@ func SignedTokenRedeemHandler(
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
-		return nil, utils.ProcessingErrorFromErrorWithMessage(err, message, msg, logger)
+		return ResultAndErrorFromError(err, msg, message, producer, tokenRedeemRequestSet.Request_id, log)
 	}
 
 	return &ProcessingResult{
