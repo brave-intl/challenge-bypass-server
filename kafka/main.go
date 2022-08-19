@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -27,7 +26,7 @@ type Processor func(
 	*kafka.Writer,
 	*server.Server,
 	*zerolog.Logger,
-) (*ProcessingResult, *utils.ProcessingError)
+) *utils.ProcessingError
 
 // ProcessingResult contains a message and the topic to which the message should be
 // emitted
@@ -93,9 +92,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	// failures are not categorized as temporary.
 	for {
 		var (
-			wg                sync.WaitGroup
-			errorResults      = make(chan *utils.ProcessingError)
-			processingResults = make(chan *ProcessingResult)
+			wg           sync.WaitGroup
+			errorResults = make(chan *utils.ProcessingError)
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
@@ -132,7 +130,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 						logger *zerolog.Logger,
 					) {
 						defer wg.Done()
-						res, err := topicMapping.Processor(
+						err := topicMapping.Processor(
 							msg,
 							topicMapping.ResultProducer,
 							providedServer,
@@ -141,9 +139,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 						if err != nil {
 							logger.Error().Err(err).Msg("Processing failed.")
 							errorResults <- err
-						}
-						if res != nil {
-							processingResults <- res
 						}
 
 					}(msg, topicMapping, providedServer, logger)
@@ -157,7 +152,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			}
 		}
 		close(errorResults)
-		close(processingResults)
 		// Iterate over any failures and create an error slice
 		var temporaryErrors []*utils.ProcessingError
 		for processingError := range errorResults {
@@ -165,34 +159,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 				temporaryErrors = append(temporaryErrors, processingError)
 			} else {
 				continue
-			}
-		}
-		// Iterate over any results create a slice for emission
-		var resultSet []*ProcessingResult
-		for processingResult := range processingResults {
-			resultSet = append(resultSet, processingResult)
-		}
-
-		// Emit the results of the processing before handling errors and commits.
-		// This is to ensure that we never commit anything that was not both processed
-		// and emitted.
-		if len(resultSet) > 0 {
-			for _, processingResult := range resultSet {
-				err = Emit(processingResult.ResultProducer, processingResult.Message, logger)
-				if err != nil {
-					message := fmt.Sprintf(
-						"request %s: failed to emit results to topic %s",
-						processingResult.RequestID,
-						processingResult.ResultProducer.Topic,
-					)
-					logger.Error().Err(err).Msgf(message)
-					// If the emission fails for any messages we must
-					// not commit and should retry. This will result in
-					// message reprocessing and duplicate errors being
-					// emitted to consumers. They will need to handle
-					// this case.
-					continue
-				}
 			}
 		}
 

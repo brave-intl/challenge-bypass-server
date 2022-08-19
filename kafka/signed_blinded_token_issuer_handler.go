@@ -27,7 +27,7 @@ func SignedBlindedTokenIssuerHandler(
 	producer *kafka.Writer,
 	server *cbpServer.Server,
 	log *zerolog.Logger,
-) (*ProcessingResult, *utils.ProcessingError) {
+) *utils.ProcessingError {
 	const (
 		issuerOk      = 0
 		issuerInvalid = 1
@@ -40,7 +40,7 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: failed Avro deserialization",
 			blindedTokenRequestSet.Request_id,
 		)
-		return avroIssuerErrorResultFromError(
+		processingResult, errorResult := avroIssuerErrorResultFromError(
 			message,
 			nil,
 			nil,
@@ -53,6 +53,18 @@ func SignedBlindedTokenIssuerHandler(
 			producer,
 			log,
 		)
+		if errorResult.Temporary == false {
+			err = Emit(producer, processingResult.Message, log)
+			if err != nil {
+				message := fmt.Sprintf(
+					"request %s: failed to emit results to topic %s",
+					processingResult.RequestID,
+					processingResult.ResultProducer.Topic,
+				)
+				log.Error().Err(err).Msgf(message)
+			}
+		}
+		return errorResult
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
@@ -65,7 +77,7 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected",
 			blindedTokenRequestSet.Request_id,
 		)
-		return avroIssuerErrorResultFromError(
+		processingResult, errorResult := avroIssuerErrorResultFromError(
 			message,
 			nil,
 			nil,
@@ -78,6 +90,18 @@ func SignedBlindedTokenIssuerHandler(
 			producer,
 			&logger,
 		)
+		if errorResult.Temporary == false {
+			err = Emit(producer, processingResult.Message, log)
+			if err != nil {
+				message := fmt.Sprintf(
+					"request %s: failed to emit results to topic %s",
+					processingResult.RequestID,
+					processingResult.ResultProducer.Topic,
+				)
+				log.Error().Err(err).Msgf(message)
+			}
+		}
+		return errorResult
 	}
 
 OUTER:
@@ -186,7 +210,7 @@ OUTER:
 				marshalledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
-					return avroIssuerErrorResultFromError(
+					processingResult, errorResult := avroIssuerErrorResultFromError(
 						message,
 						nil,
 						nil,
@@ -199,6 +223,18 @@ OUTER:
 						producer,
 						&logger,
 					)
+					if errorResult.Temporary == false {
+						err = Emit(producer, processingResult.Message, log)
+						if err != nil {
+							message := fmt.Sprintf(
+								"request %s: failed to emit results to topic %s",
+								processingResult.RequestID,
+								processingResult.ResultProducer.Topic,
+							)
+							log.Error().Err(err).Msgf(message)
+						}
+					}
+					return errorResult
 				}
 
 				var marshalledBlindedTokens []string
@@ -206,7 +242,7 @@ OUTER:
 					marshalledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						return avroIssuerErrorResultFromError(
+						processingResult, errorResult := avroIssuerErrorResultFromError(
 							message,
 							marshalledBlindedTokens,
 							nil,
@@ -219,6 +255,18 @@ OUTER:
 							producer,
 							&logger,
 						)
+						if errorResult.Temporary == false {
+							err = Emit(producer, processingResult.Message, log)
+							if err != nil {
+								message := fmt.Sprintf(
+									"request %s: failed to emit results to topic %s",
+									processingResult.RequestID,
+									processingResult.ResultProducer.Topic,
+								)
+								log.Error().Err(err).Msgf(message)
+							}
+						}
+						return errorResult
 					}
 					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
 				}
@@ -228,7 +276,7 @@ OUTER:
 					marshalledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						return avroIssuerErrorResultFromError(
+						processingResult, errorResult := avroIssuerErrorResultFromError(
 							message,
 							marshalledBlindedTokens,
 							marshalledSignedTokens,
@@ -241,6 +289,18 @@ OUTER:
 							producer,
 							&logger,
 						)
+						if errorResult.Temporary == false {
+							err = Emit(producer, processingResult.Message, log)
+							if err != nil {
+								message := fmt.Sprintf(
+									"request %s: failed to emit results to topic %s",
+									processingResult.RequestID,
+									processingResult.ResultProducer.Topic,
+								)
+								log.Error().Err(err).Msgf(message)
+							}
+						}
+						return errorResult
 					}
 					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
 				}
@@ -249,7 +309,7 @@ OUTER:
 				marshalledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
-					return avroIssuerErrorResultFromError(
+					processingResult, errorResult := avroIssuerErrorResultFromError(
 						message,
 						marshalledBlindedTokens,
 						marshalledSignedTokens,
@@ -262,6 +322,18 @@ OUTER:
 						producer,
 						&logger,
 					)
+					if errorResult.Temporary == false {
+						err = Emit(producer, processingResult.Message, log)
+						if err != nil {
+							message := fmt.Sprintf(
+								"request %s: failed to emit results to topic %s",
+								processingResult.RequestID,
+								processingResult.ResultProducer.Topic,
+							)
+							log.Error().Err(err).Msgf(message)
+						}
+					}
+					return errorResult
 				}
 
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -301,7 +373,7 @@ OUTER:
 			if err != nil {
 				message := fmt.Sprintf("request %s: could not marshal dleq proof: %s",
 					blindedTokenRequestSet.Request_id, err)
-				return avroIssuerErrorResultFromError(
+				processingResult, errorResult := avroIssuerErrorResultFromError(
 					message,
 					nil,
 					nil,
@@ -314,6 +386,18 @@ OUTER:
 					producer,
 					&logger,
 				)
+				if errorResult.Temporary == false {
+					err = Emit(producer, processingResult.Message, log)
+					if err != nil {
+						message := fmt.Sprintf(
+							"request %s: failed to emit results to topic %s",
+							processingResult.RequestID,
+							processingResult.ResultProducer.Topic,
+						)
+						log.Error().Err(err).Msgf(message)
+					}
+				}
+				return errorResult
 			}
 
 			var marshalledBlindedTokens []string
@@ -321,7 +405,7 @@ OUTER:
 				marshalledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-					return avroIssuerErrorResultFromError(
+					processingResult, errorResult := avroIssuerErrorResultFromError(
 						message,
 						marshalledBlindedTokens,
 						nil,
@@ -334,6 +418,18 @@ OUTER:
 						producer,
 						&logger,
 					)
+					if errorResult.Temporary == false {
+						err = Emit(producer, processingResult.Message, log)
+						if err != nil {
+							message := fmt.Sprintf(
+								"request %s: failed to emit results to topic %s",
+								processingResult.RequestID,
+								processingResult.ResultProducer.Topic,
+							)
+							log.Error().Err(err).Msgf(message)
+						}
+					}
+					return errorResult
 				}
 				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
 			}
@@ -343,7 +439,7 @@ OUTER:
 				marshalledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
-					return avroIssuerErrorResultFromError(
+					processingResult, errorResult := avroIssuerErrorResultFromError(
 						message,
 						marshalledBlindedTokens,
 						marshalledSignedTokens,
@@ -356,6 +452,18 @@ OUTER:
 						producer,
 						&logger,
 					)
+					if errorResult.Temporary == false {
+						err = Emit(producer, processingResult.Message, log)
+						if err != nil {
+							message := fmt.Sprintf(
+								"request %s: failed to emit results to topic %s",
+								processingResult.RequestID,
+								processingResult.ResultProducer.Topic,
+							)
+							log.Error().Err(err).Msgf(message)
+						}
+					}
+					return errorResult
 				}
 				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
 			}
@@ -364,7 +472,7 @@ OUTER:
 			marshalledPublicKey, err := publicKey.MarshalText()
 			if err != nil {
 				message := fmt.Sprintf("error could not marshal signing key: %s", err)
-				return avroIssuerErrorResultFromError(
+				processingResult, errorResult := avroIssuerErrorResultFromError(
 					message,
 					marshalledBlindedTokens,
 					marshalledSignedTokens,
@@ -377,6 +485,18 @@ OUTER:
 					producer,
 					&logger,
 				)
+				if errorResult.Temporary == false {
+					err = Emit(producer, processingResult.Message, log)
+					if err != nil {
+						message := fmt.Sprintf(
+							"request %s: failed to emit results to topic %s",
+							processingResult.RequestID,
+							processingResult.ResultProducer.Topic,
+						)
+						log.Error().Err(err).Msgf(message)
+					}
+				}
+				return errorResult
 			}
 
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -403,7 +523,7 @@ OUTER:
 			blindedTokenRequestSet.Request_id,
 			resultSet,
 		)
-		return avroIssuerErrorResultFromError(
+		processingResult, errorResult := avroIssuerErrorResultFromError(
 			message,
 			nil,
 			nil,
@@ -416,13 +536,31 @@ OUTER:
 			producer,
 			&logger,
 		)
+		if errorResult.Temporary == false {
+			err = Emit(producer, processingResult.Message, log)
+			if err != nil {
+				message := fmt.Sprintf(
+					"request %s: failed to emit results to topic %s",
+					processingResult.RequestID,
+					processingResult.ResultProducer.Topic,
+				)
+				log.Error().Err(err).Msgf(message)
+			}
+		}
+		return errorResult
 	}
 
-	return &ProcessingResult{
-		Message:        resultSetBuffer.Bytes(),
-		ResultProducer: producer,
-		RequestID:      blindedTokenRequestSet.Request_id,
-	}, nil
+	err = Emit(producer, resultSetBuffer.Bytes(), log)
+	if err != nil {
+		message := fmt.Sprintf(
+			"request %s: failed to emit results to topic %s",
+			resultSet.Request_id,
+			producer.Topic,
+		)
+		log.Error().Err(err).Msgf(message)
+	}
+
+	return nil
 }
 
 func avroIssuerErrorResultFromError(
