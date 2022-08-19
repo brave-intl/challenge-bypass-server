@@ -40,7 +40,19 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: failed Avro deserialization",
 			blindedTokenRequestSet.Request_id,
 		)
-		return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, log)
+		return avroIssuerErrorResultFromError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			err,
+			msg,
+			producer,
+			log,
+		)
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
@@ -53,7 +65,19 @@ func SignedBlindedTokenIssuerHandler(
 			"request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected",
 			blindedTokenRequestSet.Request_id,
 		)
-		return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+		return avroIssuerErrorResultFromError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			err,
+			msg,
+			producer,
+			&logger,
+		)
 	}
 
 OUTER:
@@ -159,44 +183,92 @@ OUTER:
 					break OUTER
 				}
 
-				marshaledDLEQProof, err := DLEQProof.MarshalText()
+				marshalledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
-					return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+					return avroIssuerErrorResultFromError(
+						message,
+						nil,
+						nil,
+						nil,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						err,
+						msg,
+						producer,
+						&logger,
+					)
 				}
 
 				var marshalledBlindedTokens []string
 				for _, token := range blindedTokensSlice {
-					marshaledToken, err := token.MarshalText()
+					marshalledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+						return avroIssuerErrorResultFromError(
+							message,
+							marshalledBlindedTokens,
+							nil,
+							nil,
+							nil,
+							issuerError,
+							blindedTokenRequestSet.Request_id,
+							err,
+							msg,
+							producer,
+							&logger,
+						)
 					}
-					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
 				}
 
-				var marshaledSignedTokens []string
+				var marshalledSignedTokens []string
 				for _, token := range signedTokens {
-					marshaledToken, err := token.MarshalText()
+					marshalledToken, err := token.MarshalText()
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
-						return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+						return avroIssuerErrorResultFromError(
+							message,
+							marshalledBlindedTokens,
+							marshalledSignedTokens,
+							nil,
+							nil,
+							issuerError,
+							blindedTokenRequestSet.Request_id,
+							err,
+							msg,
+							producer,
+							&logger,
+						)
 					}
-					marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken[:]))
+					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
 				}
 
 				publicKey := signingKey.PublicKey()
-				marshaledPublicKey, err := publicKey.MarshalText()
+				marshalledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
-					return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+					return avroIssuerErrorResultFromError(
+						message,
+						marshalledBlindedTokens,
+						marshalledSignedTokens,
+						marshalledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						err,
+						msg,
+						producer,
+						&logger,
+					)
 				}
 
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Blinded_tokens:    marshalledBlindedTokens,
-					Signed_tokens:     marshaledSignedTokens,
-					Proof:             string(marshaledDLEQProof),
-					Issuer_public_key: string(marshaledPublicKey),
+					Signed_tokens:     marshalledSignedTokens,
+					Proof:             string(marshalledDLEQProof),
+					Issuer_public_key: string(marshalledPublicKey),
 					Valid_from:        &avroSchema.UnionNullString{String: validFrom, UnionType: avroSchema.UnionNullStringTypeEnumString},
 					Valid_to:          &avroSchema.UnionNullString{String: validTo, UnionType: avroSchema.UnionNullStringTypeEnumString},
 					Status:            issuerOk,
@@ -225,45 +297,93 @@ OUTER:
 				break OUTER
 			}
 
-			marshaledDLEQProof, err := DLEQProof.MarshalText()
+			marshalledDLEQProof, err := DLEQProof.MarshalText()
 			if err != nil {
 				message := fmt.Sprintf("request %s: could not marshal dleq proof: %s",
 					blindedTokenRequestSet.Request_id, err)
-				return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+				return avroIssuerErrorResultFromError(
+					message,
+					nil,
+					nil,
+					marshalledDLEQProof,
+					nil,
+					issuerError,
+					blindedTokenRequestSet.Request_id,
+					err,
+					msg,
+					producer,
+					&logger,
+				)
 			}
 
 			var marshalledBlindedTokens []string
 			for _, token := range blindedTokens {
-				marshaledToken, err := token.MarshalText()
+				marshalledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
-					return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+					return avroIssuerErrorResultFromError(
+						message,
+						marshalledBlindedTokens,
+						nil,
+						marshalledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						err,
+						msg,
+						producer,
+						&logger,
+					)
 				}
-				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
 			}
 
-			var marshaledSignedTokens []string
+			var marshalledSignedTokens []string
 			for _, token := range signedTokens {
-				marshaledToken, err := token.MarshalText()
+				marshalledToken, err := token.MarshalText()
 				if err != nil {
 					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
-					return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+					return avroIssuerErrorResultFromError(
+						message,
+						marshalledBlindedTokens,
+						marshalledSignedTokens,
+						marshalledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						err,
+						msg,
+						producer,
+						&logger,
+					)
 				}
-				marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken[:]))
+				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
 			}
 
 			publicKey := signingKey.PublicKey()
-			marshaledPublicKey, err := publicKey.MarshalText()
+			marshalledPublicKey, err := publicKey.MarshalText()
 			if err != nil {
 				message := fmt.Sprintf("error could not marshal signing key: %s", err)
-				return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+				return avroIssuerErrorResultFromError(
+					message,
+					marshalledBlindedTokens,
+					marshalledSignedTokens,
+					marshalledDLEQProof,
+					marshalledPublicKey,
+					issuerError,
+					blindedTokenRequestSet.Request_id,
+					err,
+					msg,
+					producer,
+					&logger,
+				)
 			}
 
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Blinded_tokens:    marshalledBlindedTokens,
-				Signed_tokens:     marshaledSignedTokens,
-				Proof:             string(marshaledDLEQProof),
-				Issuer_public_key: string(marshaledPublicKey),
+				Signed_tokens:     marshalledSignedTokens,
+				Proof:             string(marshalledDLEQProof),
+				Issuer_public_key: string(marshalledPublicKey),
 				Status:            issuerOk,
 				Associated_data:   request.Associated_data,
 			})
@@ -283,7 +403,19 @@ OUTER:
 			blindedTokenRequestSet.Request_id,
 			resultSet,
 		)
-		return ResultAndErrorFromError(err, msg, message, producer, blindedTokenRequestSet.Request_id, &logger)
+		return avroIssuerErrorResultFromError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			err,
+			msg,
+			producer,
+			&logger,
+		)
 	}
 
 	return &ProcessingResult{
@@ -291,4 +423,38 @@ OUTER:
 		ResultProducer: producer,
 		RequestID:      blindedTokenRequestSet.Request_id,
 	}, nil
+}
+
+func avroIssuerErrorResultFromError(
+	message string,
+	marshalledBlindedTokens []string,
+	marshalledSignedTokens []string,
+	marshalledDLEQProof []byte,
+	marshalledPublicKey []byte,
+	issuerResultStatus int32,
+	requestID string,
+	err error,
+	msg kafka.Message,
+	producer *kafka.Writer,
+	logger *zerolog.Logger,
+) (*ProcessingResult, *utils.ProcessingError) {
+	signingResult := avroSchema.SigningResultV2{
+		Blinded_tokens:    marshalledBlindedTokens,
+		Signed_tokens:     marshalledSignedTokens,
+		Proof:             string(marshalledDLEQProof),
+		Issuer_public_key: string(marshalledPublicKey),
+		Status:            avroSchema.SigningResultV2Status(issuerResultStatus),
+		Associated_data:   []byte(message),
+	}
+	resultSet := avroSchema.SigningResultV2Set{
+		Request_id: "",
+		Data:       []avroSchema.SigningResultV2{signingResult},
+	}
+	var resultSetBuffer bytes.Buffer
+	err = resultSet.Serialize(&resultSetBuffer)
+	if err != nil {
+		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
+		return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
+	}
+	return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
 }

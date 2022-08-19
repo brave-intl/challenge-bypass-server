@@ -9,12 +9,13 @@ import (
 func ResultAndErrorFromError(
 	err error,
 	msg kafka.Message,
-	message string,
+	errorMessage string,
+	message []byte,
 	producer *kafka.Writer,
 	requestID string,
 	log *zerolog.Logger,
 ) (*ProcessingResult, *utils.ProcessingError) {
-	processingError := utils.ProcessingErrorFromErrorWithMessage(err, message, msg, log)
+	processingError := utils.ProcessingErrorFromErrorWithMessage(err, errorMessage, msg, log)
 	if processingError.Temporary == true {
 		return nil, processingError
 	}

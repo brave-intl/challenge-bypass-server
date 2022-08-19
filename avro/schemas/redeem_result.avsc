@@ -21,7 +21,7 @@
                             "type": {
                                 "name": "RedeemResultStatus",
                                 "type": "enum",
-                                "symbols": ["ok", "duplicate_redemption", "unverified", "error"]
+                                "symbols": ["ok", "duplicate_redemption", "unverified", "error", "idempotent_redemption"]
                             }
                         },
                         {"name": "associated_data", "type": "bytes", "doc": "contains METADATA"}
