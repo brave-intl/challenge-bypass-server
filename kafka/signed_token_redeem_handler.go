@@ -48,17 +48,7 @@ func SignedTokenRedeemHandler(
 			redeemError,
 			log,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 
@@ -80,17 +70,7 @@ func SignedTokenRedeemHandler(
 			redeemError,
 			log,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 	issuers, err := server.FetchAllIssuers()
@@ -105,17 +85,7 @@ func SignedTokenRedeemHandler(
 			redeemError,
 			log,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 
@@ -168,17 +138,7 @@ func SignedTokenRedeemHandler(
 				redeemError,
 				log,
 			)
-			if errorResult.Temporary == false {
-				err = Emit(producer, processingResult.Message, log)
-				if err != nil {
-					message := fmt.Sprintf(
-						"request %s: failed to emit results to topic %s",
-						processingResult.RequestID,
-						processingResult.ResultProducer.Topic,
-					)
-					log.Error().Err(err).Msgf(message)
-				}
-			}
+			MayEmitIfPermanent(processingResult, errorResult, producer, log)
 			return errorResult
 		}
 		verificationSignature := crypto.VerificationSignature{}
@@ -195,17 +155,7 @@ func SignedTokenRedeemHandler(
 				redeemError,
 				log,
 			)
-			if errorResult.Temporary == false {
-				err = Emit(producer, processingResult.Message, log)
-				if err != nil {
-					message := fmt.Sprintf(
-						"request %s: failed to emit results to topic %s",
-						processingResult.RequestID,
-						processingResult.ResultProducer.Topic,
-					)
-					log.Error().Err(err).Msgf(message)
-				}
-			}
+			MayEmitIfPermanent(processingResult, errorResult, producer, log)
 			return errorResult
 		}
 		for _, issuer := range *issuers {
@@ -244,17 +194,7 @@ func SignedTokenRedeemHandler(
 					redeemError,
 					log,
 				)
-				if errorResult.Temporary == false {
-					err = Emit(producer, processingResult.Message, log)
-					if err != nil {
-						message := fmt.Sprintf(
-							"request %s: failed to emit results to topic %s",
-							processingResult.RequestID,
-							processingResult.ResultProducer.Topic,
-						)
-						log.Error().Err(err).Msgf(message)
-					}
-				}
+				MayEmitIfPermanent(processingResult, errorResult, producer, log)
 				return errorResult
 			}
 
@@ -306,17 +246,7 @@ func SignedTokenRedeemHandler(
 				redeemError,
 				log,
 			)
-			if errorResult.Temporary == false {
-				err = Emit(producer, processingResult.Message, log)
-				if err != nil {
-					message := fmt.Sprintf(
-						"request %s: failed to emit results to topic %s",
-						processingResult.RequestID,
-						processingResult.ResultProducer.Topic,
-					)
-					log.Error().Err(err).Msgf(message)
-				}
-			}
+			MayEmitIfPermanent(processingResult, errorResult, producer, log)
 			return errorResult
 		}
 
@@ -390,17 +320,7 @@ func SignedTokenRedeemHandler(
 			redeemError,
 			log,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 

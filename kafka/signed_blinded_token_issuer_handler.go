@@ -53,17 +53,8 @@ func SignedBlindedTokenIssuerHandler(
 			producer,
 			log,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 
@@ -90,17 +81,7 @@ func SignedBlindedTokenIssuerHandler(
 			producer,
 			&logger,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 
@@ -223,17 +204,7 @@ OUTER:
 						producer,
 						&logger,
 					)
-					if errorResult.Temporary == false {
-						err = Emit(producer, processingResult.Message, log)
-						if err != nil {
-							message := fmt.Sprintf(
-								"request %s: failed to emit results to topic %s",
-								processingResult.RequestID,
-								processingResult.ResultProducer.Topic,
-							)
-							log.Error().Err(err).Msgf(message)
-						}
-					}
+					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
 
@@ -255,17 +226,7 @@ OUTER:
 							producer,
 							&logger,
 						)
-						if errorResult.Temporary == false {
-							err = Emit(producer, processingResult.Message, log)
-							if err != nil {
-								message := fmt.Sprintf(
-									"request %s: failed to emit results to topic %s",
-									processingResult.RequestID,
-									processingResult.ResultProducer.Topic,
-								)
-								log.Error().Err(err).Msgf(message)
-							}
-						}
+						MayEmitIfPermanent(processingResult, errorResult, producer, log)
 						return errorResult
 					}
 					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
@@ -289,17 +250,7 @@ OUTER:
 							producer,
 							&logger,
 						)
-						if errorResult.Temporary == false {
-							err = Emit(producer, processingResult.Message, log)
-							if err != nil {
-								message := fmt.Sprintf(
-									"request %s: failed to emit results to topic %s",
-									processingResult.RequestID,
-									processingResult.ResultProducer.Topic,
-								)
-								log.Error().Err(err).Msgf(message)
-							}
-						}
+						MayEmitIfPermanent(processingResult, errorResult, producer, log)
 						return errorResult
 					}
 					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
@@ -322,17 +273,7 @@ OUTER:
 						producer,
 						&logger,
 					)
-					if errorResult.Temporary == false {
-						err = Emit(producer, processingResult.Message, log)
-						if err != nil {
-							message := fmt.Sprintf(
-								"request %s: failed to emit results to topic %s",
-								processingResult.RequestID,
-								processingResult.ResultProducer.Topic,
-							)
-							log.Error().Err(err).Msgf(message)
-						}
-					}
+					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
 
@@ -386,17 +327,7 @@ OUTER:
 					producer,
 					&logger,
 				)
-				if errorResult.Temporary == false {
-					err = Emit(producer, processingResult.Message, log)
-					if err != nil {
-						message := fmt.Sprintf(
-							"request %s: failed to emit results to topic %s",
-							processingResult.RequestID,
-							processingResult.ResultProducer.Topic,
-						)
-						log.Error().Err(err).Msgf(message)
-					}
-				}
+				MayEmitIfPermanent(processingResult, errorResult, producer, log)
 				return errorResult
 			}
 
@@ -418,17 +349,7 @@ OUTER:
 						producer,
 						&logger,
 					)
-					if errorResult.Temporary == false {
-						err = Emit(producer, processingResult.Message, log)
-						if err != nil {
-							message := fmt.Sprintf(
-								"request %s: failed to emit results to topic %s",
-								processingResult.RequestID,
-								processingResult.ResultProducer.Topic,
-							)
-							log.Error().Err(err).Msgf(message)
-						}
-					}
+					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
 				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
@@ -452,17 +373,7 @@ OUTER:
 						producer,
 						&logger,
 					)
-					if errorResult.Temporary == false {
-						err = Emit(producer, processingResult.Message, log)
-						if err != nil {
-							message := fmt.Sprintf(
-								"request %s: failed to emit results to topic %s",
-								processingResult.RequestID,
-								processingResult.ResultProducer.Topic,
-							)
-							log.Error().Err(err).Msgf(message)
-						}
-					}
+					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
 				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
@@ -485,17 +396,7 @@ OUTER:
 					producer,
 					&logger,
 				)
-				if errorResult.Temporary == false {
-					err = Emit(producer, processingResult.Message, log)
-					if err != nil {
-						message := fmt.Sprintf(
-							"request %s: failed to emit results to topic %s",
-							processingResult.RequestID,
-							processingResult.ResultProducer.Topic,
-						)
-						log.Error().Err(err).Msgf(message)
-					}
-				}
+				MayEmitIfPermanent(processingResult, errorResult, producer, log)
 				return errorResult
 			}
 
@@ -536,17 +437,7 @@ OUTER:
 			producer,
 			&logger,
 		)
-		if errorResult.Temporary == false {
-			err = Emit(producer, processingResult.Message, log)
-			if err != nil {
-				message := fmt.Sprintf(
-					"request %s: failed to emit results to topic %s",
-					processingResult.RequestID,
-					processingResult.ResultProducer.Topic,
-				)
-				log.Error().Err(err).Msgf(message)
-			}
-		}
+		MayEmitIfPermanent(processingResult, errorResult, producer, log)
 		return errorResult
 	}
 

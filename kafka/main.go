@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"sort"
@@ -246,6 +247,27 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 	})
 	logger.Trace().Msgf("Reader create with subscription")
 	return reader
+}
+
+// MayEmitIfPermanent attempts to emit and error message to Kafka if the error is not
+// temporary. It logs, but returns nothing on failure.
+func MayEmitIfPermanent(
+	processingResult *ProcessingResult,
+	errorResult *utils.ProcessingError,
+	producer *kafka.Writer,
+	log *zerolog.Logger,
+) {
+	if errorResult.Temporary == false {
+		err := Emit(producer, processingResult.Message, log)
+		if err != nil {
+			message := fmt.Sprintf(
+				"request %s: failed to emit results to topic %s",
+				processingResult.RequestID,
+				processingResult.ResultProducer.Topic,
+			)
+			log.Error().Err(err).Msgf(message)
+		}
+	}
 }
 
 // Emit sends a message over the Kafka interface.

@@ -6,6 +6,8 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// ResultAndErrorFromError conditionally returns a result that can be emitted to Kafka and
+// always returns a processing error.
 func ResultAndErrorFromError(
 	err error,
 	msg kafka.Message,
