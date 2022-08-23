@@ -106,17 +106,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			// temporary or permanent. If temporary we need to handle it and if
 			// permanent we need to commit and move on.
 		}
-	BatchProcessingLoop:
 		for _, msg := range batch {
 			wg.Add(1)
-			if err != nil {
-				// Indicates batch has no more messages. End the loop for
-				// this batch and fetch another.
-				if err == io.EOF {
-					logger.Info().Msg("Batch complete. Ending loop.")
-					break BatchProcessingLoop
-				}
-			}
 			logger.Info().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
 			logger.Info().Msgf("Reader Stats: %#v", reader.Stats())
 			wgDoneDeferred := false
@@ -214,6 +205,8 @@ func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logge
 		defer cancel()
 		message, err := reader.FetchMessage(innerctx)
 		if err != nil {
+			// Indicates batch has no more messages. End the loop for
+			// this batch and fetch another.
 			if err == io.EOF {
 				logger.Info().Msg("Batch complete")
 			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
