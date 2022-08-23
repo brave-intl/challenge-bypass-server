@@ -198,9 +198,9 @@ func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logge
 		messages []kafka.Message
 		err      error
 	)
+	innerctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
 	for i := 0; i < count; i++ {
-		innerctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-		defer cancel()
 		message, err := reader.FetchMessage(innerctx)
 		if err != nil {
 			// Indicates batch has no more messages. End the loop for
