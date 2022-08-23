@@ -45,7 +45,7 @@ func ProcessingErrorFromErrorWithMessage(
 		FailureMessage: message,
 		Temporary:      temporary,
 		Backoff:        backoff,
-		KafkaMessage:   kafka.Message{},
+		KafkaMessage:   kafkaMessage,
 	}
 }
 
