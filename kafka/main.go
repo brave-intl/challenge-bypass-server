@@ -149,8 +149,6 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		for processingError := range errorResults {
 			if processingError.Temporary {
 				temporaryErrors = append(temporaryErrors, processingError)
-			} else {
-				continue
 			}
 		}
 
