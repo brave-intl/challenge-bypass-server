@@ -178,7 +178,11 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 	// to determine whether the body is equivalent to what was provided or just the
 	// id.
 	if err == nil {
-		if redemption == *existingRedemption {
+		if redemption.IssuerID == *&existingRedemption.IssuerID &&
+			redemption.ID == *&existingRedemption.ID &&
+			redemption.PreImage == *&existingRedemption.PreImage &&
+			redemption.Payload == *&existingRedemption.Payload &&
+			redemption.TTL == *&existingRedemption.TTL {
 			return &redemption, IDAndAllValueEquivalence, nil
 		}
 		return &redemption, IDEquivalence, nil
