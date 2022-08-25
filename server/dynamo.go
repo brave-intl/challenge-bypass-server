@@ -24,9 +24,9 @@ const (
 	// IDEquivalence means a record with the same ID as the subject was found, but one
 	// or more of its other fields did not match the subject
 	IDEquivalence
-	// IDAndAllValueEquivalence means a record that matched all of the fields of the
+	// BindingEquivalence means a record that matched all of the fields of the
 	// subject was found
-	IDAndAllValueEquivalence
+	BindingEquivalence
 )
 
 // InitDynamo initialzes the dynamo database connection
@@ -178,12 +178,8 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 	// to determine whether the body is equivalent to what was provided or just the
 	// id.
 	if err == nil {
-		if redemption.IssuerID == *&existingRedemption.IssuerID &&
-			redemption.ID == *&existingRedemption.ID &&
-			redemption.PreImage == *&existingRedemption.PreImage &&
-			redemption.Payload == *&existingRedemption.Payload &&
-			redemption.TTL == *&existingRedemption.TTL {
-			return &redemption, IDAndAllValueEquivalence, nil
+		if redemption.Payload == *&existingRedemption.Payload {
+			return &redemption, BindingEquivalence, nil
 		}
 		return &redemption, IDEquivalence, nil
 	}

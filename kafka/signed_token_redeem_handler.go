@@ -199,7 +199,7 @@ func SignedTokenRedeemHandler(
 				Associated_data: request.Associated_data,
 			})
 			continue
-		case cbpServer.IDAndAllValueEquivalence:
+		case cbpServer.BindingEquivalence:
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
