@@ -27,13 +27,6 @@ func SignedTokenRedeemHandler(
 	server *cbpServer.Server,
 	log *zerolog.Logger,
 ) *utils.ProcessingError {
-	const (
-		redeemOk                     = 0
-		redeemDuplicateRedemptionID  = 1
-		redeemUnverified             = 2
-		redeemError                  = 3
-		redeemDuplicateRedemptionAll = 4
-	)
 	data := msg.Value
 	// Deserialize request into usable struct
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
@@ -45,7 +38,7 @@ func SignedTokenRedeemHandler(
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
-			redeemError,
+			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -67,7 +60,7 @@ func SignedTokenRedeemHandler(
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
-			redeemError,
+			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -82,7 +75,7 @@ func SignedTokenRedeemHandler(
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
-			redeemError,
+			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -104,7 +97,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemError,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -118,7 +111,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemError,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -135,7 +128,7 @@ func SignedTokenRedeemHandler(
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
-				redeemError,
+				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -152,7 +145,7 @@ func SignedTokenRedeemHandler(
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
-				redeemError,
+				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -191,7 +184,7 @@ func SignedTokenRedeemHandler(
 					msg,
 					producer,
 					tokenRedeemRequestSet.Request_id,
-					redeemError,
+					int32(avroSchema.RedeemResultStatusError),
 					log,
 				)
 				MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -227,7 +220,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemUnverified,
+				Status:          avroSchema.RedeemResultStatusUnverified,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -243,7 +236,7 @@ func SignedTokenRedeemHandler(
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
-				redeemError,
+				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
@@ -256,15 +249,15 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemDuplicateRedemptionID,
+				Status:          avroSchema.RedeemResultStatusDuplicate_redemption,
 				Associated_data: request.Associated_data,
 			})
 			continue
-		case cbpServer.IDAndAllValueEquivalence:
+		case cbpServer.BindingEquivalence:
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemDuplicateRedemptionAll,
+				Status:          avroSchema.RedeemResultStatusIdempotent_redemption,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -279,7 +272,7 @@ func SignedTokenRedeemHandler(
 				redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 					Issuer_name:     "",
 					Issuer_cohort:   0,
-					Status:          redeemDuplicateRedemptionID,
+					Status:          avroSchema.RedeemResultStatusDuplicate_redemption,
 					Associated_data: request.Associated_data,
 				})
 			}
@@ -289,7 +282,7 @@ func SignedTokenRedeemHandler(
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
-				Status:          redeemError,
+				Status:          avroSchema.RedeemResultStatusError,
 				Associated_data: request.Associated_data,
 			})
 			continue
@@ -299,7 +292,7 @@ func SignedTokenRedeemHandler(
 		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 			Issuer_name:     issuerName,
 			Issuer_cohort:   verifiedCohort,
-			Status:          redeemOk,
+			Status:          avroSchema.RedeemResultStatusOk,
 			Associated_data: request.Associated_data,
 		})
 	}
@@ -317,7 +310,7 @@ func SignedTokenRedeemHandler(
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
-			redeemError,
+			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
