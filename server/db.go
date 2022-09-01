@@ -116,6 +116,7 @@ type RedemptionV2 struct {
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
+	Offset    int64     `json:"offset"`
 }
 
 // CacheInterface cach functions
@@ -898,12 +899,12 @@ type Queryable interface {
 }
 
 // RedeemToken redeems a token given an issuer and and preimage
-func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string) error {
+func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
-		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload)
+		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
 	return errors.New("Wrong Issuer Version")
 }
