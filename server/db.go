@@ -4,10 +4,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"os"
 	"strconv"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
 	timeutils "github.com/brave-intl/bat-go/utils/time"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -115,6 +116,7 @@ type RedemptionV2 struct {
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
+	Offset    int64     `json:"offset"`
 }
 
 // CacheInterface cach functions
@@ -254,7 +256,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	defer incrementCounter(fetchIssuerCounter)
 
 	tx := c.db.MustBegin()
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -328,7 +330,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	}
 
 	tx := c.db.MustBegin()
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -404,7 +406,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	}
 
 	tx := c.db.MustBegin()
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -482,7 +484,7 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	}
 
 	tx := c.db.MustBegin()
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -553,7 +555,7 @@ func (c *Server) rotateIssuers() error {
 
 	tx := c.db.MustBegin()
 
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -606,7 +608,7 @@ func (c *Server) rotateIssuersV3() error {
 
 	tx := c.db.MustBegin()
 
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -897,12 +899,12 @@ type Queryable interface {
 }
 
 // RedeemToken redeems a token given an issuer and and preimage
-func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string) error {
+func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
-		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload)
+		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
 	return errors.New("Wrong Issuer Version")
 }

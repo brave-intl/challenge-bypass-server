@@ -33,10 +33,10 @@ func (e ProcessingError) Cause() error {
 	return e.OriginalError
 }
 
-// ProcessingErrorFromErrorWithMessage converts an error into a ProcessingError
 func ProcessingErrorFromErrorWithMessage(
 	err error,
 	message string,
+	kafkaMessage kafka.Message,
 	logger *zerolog.Logger,
 ) *ProcessingError {
 	temporary, backoff := ErrorIsTemporary(err, logger)
@@ -45,7 +45,7 @@ func ProcessingErrorFromErrorWithMessage(
 		FailureMessage: message,
 		Temporary:      temporary,
 		Backoff:        backoff,
-		KafkaMessage:   kafka.Message{},
+		KafkaMessage:   kafkaMessage,
 	}
 }
 
