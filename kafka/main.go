@@ -91,15 +91,19 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	// failures are not committed and are retried. Miscategorization of errors can
 	// cause the consumer to become stuck forever, so it's important that permanent
 	// failures are not categorized as temporary.
+	var batch []kafka.Message
 	for {
 		var (
 			wg           sync.WaitGroup
 			errorResults = make(chan *utils.ProcessingError)
+			err          error
 		)
 		// Any error that occurs while getting the batch won't be available until
 		// the Close() call.
 		ctx := context.Background()
-		batch, err := batchFromReader(ctx, reader, 20, logger)
+		if len(batch) < 1 {
+			batch, err = batchFromReader(ctx, reader, 20, logger)
+		}
 		if err != nil {
 			logger.Error().Err(err).Msg("Batching failed")
 			// This should be an error that needs to communicate if its failure is
@@ -108,8 +112,8 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		}
 		for _, msg := range batch {
 			wg.Add(1)
-			logger.Info().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-			logger.Info().Msgf("Reader Stats: %#v", reader.Stats())
+			logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+			logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
 			wgDoneDeferred := false
 			// Check if any of the existing topicMappings match the fetched message
 			for _, topicMapping := range topicMappings {
@@ -136,7 +140,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					}(msg, topicMapping, providedServer, logger)
 				}
 			}
-			// If the topic in the message doesn't match andy of the topicMappings
+			// If the topic in the message doesn't match any of the topicMappings
 			// then the goroutine will not be spawned and wg.Done() won't be
 			// called. If this happens, be sure to call it.
 			if !wgDoneDeferred {
@@ -166,7 +170,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			// first temporary failure and commit it. This will ensure that
 			// the temporary failure is picked up as the first item in the next
 			// batch.
-			for _, message := range batch {
+			for i, message := range batch {
 				if message.Offset == temporaryErrors[0].KafkaMessage.Offset-1 {
 					if err := reader.CommitMessages(ctx, message); err != nil {
 						logger.Error().Msgf("failed to commit: %s", err)
@@ -174,6 +178,11 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					// Before retrying the temporary failure, wait the
 					// prescribed time.
 					time.Sleep(temporaryErrors[0].Backoff)
+				}
+				// Remove messages that entered a permanent success or failure
+				// state from the batch so that the next loop skips them
+				if message.Offset < temporaryErrors[0].KafkaMessage.Offset {
+					batch = append(batch[:i], batch[i+1:]...)
 				}
 			}
 			// If there are no temporary errors sort the batch in descending order by
@@ -185,6 +194,10 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 			logger.Info().Msgf("Committing offset", batch[0].Offset)
 			if err := reader.CommitMessages(ctx, batch[0]); err != nil {
 				logger.Error().Err(err).Msg("failed to commit")
+			} else {
+				// If we committed successfully, empty the batch to trigger
+				// a fetch of a new batch
+				batch = nil
 			}
 		}
 	}

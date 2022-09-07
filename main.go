@@ -90,6 +90,8 @@ func main() {
 
 			if err != nil {
 				zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
+				// If err is something then starconsumer again
+				//break this out into a function and call again if err
 				return
 			}
 		}()
