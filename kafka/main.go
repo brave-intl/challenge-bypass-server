@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
+	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	uuid "github.com/google/uuid"
@@ -55,6 +55,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
+
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	}

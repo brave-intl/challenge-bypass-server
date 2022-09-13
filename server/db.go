@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
-	timeutils "github.com/brave-intl/bat-go/utils/time"
+	timeutils "github.com/brave-intl/bat-go/libs/time"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Why?
@@ -54,7 +54,7 @@ type issuer struct {
 	Buffer               int         `json:"buffer" db:"buffer"`
 	DaysOut              int         `json:"days_out" db:"days_out"`
 	Overlap              int         `json:"overlap" db:"overlap"`
-	Duration             string      `json:"duration" db:"duration"`
+	Duration             *string     `json:"duration" db:"duration"`
 	RedemptionRepository string      `json:"-" db:"redemption_repository"`
 }
 
@@ -62,7 +62,7 @@ type issuer struct {
 type issuerKeys struct {
 	ID         *uuid.UUID `db:"key_id"`
 	SigningKey []byte     `db:"signing_key"`
-	PublicKey  string     `db:"public_key"`
+	PublicKey  *string    `db:"public_key"`
 	Cohort     int16      `db:"cohort"`
 	IssuerID   *uuid.UUID `db:"issuer_id"`
 	CreatedAt  *time.Time `db:"created_at"`
@@ -74,7 +74,7 @@ type issuerKeys struct {
 type IssuerKeys struct {
 	ID         *uuid.UUID         `json:"id"`
 	SigningKey *crypto.SigningKey `json:"-"`
-	PublicKey  string             `json:"public_key" db:"public_key"`
+	PublicKey  *string            `json:"public_key" db:"public_key"`
 	Cohort     int16              `json:"cohort" db:"cohort"`
 	IssuerID   *uuid.UUID         `json:"issuer_id" db:"issuer_id"`
 	CreatedAt  *time.Time         `json:"created_at" db:"created_at"`
@@ -96,7 +96,7 @@ type Issuer struct {
 	ValidFrom    *time.Time   `json:"valid_from"`
 	Buffer       int          `json:"buffer"`
 	Overlap      int          `json:"overlap"`
-	Duration     string       `json:"duration"`
+	Duration     *string      `json:"duration"`
 	Keys         []IssuerKeys `json:"keys"`
 }
 
@@ -734,9 +734,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 
 	if issuer.Version == 3 {
 		// get the duration from the issuer
-		duration, err = timeutils.ParseDuration(issuer.Duration)
-		if err != nil {
-			return fmt.Errorf("failed to parse issuer duration: %w", err)
+		if issuer.Duration != nil {
+			duration, err = timeutils.ParseDuration(*issuer.Duration)
+			if err != nil {
+				return fmt.Errorf("failed to parse issuer duration: %w", err)
+			}
 		}
 	}
 
@@ -764,7 +766,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 
 	valueFmtStr := ""
 
-	var keys = []issuerKeys{}
+	var keys []issuerKeys
 	var position = 0
 	// for i in buffer, create signing keys for each
 	for ; i < issuer.Buffer; i++ {
@@ -804,7 +806,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 
 		var k = issuerKeys{
 			SigningKey: signingKeyTxt,
-			PublicKey:  string(pubKeyTxt),
+			PublicKey:  ptr.FromString(string(pubKeyTxt)),
 			Cohort:     issuer.IssuerCohort,
 			IssuerID:   issuer.ID,
 			StartAt:    &tmpStart,
