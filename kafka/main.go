@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	batgo_kafka "github.com/brave-intl/bat-go/utils/kafka"
@@ -43,6 +41,11 @@ type TopicMapping struct {
 	ResultProducer *kafka.Writer
 	Processor      Processor
 	Group          string
+}
+
+type MessageContext struct {
+	errorResult chan *utils.ProcessingError
+	msg         kafka.Message
 }
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
@@ -84,124 +87,54 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 
 	reader := newConsumer(topics, adsConsumerGroupV1, logger)
 
-	// `kafka-go` exposes messages one at a time through its normal interfaces despite
-	// collecting messages with batching from Kafka. To process these messages in
-	// parallel we use the `FetchMessage` method in a loop to collect a set of messages
-	// for processing. Successes and permanent failures are committed. Temporary
-	// failures are not committed and are retried. Miscategorization of errors can
-	// cause the consumer to become stuck forever, so it's important that permanent
-	// failures are not categorized as temporary.
+	batchPipeline := make(chan *MessageContext)
+	ctx := context.Background()
+	go processMessagesIntoBatchPipeline(ctx, topicMappings, providedServer, reader, batchPipeline, logger)
 	for {
-		var (
-			wg           sync.WaitGroup
-			errorResults = make(chan *utils.ProcessingError)
-		)
-		// Any error that occurs while getting the batch won't be available until
-		// the Close() call.
-		ctx := context.Background()
-		batch, err := batchFromReader(ctx, reader, 20, logger)
-		if err != nil {
-			logger.Error().Err(err).Msg("Batching failed")
-			// This should be an error that needs to communicate if its failure is
-			// temporary or permanent. If temporary we need to handle it and if
-			// permanent we need to commit and move on.
-		}
-		for _, msg := range batch {
-			wg.Add(1)
-			logger.Info().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-			logger.Info().Msgf("Reader Stats: %#v", reader.Stats())
-			wgDoneDeferred := false
-			// Check if any of the existing topicMappings match the fetched message
-			for _, topicMapping := range topicMappings {
-				if msg.Topic == topicMapping.Topic {
-					wgDoneDeferred = true
-					go func(
-						msg kafka.Message,
-						topicMapping TopicMapping,
-						providedServer *server.Server,
-						logger *zerolog.Logger,
-					) {
-						defer wg.Done()
-						err := topicMapping.Processor(
-							msg,
-							topicMapping.ResultProducer,
-							providedServer,
-							logger,
-						)
-						if err != nil {
-							logger.Error().Err(err).Msg("Processing failed.")
-							errorResults <- err
-						}
-
-					}(msg, topicMapping, providedServer, logger)
-				}
-			}
-			// If the topic in the message doesn't match andy of the topicMappings
-			// then the goroutine will not be spawned and wg.Done() won't be
-			// called. If this happens, be sure to call it.
-			if !wgDoneDeferred {
-				wg.Done()
-			}
-		}
-		close(errorResults)
-		// Iterate over any failures and create an error slice
-		var temporaryErrors []*utils.ProcessingError
-		for processingError := range errorResults {
-			if processingError.Temporary {
-				temporaryErrors = append(temporaryErrors, processingError)
-			}
-		}
-
-		// If there are temporary errors, sort them so that the first item in the
-		// list has the lowest offset. Only run sort if there is more than one
-		// temporary error.
-		if len(temporaryErrors) > 0 {
-			logger.Error().Msgf("temporary errors: %#v", temporaryErrors)
-			if len(temporaryErrors) > 1 {
-				sort.Slice(temporaryErrors, func(i, j int) bool {
-					return temporaryErrors[i].KafkaMessage.Offset < temporaryErrors[j].KafkaMessage.Offset
-				})
-			}
-			// Iterate over the batch to find the message that came before the
-			// first temporary failure and commit it. This will ensure that
-			// the temporary failure is picked up as the first item in the next
-			// batch.
-			for _, message := range batch {
-				if message.Offset == temporaryErrors[0].KafkaMessage.Offset-1 {
-					if err := reader.CommitMessages(ctx, message); err != nil {
-						logger.Error().Msgf("failed to commit: %s", err)
-					}
-					// Before retrying the temporary failure, wait the
-					// prescribed time.
-					time.Sleep(temporaryErrors[0].Backoff)
-				}
-			}
-			// If there are no temporary errors sort the batch in descending order by
-			// offset and then commit the offset of the first item in the list.
-		} else if len(batch) > 0 {
-			sort.Slice(batch, func(i, j int) bool {
-				return batch[i].Offset < batch[j].Offset
-			})
-			logger.Info().Msgf("Committing offset", batch[0].Offset)
-			if err := reader.CommitMessages(ctx, batch[0]); err != nil {
-				logger.Error().Err(err).Msg("failed to commit")
-			}
-		}
+		readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
 	}
 }
 
-// Pull messages out of the Reader's underlying batch so that they can be processed in parallel
-// There is an ongoing discussion of batch message processing implementations with this
-// library here: https://github.com/segmentio/kafka-go/issues/123
-func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logger *zerolog.Logger) ([]kafka.Message, error) {
-	var (
-		messages []kafka.Message
-		err      error
-	)
-	innerctx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
-	defer cancel()
-	for i := 0; i < count; i++ {
-		message, err := reader.FetchMessage(innerctx)
+// readAndCommitBatchPipelineResults does a blocking read of the batchPipeline channel and
+// then does a blocking read of the errorResult in the MessageContext in the batchPipeline.
+// When an error appears it means that the message processing has entered a finalized state
+// and is either ready to be committed or has encountered a remporary error. In the case
+// of a temporary error, the application panics without committing so that the next reader
+// gets the same message to try again.
+func readAndCommitBatchPipelineResults(
+	ctx context.Context,
+	reader *kafka.Reader,
+	batchPipeline chan *MessageContext,
+	logger *zerolog.Logger,
+) {
+	msgCtx := <-batchPipeline
+	err := <-msgCtx.errorResult
+	if !err.Temporary {
+		logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
+		if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
+			logger.Error().Err(err).Msg("failed to commit")
+			panic("failed to commit")
+		}
+	}
+	logger.Error().Msg("temporary failure encountered")
+	panic("temporary failure encountered")
+}
+
+// processMessagesIntoBatchPipeline fetches messages from Kafka indefinitely, pushes a
+// MessageContext into the batchPipeline to maintain message order, and then spawns a
+// goroutine that will process the message and push to errorResult of the MessageContext
+// when the processing completes. There *must* be a value pushed to the errorResult, so
+// a simple ProcessingError is created for the success case.
+func processMessagesIntoBatchPipeline(
+	ctx context.Context,
+	topicMappings []TopicMapping,
+	providedServer *server.Server,
+	reader *kafka.Reader,
+	batchPipeline chan *MessageContext,
+	logger *zerolog.Logger,
+) {
+	for {
+		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
 			// Indicates batch has no more messages. End the loop for
 			// this batch and fetch another.
@@ -209,12 +142,55 @@ func batchFromReader(ctx context.Context, reader *kafka.Reader, count int, logge
 				logger.Info().Msg("Batch complete")
 			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
 				logger.Error().Err(err).Msg("batch item error")
+				panic("batch item error")
 			}
 			continue
 		}
-		messages = append(messages, message)
+		msgCtx := &MessageContext{
+			errorResult: make(chan *utils.ProcessingError),
+			msg:         msg,
+		}
+		batchPipeline <- msgCtx
+		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
+		// Check if any of the existing topicMappings match the fetched message
+		for _, topicMapping := range topicMappings {
+			if msg.Topic == topicMapping.Topic {
+				go processMessageIntoErrorResultChannel(
+					msg,
+					topicMapping,
+					providedServer,
+					msgCtx.errorResult,
+					logger,
+				)
+			}
+		}
 	}
-	return messages, err
+}
+
+// processMessageIntoErrorResultChannel executes the processor defined by a topicMapping
+// on a provided message. It then puts the result into the errChan in the event that an
+// error occurs, or places an error placeholder into the channel in case of success.
+func processMessageIntoErrorResultChannel(
+	msg kafka.Message,
+	topicMapping TopicMapping,
+	providedServer *server.Server,
+	errChan chan *utils.ProcessingError,
+	logger *zerolog.Logger,
+) {
+	err := topicMapping.Processor(
+		msg,
+		topicMapping.ResultProducer,
+		providedServer,
+		logger,
+	)
+	if err != nil {
+		errChan <- err
+	} else {
+		errChan <- &utils.ProcessingError{
+			Temporary: false,
+		}
+	}
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
