@@ -18,7 +18,7 @@ import (
 var brokers []string
 
 // Processor is an interface that represents functions which can be used to process kafka
-// messages in our pipeline.
+// messages in our pipeline
 type Processor func([]byte, *kafka.Writer, *server.Server, *zerolog.Logger) error
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
