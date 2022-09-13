@@ -127,10 +127,10 @@ type CacheInterface interface {
 }
 
 var (
-	errIssuerNotFound       = errors.New("Issuer with the given name does not exist")
-	errIssuerCohortNotFound = errors.New("Issuer with the given name and cohort does not exist")
-	errDuplicateRedemption  = errors.New("Duplicate Redemption")
-	errRedemptionNotFound   = errors.New("Redemption with the given id does not exist")
+	errIssuerNotFound       = errors.New("issuer with the given name does not exist")
+	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
+	errDuplicateRedemption  = errors.New("duplicate Redemption")
+	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
 )
 
 // LoadDbConfig loads config into server variable
@@ -605,7 +605,6 @@ func (c *Server) rotateIssuers() error {
 
 // rotateIssuers is the function that rotates
 func (c *Server) rotateIssuersV3() error {
-
 	tx := c.db.MustBegin()
 
 	var err error

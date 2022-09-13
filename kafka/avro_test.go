@@ -2,11 +2,12 @@ package kafka
 
 import (
 	"bytes"
+	"testing"
+	"time"
+
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 	"github.com/stretchr/testify/assert"
-	"testing"
-	"time"
 )
 
 // Tests v2 adds new fields validTo, validFrom and BlindedTokens.
@@ -37,8 +38,8 @@ func TestSchemaCompatability_SigningResult_V2ToV1(t *testing.T) {
 	assert.Equal(t, v2.Status.String(), v1.Status.String())
 }
 
-//// Tests v2 consumers reading v1 messages.
-//func TestSchemaCompatability_SigningResult_V1ToV2(t *testing.T) {
+// Tests v2 consumers reading v1 messages.
+// func TestSchemaCompatability_SigningResult_V1ToV2(t *testing.T) {
 //	v1 := &avroSchema.SigningResultV1{
 //		Signed_tokens:     []string{test.RandomString()},
 //		Issuer_public_key: test.RandomString(),
@@ -50,7 +51,6 @@ func TestSchemaCompatability_SigningResult_V2ToV1(t *testing.T) {
 //	var buf bytes.Buffer
 //	err := v1.Serialize(&buf)
 //	assert.NoError(t, err)
-//
 //	v2, err := avroSchema.DeserializeSigningResultV2(&buf)
 //	assert.NoError(t, err)
 //
@@ -61,4 +61,4 @@ func TestSchemaCompatability_SigningResult_V2ToV1(t *testing.T) {
 //	//assert.Nil(t, v2.Valid_to)
 //	//assert.Nil(t, v2.Valid_from)
 //	assert.Empty(t, v2.Blinded_tokens)
-//}
+// }
