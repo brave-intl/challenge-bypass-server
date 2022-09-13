@@ -87,74 +87,108 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 
 	reader := newConsumer(topics, adsConsumerGroupV1, logger)
 
-	// `kafka-go` exposes messages one at a time through its normal interfaces despite
-	// collecting messages with batching from Kafka. To process these messages in
-	// parallel we use the `FetchMessage` method in a loop to collect a set of messages
-	// for processing. Successes and permanent failures are committed. Temporary
-	// failures are not committed and are retried. Miscategorization of errors can
-	// cause the consumer to become stuck forever, so it's important that permanent
-	// failures are not categorized as temporary.
 	batchPipeline := make(chan *MessageContext)
 	ctx := context.Background()
-	go func(ctx context.Context) {
-		for {
-			msg, err := reader.FetchMessage(ctx)
-			if err != nil {
-				// Indicates batch has no more messages. End the loop for
-				// this batch and fetch another.
-				if err == io.EOF {
-					logger.Info().Msg("Batch complete")
-				} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
-					logger.Error().Err(err).Msg("batch item error")
-					panic("batch item error")
-				}
-				continue
+	go processMessagesIntoBatchPipeline(ctx, topicMappings, providedServer, reader, batchPipeline, logger)
+	for {
+		readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
+	}
+}
+
+// readAndCommitBatchPipelineResults does a blocking read of the batchPipeline channel and
+// then does a blocking read of the errorResult in the MessageContext in the batchPipeline.
+// When an error appears it means that the message processing has entered a finalized state
+// and is either ready to be committed or has encountered a remporary error. In the case
+// of a temporary error, the application panics without committing so that the next reader
+// gets the same message to try again.
+func readAndCommitBatchPipelineResults(
+	ctx context.Context,
+	reader *kafka.Reader,
+	batchPipeline chan *MessageContext,
+	logger *zerolog.Logger,
+) {
+	msgCtx := <-batchPipeline
+	err := <-msgCtx.errorResult
+	if !err.Temporary {
+		logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
+		if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
+			logger.Error().Err(err).Msg("failed to commit")
+			panic("failed to commit")
+		}
+	}
+	logger.Error().Msg("temporary failure encountered")
+	panic("temporary failure encountered")
+}
+
+// processMessagesIntoBatchPipeline fetches messages from Kafka indefinitely, pushes a
+// MessageContext into the batchPipeline to maintain message order, and then spawns a
+// goroutine that will process the message and push to errorResult of the MessageContext
+// when the processing completes. There *must* be a value pushed to the errorResult, so
+// a simple ProcessingError is created for the success case.
+func processMessagesIntoBatchPipeline(
+	ctx context.Context,
+	topicMappings []TopicMapping,
+	providedServer *server.Server,
+	reader *kafka.Reader,
+	batchPipeline chan *MessageContext,
+	logger *zerolog.Logger,
+) {
+	for {
+		msg, err := reader.FetchMessage(ctx)
+		if err != nil {
+			// Indicates batch has no more messages. End the loop for
+			// this batch and fetch another.
+			if err == io.EOF {
+				logger.Info().Msg("Batch complete")
+			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
+				logger.Error().Err(err).Msg("batch item error")
+				panic("batch item error")
 			}
-			msgCtx := &MessageContext{
-				errorResult: make(chan *utils.ProcessingError),
-				msg:         msg,
-			}
-			batchPipeline <- msgCtx
-			logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-			logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
-			// Check if any of the existing topicMappings match the fetched message
-			for _, topicMapping := range topicMappings {
-				if msg.Topic == topicMapping.Topic {
-					go func(
-						msg kafka.Message,
-						topicMapping TopicMapping,
-						providedServer *server.Server,
-						errChan chan *utils.ProcessingError,
-						logger *zerolog.Logger,
-					) {
-						err := topicMapping.Processor(
-							msg,
-							topicMapping.ResultProducer,
-							providedServer,
-							logger,
-						)
-						if err != nil {
-							errChan <- err
-						} else {
-							errChan <- &utils.ProcessingError{
-								Temporary: false,
-							}
-						}
-					}(msg, topicMapping, providedServer, msgCtx.errorResult, logger)
-				}
+			continue
+		}
+		msgCtx := &MessageContext{
+			errorResult: make(chan *utils.ProcessingError),
+			msg:         msg,
+		}
+		batchPipeline <- msgCtx
+		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
+		// Check if any of the existing topicMappings match the fetched message
+		for _, topicMapping := range topicMappings {
+			if msg.Topic == topicMapping.Topic {
+				go processMessageIntoErrorResultChannel(
+					msg,
+					topicMapping,
+					providedServer,
+					msgCtx.errorResult,
+					logger,
+				)
 			}
 		}
-	}(ctx)
+	}
+}
 
-	for {
-		msgCtx := <-batchPipeline
-		err := <-msgCtx.errorResult
-		if !err.Temporary {
-			logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
-			if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
-				logger.Error().Err(err).Msg("failed to commit")
-				panic("failed to commit")
-			}
+// processMessageIntoErrorResultChannel executes the processor defined by a topicMapping
+// on a provided message. It then puts the result into the errChan in the event that an
+// error occurs, or places an error placeholder into the channel in case of success.
+func processMessageIntoErrorResultChannel(
+	msg kafka.Message,
+	topicMapping TopicMapping,
+	providedServer *server.Server,
+	errChan chan *utils.ProcessingError,
+	logger *zerolog.Logger,
+) {
+	err := topicMapping.Processor(
+		msg,
+		topicMapping.ResultProducer,
+		providedServer,
+		logger,
+	)
+	if err != nil {
+		errChan <- err
+	} else {
+		errChan <- &utils.ProcessingError{
+			Temporary: false,
 		}
 	}
 }
