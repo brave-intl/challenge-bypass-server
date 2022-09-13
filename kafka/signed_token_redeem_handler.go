@@ -34,7 +34,6 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
-			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -56,7 +55,6 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
-			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -71,7 +69,6 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
-			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -124,7 +121,6 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
-				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -141,7 +137,6 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
-				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -180,7 +175,6 @@ func SignedTokenRedeemHandler(
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
 				processingResult, errorResult := avroRedeemErrorResultFromError(
 					message,
-					err,
 					msg,
 					producer,
 					tokenRedeemRequestSet.Request_id,
@@ -232,7 +226,6 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
-				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -306,7 +299,6 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
-			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -330,19 +322,8 @@ func SignedTokenRedeemHandler(
 	return nil
 }
 
-func containsEquivalnce(equivSlice []cbpServer.Equivalence, eqiv cbpServer.Equivalence) bool {
-	for _, e := range equivSlice {
-		if e == eqiv {
-			return true
-		}
-	}
-
-	return false
-}
-
 func avroRedeemErrorResultFromError(
 	message string,
-	err error,
 	msg kafka.Message,
 	producer *kafka.Writer,
 	requestID string,
@@ -360,7 +341,7 @@ func avroRedeemErrorResultFromError(
 		Data:       []avroSchema.RedeemResult{redeemResult},
 	}
 	var resultSetBuffer bytes.Buffer
-	err = resultSet.Serialize(&resultSetBuffer)
+	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
 		return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)

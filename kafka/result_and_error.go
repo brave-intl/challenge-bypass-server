@@ -18,7 +18,7 @@ func ResultAndErrorFromError(
 	log *zerolog.Logger,
 ) (*ProcessingResult, *utils.ProcessingError) {
 	processingError := utils.ProcessingErrorFromErrorWithMessage(err, errorMessage, msg, log)
-	if processingError.Temporary == true {
+	if processingError.Temporary {
 		return nil, processingError
 	}
 	return &ProcessingResult{

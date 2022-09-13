@@ -1,3 +1,4 @@
+// Package kafka manages kafka interaction
 package kafka
 
 import (
@@ -43,6 +44,7 @@ type TopicMapping struct {
 	Group          string
 }
 
+// MessageContext is used for channel coordination when processing batches of messages
 type MessageContext struct {
 	errorResult chan *utils.ProcessingError
 	msg         kafka.Message
@@ -225,7 +227,7 @@ func MayEmitIfPermanent(
 	producer *kafka.Writer,
 	log *zerolog.Logger,
 ) {
-	if errorResult.Temporary == false {
+	if !errorResult.Temporary {
 		err := Emit(producer, processingResult.Message, log)
 		if err != nil {
 			message := fmt.Sprintf(

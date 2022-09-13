@@ -48,7 +48,6 @@ func SignedBlindedTokenIssuerHandler(
 			nil,
 			issuerError,
 			blindedTokenRequestSet.Request_id,
-			err,
 			msg,
 			producer,
 			log,
@@ -76,7 +75,6 @@ func SignedBlindedTokenIssuerHandler(
 			nil,
 			issuerError,
 			blindedTokenRequestSet.Request_id,
-			err,
 			msg,
 			producer,
 			&logger,
@@ -199,7 +197,6 @@ OUTER:
 						nil,
 						issuerError,
 						blindedTokenRequestSet.Request_id,
-						err,
 						msg,
 						producer,
 						&logger,
@@ -221,7 +218,6 @@ OUTER:
 							nil,
 							issuerError,
 							blindedTokenRequestSet.Request_id,
-							err,
 							msg,
 							producer,
 							&logger,
@@ -229,7 +225,7 @@ OUTER:
 						MayEmitIfPermanent(processingResult, errorResult, producer, log)
 						return errorResult
 					}
-					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
+					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken))
 				}
 
 				var marshalledSignedTokens []string
@@ -245,7 +241,6 @@ OUTER:
 							nil,
 							issuerError,
 							blindedTokenRequestSet.Request_id,
-							err,
 							msg,
 							producer,
 							&logger,
@@ -253,7 +248,7 @@ OUTER:
 						MayEmitIfPermanent(processingResult, errorResult, producer, log)
 						return errorResult
 					}
-					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
+					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken))
 				}
 
 				publicKey := signingKey.PublicKey()
@@ -268,7 +263,6 @@ OUTER:
 						nil,
 						issuerError,
 						blindedTokenRequestSet.Request_id,
-						err,
 						msg,
 						producer,
 						&logger,
@@ -322,7 +316,6 @@ OUTER:
 					nil,
 					issuerError,
 					blindedTokenRequestSet.Request_id,
-					err,
 					msg,
 					producer,
 					&logger,
@@ -344,7 +337,6 @@ OUTER:
 						nil,
 						issuerError,
 						blindedTokenRequestSet.Request_id,
-						err,
 						msg,
 						producer,
 						&logger,
@@ -352,7 +344,7 @@ OUTER:
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
-				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken[:]))
+				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken))
 			}
 
 			var marshalledSignedTokens []string
@@ -368,7 +360,6 @@ OUTER:
 						nil,
 						issuerError,
 						blindedTokenRequestSet.Request_id,
-						err,
 						msg,
 						producer,
 						&logger,
@@ -376,7 +367,7 @@ OUTER:
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
 					return errorResult
 				}
-				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken[:]))
+				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken))
 			}
 
 			publicKey := signingKey.PublicKey()
@@ -391,7 +382,6 @@ OUTER:
 					marshalledPublicKey,
 					issuerError,
 					blindedTokenRequestSet.Request_id,
-					err,
 					msg,
 					producer,
 					&logger,
@@ -432,7 +422,6 @@ OUTER:
 			nil,
 			issuerError,
 			blindedTokenRequestSet.Request_id,
-			err,
 			msg,
 			producer,
 			&logger,
@@ -462,7 +451,6 @@ func avroIssuerErrorResultFromError(
 	marshalledPublicKey []byte,
 	issuerResultStatus int32,
 	requestID string,
-	err error,
 	msg kafka.Message,
 	producer *kafka.Writer,
 	logger *zerolog.Logger,
@@ -480,7 +468,7 @@ func avroIssuerErrorResultFromError(
 		Data:       []avroSchema.SigningResultV2{signingResult},
 	}
 	var resultSetBuffer bytes.Buffer
-	err = resultSet.Serialize(&resultSetBuffer)
+	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
 		return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
