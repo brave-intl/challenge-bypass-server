@@ -20,7 +20,7 @@ jobs:
           go-version: 1.18
       - uses: actions/checkout@v3
       - name: Tidy
-        run: go mod tidy
+        run: go clean -modcache && go mod tidy
         shell: bash
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v3
