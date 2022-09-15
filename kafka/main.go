@@ -110,7 +110,11 @@ func readAndCommitBatchPipelineResults(
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) {
-	msgCtx := <-batchPipeline
+	msgCtx, ok := <-batchPipeline
+	if !ok {
+		logger.Error().Msg("batchPipeline channel closed")
+		panic("batch item error")
+	}
 	err := <-msgCtx.errorResult
 	if !err.Temporary {
 		logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
@@ -136,6 +140,13 @@ func processMessagesIntoBatchPipeline(
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) {
+	// During normal operation processMessagesIntoBatchPipeline will never complete and
+	// this deferral should not run. It's only called if we encounter some unrecoverable
+	// error.
+	defer func() {
+		close(batchPipeline)
+	}()
+
 	for {
 		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
@@ -145,8 +156,15 @@ func processMessagesIntoBatchPipeline(
 				logger.Info().Msg("Batch complete")
 			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
 				logger.Error().Err(err).Msg("batch item error")
-				panic("batch item error")
+				// @TODO: Is there a way to close the batchPipeline and
+				// allow the MessageContexts in it to complete before we
+				// panic? Panic here will only stop this goroutine.
+				panic("failed to fetch kafka messages and closed channel")
 			}
+			// There are other possible errors, but the underlying consumer
+			// group handler handle retryable failures well. If further
+			// investigation is needed you can review the handler here:
+			// https://github.com/segmentio/kafka-go/blob/main/consumergroup.go#L729
 			continue
 		}
 		msgCtx := &MessageContext{
@@ -157,8 +175,10 @@ func processMessagesIntoBatchPipeline(
 		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
 		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
 		// Check if any of the existing topicMappings match the fetched message
+		matchFound := false
 		for _, topicMapping := range topicMappings {
 			if msg.Topic == topicMapping.Topic {
+				matchFound = true
 				go processMessageIntoErrorResultChannel(
 					msg,
 					topicMapping,
@@ -167,6 +187,9 @@ func processMessagesIntoBatchPipeline(
 					logger,
 				)
 			}
+		}
+		if !matchFound {
+			logger.Error().Msgf("Topic received whose topic is not configured: %s", msg.Topic)
 		}
 	}
 }
