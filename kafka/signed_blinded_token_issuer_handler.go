@@ -54,7 +54,7 @@ func SignedBlindedTokenIssuerHandler(
 		)
 
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
@@ -80,7 +80,7 @@ func SignedBlindedTokenIssuerHandler(
 			&logger,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 OUTER:
@@ -202,7 +202,7 @@ OUTER:
 						&logger,
 					)
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
-					return errorResult
+					return NilIfPermanent(errorResult)
 				}
 
 				var marshalledBlindedTokens []string
@@ -223,7 +223,7 @@ OUTER:
 							&logger,
 						)
 						MayEmitIfPermanent(processingResult, errorResult, producer, log)
-						return errorResult
+						return NilIfPermanent(errorResult)
 					}
 					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken))
 				}
@@ -246,7 +246,7 @@ OUTER:
 							&logger,
 						)
 						MayEmitIfPermanent(processingResult, errorResult, producer, log)
-						return errorResult
+						return NilIfPermanent(errorResult)
 					}
 					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken))
 				}
@@ -268,7 +268,7 @@ OUTER:
 						&logger,
 					)
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
-					return errorResult
+					return NilIfPermanent(errorResult)
 				}
 
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -321,7 +321,7 @@ OUTER:
 					&logger,
 				)
 				MayEmitIfPermanent(processingResult, errorResult, producer, log)
-				return errorResult
+				return NilIfPermanent(errorResult)
 			}
 
 			var marshalledBlindedTokens []string
@@ -342,7 +342,7 @@ OUTER:
 						&logger,
 					)
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
-					return errorResult
+					return NilIfPermanent(errorResult)
 				}
 				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshalledToken))
 			}
@@ -365,7 +365,7 @@ OUTER:
 						&logger,
 					)
 					MayEmitIfPermanent(processingResult, errorResult, producer, log)
-					return errorResult
+					return NilIfPermanent(errorResult)
 				}
 				marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken))
 			}
@@ -387,7 +387,7 @@ OUTER:
 					&logger,
 				)
 				MayEmitIfPermanent(processingResult, errorResult, producer, log)
-				return errorResult
+				return NilIfPermanent(errorResult)
 			}
 
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -427,7 +427,7 @@ OUTER:
 			&logger,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), log)

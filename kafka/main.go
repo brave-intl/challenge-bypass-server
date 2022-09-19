@@ -116,15 +116,15 @@ func readAndCommitBatchPipelineResults(
 		panic("batch item error")
 	}
 	err := <-msgCtx.errorResult
-	if !err.Temporary {
-		logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
-		if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
-			logger.Error().Err(err).Msg("failed to commit")
-			panic("failed to commit")
-		}
+	if err != nil {
+		logger.Error().Msg("temporary failure encountered")
+		panic("temporary failure encountered")
 	}
-	logger.Error().Msg("temporary failure encountered")
-	panic("temporary failure encountered")
+	logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
+	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
+		logger.Error().Err(err).Msg("failed to commit")
+		panic("failed to commit")
+	}
 }
 
 // processMessagesIntoBatchPipeline fetches messages from Kafka indefinitely, pushes a
@@ -204,19 +204,12 @@ func processMessageIntoErrorResultChannel(
 	errChan chan *utils.ProcessingError,
 	logger *zerolog.Logger,
 ) {
-	err := topicMapping.Processor(
+	errChan <- topicMapping.Processor(
 		msg,
 		topicMapping.ResultProducer,
 		providedServer,
 		logger,
 	)
-	if err != nil {
-		errChan <- err
-	} else {
-		errChan <- &utils.ProcessingError{
-			Temporary: false,
-		}
-	}
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
@@ -261,6 +254,19 @@ func MayEmitIfPermanent(
 			log.Error().Err(err).Msgf(message)
 		}
 	}
+}
+
+// NilIfPermanent returns the provided ProcessingError if it is not in a settled state.
+// Otherwise, it returns nil. This is used to allow the Kafka module to terminate processing
+// if there is a temporary error and ignore successes and permanent failures.
+func NilIfPermanent(errorResult *utils.ProcessingError) *utils.ProcessingError {
+	if errorResult == nil {
+		return nil
+	}
+	if errorResult.Temporary {
+		return errorResult
+	}
+	return nil
 }
 
 // Emit sends a message over the Kafka interface.

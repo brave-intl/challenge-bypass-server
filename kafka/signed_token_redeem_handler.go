@@ -41,7 +41,7 @@ func SignedTokenRedeemHandler(
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 	logger := log.With().Str("request_id", tokenRedeemRequestSet.Request_id).Logger()
@@ -62,7 +62,7 @@ func SignedTokenRedeemHandler(
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
@@ -76,7 +76,7 @@ func SignedTokenRedeemHandler(
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 	// Iterate over requests (only one at this point but the schema can support more
@@ -128,7 +128,7 @@ func SignedTokenRedeemHandler(
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
-			return errorResult
+			return NilIfPermanent(errorResult)
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
@@ -144,7 +144,7 @@ func SignedTokenRedeemHandler(
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
-			return errorResult
+			return NilIfPermanent(errorResult)
 		}
 		for _, issuer := range *issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
@@ -182,7 +182,7 @@ func SignedTokenRedeemHandler(
 					log,
 				)
 				MayEmitIfPermanent(processingResult, errorResult, producer, log)
-				return errorResult
+				return NilIfPermanent(errorResult)
 			}
 
 			logger.Trace().
@@ -233,7 +233,7 @@ func SignedTokenRedeemHandler(
 				log,
 			)
 			MayEmitIfPermanent(processingResult, errorResult, producer, log)
-			return errorResult
+			return NilIfPermanent(errorResult)
 		}
 
 		// Continue if there is a duplicate
@@ -306,7 +306,7 @@ func SignedTokenRedeemHandler(
 			log,
 		)
 		MayEmitIfPermanent(processingResult, errorResult, producer, log)
-		return errorResult
+		return NilIfPermanent(errorResult)
 	}
 
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
