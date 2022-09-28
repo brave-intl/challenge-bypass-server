@@ -101,7 +101,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 // readAndCommitBatchPipelineResults does a blocking read of the batchPipeline channel and
 // then does a blocking read of the errorResult in the MessageContext in the batchPipeline.
 // When an error appears it means that the message processing has entered a finalized state
-// and is either ready to be committed or has encountered a remporary error. In the case
+// and is either ready to be committed or has encountered a temporary error. In the case
 // of a temporary error, the application panics without committing so that the next reader
 // gets the same message to try again.
 func readAndCommitBatchPipelineResults(
