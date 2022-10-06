@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
@@ -27,6 +28,10 @@ func SignedTokenRedeemHandler(
 	server *cbpServer.Server,
 	log *zerolog.Logger,
 ) *utils.ProcessingError {
+	var (
+		errorIsTemporary = false
+		backoff          = 1 * time.Millisecond
+	)
 	data := msg.Value
 	// Deserialize request into usable struct
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
@@ -35,6 +40,9 @@ func SignedTokenRedeemHandler(
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
 			msg,
+			err,
+			errorIsTemporary,
+			backoff,
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
@@ -56,6 +64,9 @@ func SignedTokenRedeemHandler(
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
 			msg,
+			err,
+			errorIsTemporary,
+			backoff,
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
@@ -70,6 +81,9 @@ func SignedTokenRedeemHandler(
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
 			msg,
+			err,
+			errorIsTemporary,
+			backoff,
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
@@ -122,6 +136,9 @@ func SignedTokenRedeemHandler(
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
 				msg,
+				err,
+				errorIsTemporary,
+				backoff,
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
@@ -138,6 +155,9 @@ func SignedTokenRedeemHandler(
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
 				msg,
+				err,
+				errorIsTemporary,
+				backoff,
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
@@ -176,6 +196,9 @@ func SignedTokenRedeemHandler(
 				processingResult, errorResult := avroRedeemErrorResultFromError(
 					message,
 					msg,
+					err,
+					errorIsTemporary,
+					backoff,
 					producer,
 					tokenRedeemRequestSet.Request_id,
 					int32(avroSchema.RedeemResultStatusError),
@@ -224,9 +247,36 @@ func SignedTokenRedeemHandler(
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
+
+			var (
+				ok        bool
+				temporary bool
+				backoff   time.Duration
+			)
+			err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException)
+			if ok {
+				logger.Error().Err(err).Msg("Temporary message processing failure: Dynamo ProvisionedThroughputExceededException")
+				temporary = true
+				backoff = 1 * time.Minute
+			}
+			err, ok = err.(*awsDynamoTypes.RequestLimitExceeded)
+			if ok {
+				logger.Error().Err(err).Msg("Temporary message processing failure: Dynamo RequestLimitExceeded")
+				temporary = true
+				backoff = 1 * time.Minute
+			}
+			err, ok = err.(*awsDynamoTypes.InternalServerError)
+			if ok {
+				logger.Error().Err(err).Msg("Temporary message processing failure: Dynamo InternalServerError")
+				temporary = true
+				backoff = 1 * time.Minute
+			}
 			processingResult, errorResult := avroRedeemErrorResultFromError(
 				message,
 				msg,
+				err,
+				temporary,
+				backoff,
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
@@ -300,6 +350,9 @@ func SignedTokenRedeemHandler(
 		processingResult, errorResult := avroRedeemErrorResultFromError(
 			message,
 			msg,
+			err,
+			errorIsTemporary,
+			backoff,
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
@@ -325,6 +378,9 @@ func SignedTokenRedeemHandler(
 func avroRedeemErrorResultFromError(
 	message string,
 	msg kafka.Message,
+	sourceError error,
+	temporary bool,
+	backoff time.Duration,
 	producer *kafka.Writer,
 	requestID string,
 	redeemResultStatus int32,
@@ -344,7 +400,27 @@ func avroRedeemErrorResultFromError(
 	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
-		return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
+		return &ProcessingResult{
+				Message:        []byte(message),
+				ResultProducer: producer,
+				RequestID:      requestID,
+			}, &utils.ProcessingError{
+				OriginalError:  err,
+				FailureMessage: message,
+				Temporary:      false,
+				Backoff:        1 * time.Millisecond,
+				KafkaMessage:   msg,
+			}
 	}
-	return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
+	return &ProcessingResult{
+			Message:        []byte(message),
+			ResultProducer: producer,
+			RequestID:      requestID,
+		}, &utils.ProcessingError{
+			OriginalError:  sourceError,
+			FailureMessage: message,
+			Temporary:      temporary,
+			Backoff:        backoff,
+			KafkaMessage:   msg,
+		}
 }

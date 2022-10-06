@@ -18,6 +18,12 @@ import (
 
 /*
  SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+ In cases where there are unrecoverable errors that prevent progress we will return non-nil.
+ These permanent failure cases are slightly different from cases where we encounter permanent
+ errors inside the request data. For permanent failures inside the data processing loop we
+ simply add the error to the results. However, temporary errors inside the loop should break
+ the loop and return non-nil just like the errors outside the data processing loop. This is
+ because future attempts to process permanent failure cases will not succeed.
  @TODO: It would be better for the Server implementation and the Kafka implementation of
  this behavior to share utility functions rather than passing an instance of the server
  as an argument here. That will require a bit of refactoring.
@@ -32,6 +38,10 @@ func SignedBlindedTokenIssuerHandler(
 		issuerOk      = 0
 		issuerInvalid = 1
 		issuerError   = 2
+	)
+	var (
+		temporary = false
+		backoff   = 1 * time.Millisecond
 	)
 	data := msg.Value
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
@@ -49,6 +59,8 @@ func SignedBlindedTokenIssuerHandler(
 			issuerError,
 			blindedTokenRequestSet.Request_id,
 			err,
+			temporary,
+			backoff,
 			msg,
 			producer,
 			log,
@@ -77,6 +89,8 @@ func SignedBlindedTokenIssuerHandler(
 			issuerError,
 			blindedTokenRequestSet.Request_id,
 			err,
+			temporary,
+			backoff,
 			msg,
 			producer,
 			&logger,
@@ -95,7 +109,7 @@ OUTER:
 				Status:            issuerError,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		// check to see if issuer cohort will overflow
@@ -107,7 +121,7 @@ OUTER:
 				Status:            issuerError,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int16(request.Issuer_cohort))
@@ -119,7 +133,7 @@ OUTER:
 				Status:            issuerInvalid,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
@@ -132,7 +146,7 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				break OUTER
+				continue OUTER
 			}
 		}
 
@@ -151,7 +165,7 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				break OUTER
+				continue OUTER
 			}
 			blindedTokens = append(blindedTokens, &blindedToken)
 		}
@@ -185,7 +199,7 @@ OUTER:
 						Status:            issuerError,
 						Associated_data:   request.Associated_data,
 					})
-					break OUTER
+					continue OUTER
 				}
 
 				marshalledDLEQProof, err := DLEQProof.MarshalText()
@@ -200,6 +214,8 @@ OUTER:
 						issuerError,
 						blindedTokenRequestSet.Request_id,
 						err,
+						temporary,
+						backoff,
 						msg,
 						producer,
 						&logger,
@@ -222,6 +238,8 @@ OUTER:
 							issuerError,
 							blindedTokenRequestSet.Request_id,
 							err,
+							temporary,
+							backoff,
 							msg,
 							producer,
 							&logger,
@@ -246,6 +264,8 @@ OUTER:
 							issuerError,
 							blindedTokenRequestSet.Request_id,
 							err,
+							temporary,
+							backoff,
 							msg,
 							producer,
 							&logger,
@@ -269,6 +289,8 @@ OUTER:
 						issuerError,
 						blindedTokenRequestSet.Request_id,
 						err,
+						temporary,
+						backoff,
 						msg,
 						producer,
 						&logger,
@@ -307,7 +329,7 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				break OUTER
+				continue OUTER
 			}
 
 			marshalledDLEQProof, err := DLEQProof.MarshalText()
@@ -323,6 +345,8 @@ OUTER:
 					issuerError,
 					blindedTokenRequestSet.Request_id,
 					err,
+					temporary,
+					backoff,
 					msg,
 					producer,
 					&logger,
@@ -345,6 +369,8 @@ OUTER:
 						issuerError,
 						blindedTokenRequestSet.Request_id,
 						err,
+						temporary,
+						backoff,
 						msg,
 						producer,
 						&logger,
@@ -369,6 +395,8 @@ OUTER:
 						issuerError,
 						blindedTokenRequestSet.Request_id,
 						err,
+						temporary,
+						backoff,
 						msg,
 						producer,
 						&logger,
@@ -392,6 +420,8 @@ OUTER:
 					issuerError,
 					blindedTokenRequestSet.Request_id,
 					err,
+					temporary,
+					backoff,
 					msg,
 					producer,
 					&logger,
@@ -433,6 +463,8 @@ OUTER:
 			issuerError,
 			blindedTokenRequestSet.Request_id,
 			err,
+			temporary,
+			backoff,
 			msg,
 			producer,
 			&logger,
@@ -463,6 +495,8 @@ func avroIssuerErrorResultFromError(
 	issuerResultStatus int32,
 	requestID string,
 	sourceError error,
+	temporary bool,
+	backoff time.Duration,
 	msg kafka.Message,
 	producer *kafka.Writer,
 	logger *zerolog.Logger,
@@ -483,7 +517,28 @@ func avroIssuerErrorResultFromError(
 	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
-		return ResultAndErrorFromError(err, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
+		return &ProcessingResult{
+				Message:        []byte(message),
+				ResultProducer: producer,
+				RequestID:      requestID,
+			}, &utils.ProcessingError{
+				OriginalError:  err,
+				FailureMessage: message,
+				Temporary:      false,
+				Backoff:        1 * time.Millisecond,
+				KafkaMessage:   msg,
+			}
 	}
-	return ResultAndErrorFromError(sourceError, msg, message, resultSetBuffer.Bytes(), producer, requestID, logger)
+
+	return &ProcessingResult{
+			Message:        []byte(message),
+			ResultProducer: producer,
+			RequestID:      requestID,
+		}, &utils.ProcessingError{
+			OriginalError:  sourceError,
+			FailureMessage: message,
+			Temporary:      temporary,
+			Backoff:        backoff,
+			KafkaMessage:   msg,
+		}
 }
