@@ -7,6 +7,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
@@ -84,17 +85,7 @@ func main() {
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		go func() {
-			zeroLogger.Trace().Msg("Initializing Kafka consumers")
-			err = kafka.StartConsumers(&srv, &zeroLogger)
-
-			if err != nil {
-				zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
-				// If err is something then starconsumer again
-				//break this out into a function and call again if err
-				return
-			}
-		}()
+		go startKafka(srv, zeroLogger)
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
@@ -106,5 +97,17 @@ func main() {
 		raven.CaptureErrorAndWait(err, nil)
 		logger.Panic(err)
 		return
+	}
+}
+
+func startKafka(srv server.Server, zeroLogger zerolog.Logger) {
+	zeroLogger.Trace().Msg("Initializing Kafka consumers")
+	err := kafka.StartConsumers(&srv, &zeroLogger)
+
+	if err != nil {
+		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
+		// If err is something then start consumer again
+		time.Sleep(10 * time.Second)
+		startKafka(srv, zeroLogger)
 	}
 }

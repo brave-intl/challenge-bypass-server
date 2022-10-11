@@ -156,9 +156,6 @@ func processMessagesIntoBatchPipeline(
 				logger.Info().Msg("Batch complete")
 			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
 				logger.Error().Err(err).Msg("batch item error")
-				// @TODO: Is there a way to close the batchPipeline and
-				// allow the MessageContexts in it to complete before we
-				// panic? Panic here will only stop this goroutine.
 				panic("failed to fetch kafka messages and closed channel")
 			}
 			// There are other possible errors, but the underlying consumer
