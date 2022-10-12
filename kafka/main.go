@@ -46,7 +46,7 @@ type TopicMapping struct {
 
 // MessageContext is used for channel coordination when processing batches of messages
 type MessageContext struct {
-	errorResult chan *utils.ProcessingError
+	errorResult chan error
 	msg         kafka.Message
 }
 
@@ -165,7 +165,7 @@ func processMessagesIntoBatchPipeline(
 			continue
 		}
 		msgCtx := &MessageContext{
-			errorResult: make(chan *utils.ProcessingError),
+			errorResult: make(chan error),
 			msg:         msg,
 		}
 		batchPipeline <- msgCtx
@@ -198,7 +198,7 @@ func processMessageIntoErrorResultChannel(
 	msg kafka.Message,
 	topicMapping TopicMapping,
 	providedServer *server.Server,
-	errChan chan *utils.ProcessingError,
+	errChan chan error,
 	logger *zerolog.Logger,
 ) {
 	errChan <- topicMapping.Processor(
