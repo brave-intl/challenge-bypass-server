@@ -188,16 +188,13 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 		return &redemption, IDEquivalence, nil
 	}
 	var ok bool
-	err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException)
-	if ok {
+	if err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException); ok {
 		temporary = true
 	}
-	err, ok = err.(*awsDynamoTypes.RequestLimitExceeded)
-	if ok {
+	if err, ok = err.(*awsDynamoTypes.RequestLimitExceeded); ok {
 		temporary = true
 	}
-	err, ok = err.(*awsDynamoTypes.InternalServerError)
-	if ok {
+	if err, ok = err.(*awsDynamoTypes.InternalServerError); ok {
 		temporary = true
 	}
 	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, temporary)
