@@ -154,7 +154,7 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				continue OUTER
+				break OUTER
 			}
 			blindedTokens = append(blindedTokens, &blindedToken)
 		}
