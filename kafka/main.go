@@ -104,10 +104,9 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 
 // readAndCommitBatchPipelineResults does a blocking read of the batchPipeline channel and
 // then does a blocking read of the errorResult in the MessageContext in the batchPipeline.
-// When an error appears it means that the message processing has entered a finalized state
-// and is either ready to be committed or has encountered a temporary error. In the case
-// of a temporary error, the application panics without committing so that the next reader
-// gets the same message to try again.
+// When an error appears it means that the channel was closed or a temporary error was
+// encountered. In the case of a temporary error, the application returns an error without
+// committing so that the next reader gets the same message to try again.
 func readAndCommitBatchPipelineResults(
 	ctx context.Context,
 	reader *kafka.Reader,
@@ -135,8 +134,9 @@ func readAndCommitBatchPipelineResults(
 // processMessagesIntoBatchPipeline fetches messages from Kafka indefinitely, pushes a
 // MessageContext into the batchPipeline to maintain message order, and then spawns a
 // goroutine that will process the message and push to errorResult of the MessageContext
-// when the processing completes. There *must* be a value pushed to the errorResult, so
-// a simple ProcessingError is created for the success case.
+// when the processing completes. In case of an error, we panic from this function,
+// triggering the deferral which closes the batchPipeline channel. This will result in
+// readAndCommitBatchPipelineResults returning an error and the processing loop being recreated.
 func processMessagesIntoBatchPipeline(
 	ctx context.Context,
 	topicMappings []TopicMapping,
@@ -200,8 +200,9 @@ func processMessagesIntoBatchPipeline(
 }
 
 // processMessageIntoErrorResultChannel executes the processor defined by a topicMapping
-// on a provided message. It then puts the result into the errChan in the event that an
-// error occurs, or places an error placeholder into the channel in case of success.
+// on a provided message. It then puts the result into the errChan. This result will be
+// nil in cases of success or permanent failures and will be some error in the case that
+// a temporary error is encountered.
 func processMessageIntoErrorResultChannel(
 	msg kafka.Message,
 	topicMapping TopicMapping,
@@ -267,6 +268,8 @@ func Emit(producer *kafka.Writer, message []byte, logger *zerolog.Logger) error 
 	return nil
 }
 
+// getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
+// environments.
 func getDialer(logger *zerolog.Logger) *kafka.Dialer {
 	var dialer *kafka.Dialer
 	if os.Getenv("ENV") != "local" {

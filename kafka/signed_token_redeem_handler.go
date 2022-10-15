@@ -17,9 +17,9 @@ import (
 
 /*
  SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
- tokens provided. If it encounters an error, it returns a ProcessingError that indicates
- whether the error is temporary and the attmept should be retried, or if the error is
- permanent and the attempt should be abandoned.
+ tokens provided. If it encounters a permanent error, it emits a permanent result for that
+ item. If the error is temporary, an error is returned to indicate that progress cannot be
+ made.
 */
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
@@ -355,6 +355,8 @@ func SignedTokenRedeemHandler(
 	return nil
 }
 
+// avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the
+// provided values.
 func avroRedeemErrorResultFromError(
 	message string,
 	msg kafka.Message,

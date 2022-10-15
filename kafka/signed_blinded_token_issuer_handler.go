@@ -17,8 +17,8 @@ import (
 
 /*
  SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
- In cases where there are unrecoverable errors that prevent progress we will return non-nil.
- These permanent failure cases are slightly different from cases where we encounter permanent
+ In cases where there are unrecoverable errors that prevent progress we will return nil.
+ These permanent failure cases are different from cases where we encounter temporary
  errors inside the request data. For permanent failures inside the data processing loop we
  simply add the error to the results. However, temporary errors inside the loop should break
  the loop and return non-nil just like the errors outside the data processing loop. This is
@@ -440,6 +440,8 @@ OUTER:
 	return nil
 }
 
+// avroIssuerErrorResultFromError returns a ProcessingResult that is constructed from the
+// provided values.
 func avroIssuerErrorResultFromError(
 	message string,
 	marshalledBlindedTokens []string,
