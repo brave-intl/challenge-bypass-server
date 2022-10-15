@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
@@ -252,10 +253,13 @@ func incrementCounter(c prometheus.Counter) {
 	c.Add(1)
 }
 
-func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
+func (c *Server) fetchIssuer(issuerID string) (*Issuer, *utils.ProcessingError) {
 	defer incrementCounter(fetchIssuerCounter)
 
-	var err error
+	var (
+		err       error
+		temporary = false
+	)
 
 	if c.caches != nil {
 		if cached, found := c.caches["issuer"].Get(issuerID); found {
@@ -270,11 +274,10 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	`, issuerID)
 
 	if err != nil {
-		if isPostgresNotFoundError(err) {
-			return nil, errIssuerNotFound
-		} else {
-			panic("Postgres encountered temporary error")
+		if !isPostgresNotFoundError(err) {
+			temporary = true
 		}
+		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, temporary)
 	}
 
 	convertedIssuer := c.convertDBIssuer(fetchedIssuer)
@@ -292,19 +295,18 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		convertedIssuer.ID,
 	)
 	if err != nil {
-		if isPostgresNotFoundError(err) {
-			c.Logger.Error("Failed to extract issuer keys from DB")
-			return nil, err
-		} else {
-			panic("Postgres encountered temporary error")
+		if !isPostgresNotFoundError(err) {
+			c.Logger.Error("Postgres encountered temporary error")
+			temporary = true
 		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	for _, v := range fetchIssuerKeys {
 		k, err := c.convertDBIssuerKeys(v)
 		if err != nil {
 			c.Logger.Error("Failed to convert issuer keys from DB")
-			return nil, err
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 		convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 	}
@@ -316,7 +318,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
+func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, *utils.ProcessingError) {
 	// will not lose resolution int16->int
 	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
 	if c.caches != nil {
@@ -325,7 +327,10 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		}
 	}
 
-	var err error
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
 	err = c.db.Select(
@@ -337,14 +342,13 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		if isPostgresNotFoundError(err) {
-			return nil, err
-		} else {
-			panic("Postgres encountered temporary error")
+			temporary = true
 		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	if len(fetchedIssuers) < 1 {
-		return nil, errIssuerCohortNotFound
+		return nil, utils.ProcessingErrorFromError(errIssuerCohortNotFound, temporary)
 	}
 
 	issuers := []Issuer{}
@@ -364,19 +368,18 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			if isPostgresNotFoundError(err) {
-				c.Logger.Error("Failed to extract issuer keys from DB")
-				return nil, err
-			} else {
-				panic("Postgres encountered temporary error")
+			if !isPostgresNotFoundError(err) {
+				c.Logger.Error("Postgres encountered temporary error")
+				temporary = true
 			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
@@ -391,14 +394,17 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	return &issuers, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
+func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, *utils.ProcessingError) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
 			return cached.(*[]Issuer), nil
 		}
 	}
 
-	var err error
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
 	err = c.db.Select(
@@ -409,15 +415,14 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
-		if isPostgresNotFoundError(err) {
-			return nil, err
-		} else {
-			panic("Postgres encountered temporary error")
+		if !isPostgresNotFoundError(err) {
+			temporary = true
 		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	if len(fetchedIssuers) < 1 {
-		return nil, errIssuerNotFound
+		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, temporary)
 	}
 
 	issuers := []Issuer{}
@@ -437,19 +442,18 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			if isPostgresNotFoundError(err) {
+			if !isPostgresNotFoundError(err) {
 				c.Logger.Error("Failed to extract issuer keys from DB")
-				return nil, err
-			} else {
-				panic("Postgres encountered temporary error")
+				temporary = true
 			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
@@ -466,14 +470,17 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
-func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
+func (c *Server) FetchAllIssuers() (*[]Issuer, *utils.ProcessingError) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get("all"); found {
 			return cached.(*[]Issuer), nil
 		}
 	}
 
-	var err error
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
 	err = c.db.Select(
@@ -483,11 +490,12 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 		ORDER BY expires_at DESC NULLS LAST, created_at DESC`)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
-		if isPostgresNotFoundError(err) {
-			return nil, err
+		if !isPostgresNotFoundError(err) {
+			temporary = true
 		} else {
 			panic("Postgres encountered temporary error")
 		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	issuers := []Issuer{}
@@ -507,19 +515,18 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			if isPostgresNotFoundError(err) {
-				c.Logger.Error("Failed to extract issuer keys from DB")
-				return nil, err
-			} else {
-				panic("Postgres encountered temporary error")
+			if !isPostgresNotFoundError(err) {
+				c.Logger.Error("Postgres encountered temporary error")
+				temporary = true
 			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}

@@ -2,19 +2,13 @@ package utils
 
 import (
 	"fmt"
-	"time"
-
-	"github.com/segmentio/kafka-go"
 )
 
-// ProcessingError is an error used for Kafka processing that communicates retry data for
-// failures.
+// ProcessingError is an error used to communicate whether an error is temporary.
 type ProcessingError struct {
 	OriginalError  error
 	FailureMessage string
 	Temporary      bool
-	Backoff        time.Duration
-	KafkaMessage   kafka.Message
 }
 
 // Error makes ProcessingError an error
@@ -29,4 +23,12 @@ func (e ProcessingError) Error() string {
 // Cause implements Cause for error
 func (e ProcessingError) Cause() error {
 	return e.OriginalError
+}
+
+func ProcessingErrorFromError(err error, temporary bool) *ProcessingError {
+	return &ProcessingError{
+		OriginalError:  err,
+		FailureMessage: err.Error(),
+		Temporary:      temporary,
+	}
 }

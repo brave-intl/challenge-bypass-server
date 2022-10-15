@@ -11,6 +11,7 @@ import (
 	"github.com/brave-intl/bat-go/libs/handlers"
 	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/go-chi/chi"
 	"github.com/lib/pq"
 	"github.com/pressly/lg"
@@ -62,6 +63,15 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer
 			Message: "Error finding issuer",
 			Code:    500,
 		}
+	}
+
+	return &(*issuer)[0], nil
+}
+
+func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*Issuer, *utils.ProcessingError) {
+	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+	if err != nil {
+		return nil, err
 	}
 
 	return &(*issuer)[0], nil

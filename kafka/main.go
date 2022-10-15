@@ -3,7 +3,7 @@ package kafka
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"os"
 	"strings"
@@ -11,7 +11,6 @@ import (
 
 	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
-	"github.com/brave-intl/challenge-bypass-server/utils"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
@@ -26,7 +25,7 @@ type Processor func(
 	*kafka.Writer,
 	*server.Server,
 	*zerolog.Logger,
-) *utils.ProcessingError
+) error
 
 // ProcessingResult contains a message and the topic to which the message should be
 // emitted
@@ -94,7 +93,12 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	ctx := context.Background()
 	go processMessagesIntoBatchPipeline(ctx, topicMappings, providedServer, reader, batchPipeline, logger)
 	for {
-		readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
+		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
+		if err != nil {
+			// If readAndCommitBatchPipelineResults returns an error.
+			close(batchPipeline)
+			return err
+		}
 	}
 }
 
@@ -109,22 +113,23 @@ func readAndCommitBatchPipelineResults(
 	reader *kafka.Reader,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
-) {
+) error {
 	msgCtx, ok := <-batchPipeline
 	if !ok {
 		logger.Error().Msg("batchPipeline channel closed")
-		panic("batch item error")
+		return errors.New("batch item error")
 	}
 	err := <-msgCtx.errorResult
 	if err != nil {
 		logger.Error().Msg("temporary failure encountered")
-		panic("temporary failure encountered")
+		return errors.New("temporary failure encountered")
 	}
 	logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
 		logger.Error().Err(err).Msg("failed to commit")
-		panic("failed to commit")
+		return errors.New("failed to commit")
 	}
+	return nil
 }
 
 // processMessagesIntoBatchPipeline fetches messages from Kafka indefinitely, pushes a
@@ -168,6 +173,9 @@ func processMessagesIntoBatchPipeline(
 			errorResult: make(chan error),
 			msg:         msg,
 		}
+		// If batchPipeline has been closed by an error in readAndCommitBatchPipelineResults,
+		// this write will panic, which is desired behavior, as the rest of the context
+		// will also have died and will be restarted from kafka/main.go
 		batchPipeline <- msgCtx
 		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
 		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
@@ -230,40 +238,6 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 	})
 	logger.Trace().Msgf("Reader create with subscription")
 	return reader
-}
-
-// MayEmitIfPermanent attempts to emit and error message to Kafka if the error is not
-// temporary. It logs, but returns nothing on failure.
-func MayEmitIfPermanent(
-	processingResult *ProcessingResult,
-	errorResult *utils.ProcessingError,
-	producer *kafka.Writer,
-	log *zerolog.Logger,
-) {
-	if !errorResult.Temporary {
-		err := Emit(producer, processingResult.Message, log)
-		if err != nil {
-			message := fmt.Sprintf(
-				"request %s: failed to emit results to topic %s",
-				processingResult.RequestID,
-				processingResult.ResultProducer.Topic,
-			)
-			log.Error().Err(err).Msgf(message)
-		}
-	}
-}
-
-// NilIfPermanent returns the provided ProcessingError if it is not in a settled state.
-// Otherwise, it returns nil. This is used to allow the Kafka module to terminate processing
-// if there is a temporary error and ignore successes and permanent failures.
-func NilIfPermanent(errorResult *utils.ProcessingError) *utils.ProcessingError {
-	if errorResult == nil {
-		return nil
-	}
-	if errorResult.Temporary {
-		return errorResult
-	}
-	return nil
 }
 
 // Emit sends a message over the Kafka interface.

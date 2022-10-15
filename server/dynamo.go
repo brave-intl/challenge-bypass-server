@@ -4,12 +4,14 @@ import (
 	"os"
 	"time"
 
+	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr" // nolint
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/google/uuid"
 )
 
@@ -155,11 +157,12 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // CheckRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
-func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
+func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, *utils.ProcessingError) {
+	var temporary = false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
-		return nil, UnknownEquivalence, err
+		return nil, UnknownEquivalence, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	id := uuid.NewSHA1(*issuer.ID, preimageTxt)
@@ -184,5 +187,18 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 		}
 		return &redemption, IDEquivalence, nil
 	}
-	return &redemption, NoEquivalence, nil
+	var ok bool
+	err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException)
+	if ok {
+		temporary = true
+	}
+	err, ok = err.(*awsDynamoTypes.RequestLimitExceeded)
+	if ok {
+		temporary = true
+	}
+	err, ok = err.(*awsDynamoTypes.InternalServerError)
+	if ok {
+		temporary = true
+	}
+	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, temporary)
 }
