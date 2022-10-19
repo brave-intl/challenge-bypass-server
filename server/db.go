@@ -797,9 +797,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		err      error
 	)
 
+	logger.Debug("checking if v3")
 	if issuer.Version == 3 {
 		// get the duration from the issuer
 		if issuer.Duration != nil {
+			logger.Debug("making sure duration is not nil")
 			duration, err = timeutils.ParseDuration(*issuer.Duration)
 			if err != nil {
 				return fmt.Errorf("failed to parse issuer duration: %w", err)
@@ -828,6 +830,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		start = &tmp
 		i = len(issuer.Keys)
 	}
+	logger.Debug("about to make the issuer keys")
 
 	valueFmtStr := ""
 
@@ -865,6 +868,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			tx.Rollback()
 			return err
 		}
+		logger.Infof("iteration key pubkey: %+v", pubKeyTxt)
 
 		tmpStart := *start
 		tmpEnd := *end

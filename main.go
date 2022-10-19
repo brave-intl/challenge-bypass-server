@@ -25,6 +25,7 @@ func main() {
 	if os.Getenv("ENV") != "production" {
 		zerolog.SetGlobalLevel(zerolog.TraceLevel)
 	}
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 
 	srv := *server.DefaultServer
 
