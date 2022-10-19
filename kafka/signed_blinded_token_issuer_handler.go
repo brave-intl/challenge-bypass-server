@@ -122,7 +122,7 @@ OUTER:
 			// Calculate the number of tokens per signing key.
 			// Given the mod check this should be a multiple of the total tokens in the request.
 			var numT = len(request.Blinded_tokens) / (issuer.Buffer + issuer.Overlap)
-			for i := 0; i > len(blindedTokens); i += numT {
+			for i := 0; i < len(blindedTokens); i += numT {
 
 				var (
 					blindedTokensSlice []*crypto.BlindedToken
