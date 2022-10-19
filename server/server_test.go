@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
+
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 
 	"github.com/brave-intl/bat-go/libs/middleware"
@@ -235,6 +237,78 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
+}
+
+func (suite *ServerTestSuite) TestRedeemV3() {
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   test.RandomString(),
+		IssuerCohort: 1,
+		MaxTokens:    1,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       1,
+		Overlap:      1,
+		Duration:     ptr.FromString("PT10S"),
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	time.Sleep(30 * time.Second)
+
+	err = suite.srv.rotateIssuersV3()
+	suite.Require().NoError(err)
+
+	//issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	//fmt.Println(err)
+	//suite.Require().NoError(err)
+	//
+	//// sign some tokens
+	//
+	//data := blindedTokenRedeemRequest{}
+	//
+	//payload, err := json.Marshal(data)
+	//suite.Require().NoError(err)
+	//
+	//server := httptest.NewServer(suite.handler)
+	//defer server.Close()
+	//
+	//url := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, *issuerKey.Keys[0].PublicKey)
+	//
+	//response, err := suite.request(http.MethodPost, url, bytes.NewBuffer(payload))
+	//suite.Require().NoError(err)
+	//
+	//suite.Require().Equal(http.StatusOK, response.Status)
+}
+
+func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   test.RandomString(),
+		IssuerCohort: 1,
+		MaxTokens:    5,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       4,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"),
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	time.Sleep(2 * time.Second)
+
+	rows, err := suite.srv.deleteIssuerKeys("PT1S")
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(1, rows)
+}
+
+func (suite *ServerTestSuite) TestRunRotate() {
+	err := suite.srv.rotateIssuersV3()
+	suite.Require().NoError(err)
 }
 
 func (suite *ServerTestSuite) request(method string, URL string, payload io.Reader) (*http.Response, error) {

@@ -26,12 +26,16 @@ func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server
 		issuerError   = 2
 	)
 
+	log.Debug().Msg("starting blinded token processor")
+
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("request %s: failed avro deserialization: %w", blindedTokenRequestSet.Request_id, err)
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
+
+	logger.Debug().Msg("processing blinded token request for request_id")
 
 	var blindedTokenResults []avroSchema.SigningResultV2
 	if len(blindedTokenRequestSet.Data) > 1 {
@@ -273,6 +277,8 @@ OUTER:
 		return fmt.Errorf("request %s: failed to serialize result set: %s: %w",
 			blindedTokenRequestSet.Request_id, resultSetBuffer.String(), err)
 	}
+
+	logger.Debug().Msg("ending blinded token request processor loop")
 
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
