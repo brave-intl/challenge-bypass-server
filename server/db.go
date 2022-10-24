@@ -678,18 +678,16 @@ func (c *Server) rotateIssuersV3() error {
 	err = tx.Select(
 		&fetchedIssuers,
 		`
-			select
-				i.issuer_id, i.issuer_type, i.issuer_cohort, i.max_tokens, i.version,
-				i.buffer, i.valid_from, i.last_rotated_at, i.expires_at, i.duration,
-				i.created_at
-			from
-				v3_issuers i
-				join v3_issuer_keys ik on (ik.issuer_id = i.issuer_id)
-			where
-				i.version = 3
-				and i.expires_at is not null and i.expires_at < now()
-				and greatest(ik.end_at) < now() + i.buffer * i.duration::interval
-			for update skip locked
+		select
+			i.issuer_id, i.issuer_type, i.issuer_cohort, i.max_tokens, i.version,i.buffer, i.valid_from, i.last_rotated_at, i.expires_at, i.duration,i.created_at
+		from
+			v3_issuers i
+		where
+			i.version = 3 and
+			i.expires_at is not null and
+			i.expires_at < now()
+			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now() + i.buffer * i.duration::interval
+		for update skip locked
 		`,
 	)
 	if err != nil {
