@@ -303,7 +303,7 @@ func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
 	rows, err := suite.srv.deleteIssuerKeys("PT1S")
 	suite.Require().NoError(err)
 
-	suite.Assert().Equal(1, rows)
+	suite.Assert().Equal(int64(1), rows)
 }
 
 func (suite *ServerTestSuite) TestRunRotate() {
