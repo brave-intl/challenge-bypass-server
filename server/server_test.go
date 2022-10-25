@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
@@ -240,9 +241,10 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 }
 
 func (suite *ServerTestSuite) TestRedeemV3() {
+	var issuerType = test.RandomString()
 	issuer := Issuer{
 		Version:      3,
-		IssuerType:   test.RandomString(),
+		IssuerType:   issuerType,
 		IssuerCohort: 1,
 		MaxTokens:    1,
 		ExpiresAt:    time.Now().Add(24 * time.Hour),
@@ -255,31 +257,42 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	err := suite.srv.createV3Issuer(issuer)
 	suite.Require().NoError(err)
 
-	time.Sleep(30 * time.Second)
-
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
 
-	//issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
-	//fmt.Println(err)
-	//suite.Require().NoError(err)
-	//
-	//// sign some tokens
-	//
-	//data := blindedTokenRedeemRequest{}
-	//
-	//payload, err := json.Marshal(data)
-	//suite.Require().NoError(err)
-	//
-	//server := httptest.NewServer(suite.handler)
-	//defer server.Close()
-	//
-	//url := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, *issuerKey.Keys[0].PublicKey)
-	//
-	//response, err := suite.request(http.MethodPost, url, bytes.NewBuffer(payload))
-	//suite.Require().NoError(err)
-	//
-	//suite.Require().Equal(http.StatusOK, response.Status)
+	issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+
+	tokens := make([]*crypto.Token, 1)
+	token, err := crypto.RandomToken()
+	suite.Require().NoError(err, "Must be able to generate random token")
+
+	blindedToken := token.Blind()
+	suite.Require().NoError(err, "Must be able to blind token")
+
+	tokens[0] = token
+
+	var blindedTokensSlice = []*crypto.BlindedToken{
+		blindedToken,
+	}
+
+	// sign some tokens
+	signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, issuerKey.Keys[0].SigningKey)
+
+	unblindedTokens, err := DLEQProof.VerifyAndUnblind(tokens, blindedTokensSlice, signedTokens, issuerKey.Keys[0].SigningKey.PublicKey())
+
+	msg := "test message"
+	preimageText, sigText := suite.prepareRedemption(unblindedTokens[0], msg)
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	payload := fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
+	redeemURL := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, issuerType)
+
+	response, err := suite.request(http.MethodPost, redeemURL, bytes.NewBuffer([]byte(payload)))
+	suite.Require().NoError(err)
+
+	suite.Require().Equal(http.StatusOK, response.Status)
 }
 
 func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
