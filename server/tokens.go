@@ -243,7 +243,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 
 		if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload,
 			[]*crypto.SigningKey{signingKey}); err != nil {
-			c.Logger.WithError(err).Error("error verifying token")
+			c.Logger.Error("error verifying token")
 			return &handlers.AppError{
 				Message: "Could not verify that token redemption is valid",
 				Code:    http.StatusBadRequest,
@@ -251,7 +251,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 		}
 
 		if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload); err != nil {
-			c.Logger.WithError(err).Error("error redeeming token")
+			c.Logger.Error("error redeeming token")
 			if errors.Is(err, errDuplicateRedemption) {
 				return &handlers.AppError{
 					Message: err.Error(),
