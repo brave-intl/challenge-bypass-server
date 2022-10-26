@@ -718,9 +718,9 @@ func (c *Server) rotateIssuersV3() error {
 	return nil
 }
 
-// deleteIssuerKeys deletes issuers keys that have ended more than the duration ago.
+// deleteIssuerKeys deletes v3 issuers keys that have ended more than the duration ago.
 func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
-	result, err := c.db.Exec(`delete from v3_issuer_keys where end_at < now() - $1::interval`, duration)
+	result, err := c.db.Exec(`delete from v3_issuer_keys where issuer_id in (select issuer_id from v3_issuers where version = 3) and end_at < now() - $1::interval`, duration)
 	if err != nil {
 		return 0, fmt.Errorf("error deleting v3 issuer keys: %w", err)
 	}
