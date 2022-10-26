@@ -276,9 +276,9 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	}
 
 	// sign some tokens
-	signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, issuerKey.Keys[0].SigningKey)
+	signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, issuerKey.Keys[1].SigningKey)
 
-	unblindedTokens, err := DLEQProof.VerifyAndUnblind(tokens, blindedTokensSlice, signedTokens, issuerKey.Keys[0].SigningKey.PublicKey())
+	unblindedTokens, err := DLEQProof.VerifyAndUnblind(tokens, blindedTokensSlice, signedTokens, issuerKey.Keys[1].SigningKey.PublicKey())
 
 	msg := "test message"
 	preimageText, sigText := suite.prepareRedemption(unblindedTokens[0], msg)
@@ -292,7 +292,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	response, err := suite.request(http.MethodPost, redeemURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err)
 
-	suite.Require().Equal(http.StatusOK, response.Status)
+	suite.Require().Equal(http.StatusOK, response.StatusCode)
 }
 
 func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
