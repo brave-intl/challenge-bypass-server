@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -118,7 +119,7 @@ type RedemptionV2 struct {
 	TTL       int64     `json:"TTL"`
 }
 
-// CacheInterface cach functions
+// CacheInterface cache functions
 type CacheInterface interface {
 	Get(k string) (interface{}, bool)
 	Delete(k string)
@@ -397,6 +398,56 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	return &issuers, nil
 }
 
+func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
+	if c.caches != nil {
+		if cached, found := c.caches["issuer"].Get(issuerType); found {
+			// TODO: check this
+			return cached.(*Issuer), nil
+		}
+	}
+
+	var issuerV3 issuer
+	err := c.db.GetContext(ctx, &issuerV3,
+		`SELECT *
+		FROM v3_issuers
+		WHERE issuer_type=$1
+		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType)
+	if err != nil {
+		return nil, err
+	}
+
+	convertedIssuer, err := c.convertDBIssuer(issuerV3)
+	if err != nil {
+		return nil, err
+	}
+
+	if convertedIssuer.Keys == nil {
+		convertedIssuer.Keys = []IssuerKeys{}
+	}
+
+	var fetchIssuerKeys []issuerKeys
+	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 
+                             ORDER BY end_at DESC NULLS LAST, start_at DESC`, issuerV3.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range fetchIssuerKeys {
+		k, err := c.convertDBIssuerKeys(v)
+		if err != nil {
+			c.Logger.Error("Failed to convert issuer keys from DB")
+			return nil, err
+		}
+		convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
+	}
+
+	if c.caches != nil {
+		c.caches["issuer"].SetDefault(issuerType, issuerV3)
+	}
+
+	return convertedIssuer, nil
+}
+
 func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
@@ -564,14 +615,14 @@ func (c *Server) rotateIssuers() error {
 		err = tx.Commit()
 	}()
 
-	fetchedIssuers := []issuer{}
+	var fetchedIssuers []issuer
 	err = tx.Select(
 		&fetchedIssuers,
 		`SELECT * FROM v3_issuers
 			WHERE expires_at IS NOT NULL
 			AND last_rotated_at < NOW() - $1 * INTERVAL '1 day'
 			AND expires_at < NOW() + $1 * INTERVAL '1 day'
-			AND version >= 2
+			AND version <= 2
 		FOR UPDATE SKIP LOCKED`, cfg.DefaultDaysBeforeExpiry,
 	)
 	if err != nil {
@@ -619,26 +670,24 @@ func (c *Server) rotateIssuersV3() error {
 
 	fetchedIssuers := []issuer{}
 
-	// we need to get all of the v3 issuers that
-	// 1. are not expired
+	// we need to get all the v3 issuers that are
+	// 1. not expired
 	// 2. now is after valid_from
 	// 3. have max(issuer_v3.end_at) < buffer
 
 	err = tx.Select(
 		&fetchedIssuers,
 		`
-			select
-				i.issuer_id, i.issuer_type, i.issuer_cohort, i.max_tokens, i.version,
-				i.buffer, i.valid_from, i.last_rotated_at, i.expires_at, i.duration,
-				i.created_at
-			from
-				v3_issuers i
-				join v3_issuer_keys ik on (ik.issuer_id = i.issuer_id)
-			where
-				i.version = 3
-				and i.expires_at is not null and i.expires_at < now()
-				and greatest(ik.end_at) < now() + i.buffer * i.duration::interval
-			for update skip locked
+		select
+			i.issuer_id, i.issuer_type, i.issuer_cohort, i.max_tokens, i.version,i.buffer, i.valid_from, i.last_rotated_at, i.expires_at, i.duration,i.created_at
+		from
+			v3_issuers i
+		where
+			i.version = 3 and
+			i.expires_at is not null and
+			i.expires_at < now()
+			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now() + i.buffer * i.duration::interval
+		for update skip locked
 		`,
 	)
 	if err != nil {
@@ -667,6 +716,21 @@ func (c *Server) rotateIssuersV3() error {
 	}
 
 	return nil
+}
+
+// deleteIssuerKeys deletes v3 issuers keys that have ended more than the duration ago.
+func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
+	result, err := c.db.Exec(`delete from v3_issuer_keys where issuer_id in (select issuer_id from v3_issuers where version = 3) and end_at < now() - $1::interval`, duration)
+	if err != nil {
+		return 0, fmt.Errorf("error deleting v3 issuer keys: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("error deleting v3 issuer keys row affected: %w", err)
+	}
+
+	return rows, nil
 }
 
 // createIssuer - creation of a v3 issuer
@@ -731,9 +795,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		err      error
 	)
 
+	logger.Debug("checking if v3")
 	if issuer.Version == 3 {
 		// get the duration from the issuer
 		if issuer.Duration != nil {
+			logger.Debug("making sure duration is not nil")
 			duration, err = timeutils.ParseDuration(*issuer.Duration)
 			if err != nil {
 				return fmt.Errorf("failed to parse issuer duration: %w", err)
@@ -762,13 +828,14 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		start = &tmp
 		i = len(issuer.Keys)
 	}
+	logger.Debug("about to make the issuer keys")
 
 	valueFmtStr := ""
 
 	var keys []issuerKeys
 	var position = 0
-	// for i in buffer, create signing keys for each
-	for ; i < issuer.Buffer; i++ {
+	// Create signing keys for buffer and overlap
+	for ; i < issuer.Buffer+issuer.Overlap; i++ {
 		end := new(time.Time)
 		if duration != nil {
 			// start/end, increment every iteration
@@ -799,6 +866,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			tx.Rollback()
 			return err
 		}
+		logger.Infof("iteration key pubkey: %+v", pubKeyTxt)
 
 		tmpStart := *start
 		tmpEnd := *end

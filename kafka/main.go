@@ -96,9 +96,11 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 					failureCount++
 					continue
 				}
-				logger.Info().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-				logger.Info().Msgf("Reader Stats: %#v", consumer.Stats())
+				logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+				logger.Debug().Msgf("Reader Stats: %#v", consumer.Stats())
+				logger.Debug().Msgf("topicMappings: %+v", topicMappings)
 				for _, topicMapping := range topicMappings {
+					logger.Debug().Msgf("topic: %+v, topicMapping: %+v", msg.Topic, topicMapping.Topic)
 					if msg.Topic == topicMapping.Topic {
 						go func(
 							msg kafka.Message,
