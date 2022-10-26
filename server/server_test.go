@@ -295,6 +295,83 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	suite.Require().Equal(http.StatusOK, response.StatusCode)
 }
 
+func (suite *ServerTestSuite) TestCreateIssuerV3() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	request := issuerV3CreateRequest{
+		Name:      test.RandomString(),
+		Cohort:    3,
+		MaxTokens: 10,
+		ValidFrom: ptr.FromTime(time.Now()),
+		Duration:  "P1M",
+		Buffer:    10,
+		Overlap:   2,
+	}
+
+	payload, err := json.Marshal(request)
+	suite.Require().NoError(err)
+
+	createIssuerURL := fmt.Sprintf("%s/v3/issuer/", server.URL)
+	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer(payload))
+
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	actualIssuer, err := suite.srv.fetchIssuerByType(ctx, request.Name)
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(request.Name, actualIssuer.IssuerType)
+	suite.Assert().Equal(request.Cohort, actualIssuer.IssuerCohort)
+	suite.Assert().Equal(request.MaxTokens, actualIssuer.MaxTokens)
+	suite.Assert().Equal(request.MaxTokens, actualIssuer.MaxTokens)
+	suite.Assert().WithinDuration(*request.ValidFrom, *actualIssuer.ValidFrom, 100*time.Millisecond)
+	suite.Assert().Equal(request.Duration, *actualIssuer.Duration)
+	suite.Assert().Equal(request.Buffer, actualIssuer.Buffer)
+	suite.Assert().Equal(request.Overlap, actualIssuer.Overlap)
+}
+
+func (suite *ServerTestSuite) TestGetIssuerV2() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	var issuerType = test.RandomString()
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   issuerType,
+		IssuerCohort: 1,
+		MaxTokens:    1,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       1,
+		Overlap:      1,
+		Duration:     ptr.FromString("PT10S"),
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	request := issuerFetchRequestV2{
+		issuer.IssuerCohort,
+	}
+
+	payload, err := json.Marshal(request)
+	suite.Require().NoError(err)
+
+	url := fmt.Sprintf("%s/v2/issuer/%s", server.URL, issuer.IssuerType)
+	resp, err := suite.request(http.MethodGet, url, bytes.NewBuffer(payload))
+	suite.Require().NoError(err)
+
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	var actual issuerResponse
+	err = json.NewDecoder(resp.Body).Decode(&actual)
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(issuer.IssuerType, actual.Name)
+}
+
 func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
 	issuer := Issuer{
 		Version:      3,
