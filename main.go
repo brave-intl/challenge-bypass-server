@@ -29,6 +29,7 @@ func main() {
 			zerolog.SetGlobalLevel(zerolog.TraceLevel)
 		}
 	}
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 
 	srv := *server.DefaultServer
 

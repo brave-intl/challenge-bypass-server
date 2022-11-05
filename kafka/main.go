@@ -179,9 +179,11 @@ func processMessagesIntoBatchPipeline(
 		batchPipeline <- msgCtx
 		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
 		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
+		logger.Debug().Msgf("topicMappings: %+v", topicMappings)
 		// Check if any of the existing topicMappings match the fetched message
 		matchFound := false
 		for _, topicMapping := range topicMappings {
+			logger.Debug().Msgf("topic: %+v, topicMapping: %+v", msg.Topic, topicMapping.Topic)
 			if msg.Topic == topicMapping.Topic {
 				matchFound = true
 				go processMessageIntoErrorResultChannel(

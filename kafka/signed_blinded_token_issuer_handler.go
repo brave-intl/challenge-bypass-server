@@ -39,6 +39,10 @@ func SignedBlindedTokenIssuerHandler(
 		issuerError   = 2
 	)
 	data := msg.Value
+
+	log.Debug().Msg("starting blinded token processor")
+	log.Info().Msg("deserialize signing request")
+
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf(
@@ -61,6 +65,8 @@ func SignedBlindedTokenIssuerHandler(
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
+
+	logger.Debug().Msg("processing blinded token request for request_id")
 
 	var blindedTokenResults []avroSchema.SigningResultV2
 	if len(blindedTokenRequestSet.Data) > 1 {
@@ -87,6 +93,7 @@ func SignedBlindedTokenIssuerHandler(
 
 OUTER:
 	for _, request := range blindedTokenRequestSet.Data {
+		logger.Debug().Msgf("processing request: %+v", request)
 		if request.Blinded_tokens == nil {
 			logger.Error().Err(errors.New("blinded tokens is empty")).Msg("")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -99,6 +106,7 @@ OUTER:
 		}
 
 		// check to see if issuer cohort will overflow
+		logger.Debug().Msgf("checking request cohort: %+v", request)
 		if request.Issuer_cohort > math.MaxInt16 || request.Issuer_cohort < math.MinInt16 {
 			logger.Error().Msg("invalid cohort")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -110,6 +118,7 @@ OUTER:
 			continue OUTER
 		}
 
+		logger.Debug().Msgf("getting latest issuer: %+v - %+v", request.Issuer_type, request.Issuer_cohort)
 		issuer, err := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if err != nil {
 			logger.Error().Err(err).Msg("error retrieving issuer")
@@ -125,6 +134,7 @@ OUTER:
 			continue OUTER
 		}
 
+		logger.Debug().Msgf("checking if issuer is version 3: %+v", issuer)
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
 			if len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap) != 0 {
@@ -139,10 +149,12 @@ OUTER:
 			}
 		}
 
+		logger.Debug().Msgf("checking blinded tokens: %+v", request.Blinded_tokens)
 		var blindedTokens []*crypto.BlindedToken
 		// Iterate over the provided tokens and create data structure from them,
 		// grouping into a slice for approval
 		for _, stringBlindedToken := range request.Blinded_tokens {
+			logger.Debug().Msgf("blinded token: %+v", stringBlindedToken)
 			blindedToken := crypto.BlindedToken{}
 			err := blindedToken.UnmarshalText([]byte(stringBlindedToken))
 			if err != nil {
@@ -159,12 +171,17 @@ OUTER:
 			blindedTokens = append(blindedTokens, &blindedToken)
 		}
 
+		logger.Debug().Msgf("checking if issuer is time aware: %+v - %+v", issuer.Version, issuer.Buffer)
 		// if the issuer is time aware, we need to approve tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
-			// number of tokens per signing key
+			// Calculate the number of tokens per signing key.
+			// Given the mod check this should be a multiple of the total tokens in the request.
 			var numT = len(request.Blinded_tokens) / (issuer.Buffer + issuer.Overlap)
-			// sign tokens with all the keys in buffer+overlap
-			for i := issuer.Buffer + issuer.Overlap; i > 0; i-- {
+			count := 0
+			for i := 0; i < len(blindedTokens); i += numT {
+				count++
+
+				logger.Debug().Msgf("version 3 issuer: %+v , numT: %+v", issuer, numT)
 				var (
 					blindedTokensSlice []*crypto.BlindedToken
 					signingKey         *crypto.SigningKey
@@ -172,11 +189,20 @@ OUTER:
 					validTo            string
 				)
 
-				signingKey = issuer.Keys[len(issuer.Keys)-i].SigningKey
-				validFrom = issuer.Keys[len(issuer.Keys)-i].StartAt.Format(time.RFC3339)
-				validTo = issuer.Keys[len(issuer.Keys)-i].EndAt.Format(time.RFC3339)
+				signingKey = issuer.Keys[len(issuer.Keys)-count].SigningKey
+				validFrom = issuer.Keys[len(issuer.Keys)-count].StartAt.Format(time.RFC3339)
+				validTo = issuer.Keys[len(issuer.Keys)-count].EndAt.Format(time.RFC3339)
 
-				blindedTokensSlice = blindedTokens[(i - numT):i]
+				// Calculate the next step size to retrieve. Given previous checks end should never
+				// be greater than the total number of tokens.
+				end := i + numT
+				if end > len(blindedTokens) {
+					return fmt.Errorf("request %s: error invalid token step length",
+						blindedTokenRequestSet.Request_id)
+				}
+
+				// Get the next group of tokens and approve
+				blindedTokensSlice = blindedTokens[i:end]
 				signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, signingKey)
 				if err != nil {
 					// @TODO: If one token fails they will all fail. Assess this behavior
@@ -190,6 +216,8 @@ OUTER:
 					})
 					break OUTER
 				}
+
+				logger.Debug().Msg("marshalling proof")
 
 				marshalledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
@@ -253,6 +281,7 @@ OUTER:
 					marshalledSignedTokens = append(marshalledSignedTokens, string(marshalledToken))
 				}
 
+				logger.Debug().Msg("getting public key")
 				publicKey := signingKey.PublicKey()
 				marshalledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
@@ -290,6 +319,7 @@ OUTER:
 				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
 			}
 
+			logger.Debug().Msgf("approving tokens: %+v", blindedTokens)
 			// @TODO: If one token fails they will all fail. Assess this behavior
 			signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokens, signingKey)
 			if err != nil {
@@ -402,6 +432,7 @@ OUTER:
 		Request_id: blindedTokenRequestSet.Request_id,
 		Data:       blindedTokenResults,
 	}
+	logger.Debug().Msgf("resultSet: %+v", resultSet)
 
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
@@ -426,16 +457,20 @@ OUTER:
 		return nil
 	}
 
+	logger.Debug().Msg("ending blinded token request processor loop")
+	logger.Debug().Msgf("about to emit: %+v", resultSet)
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
 		message := fmt.Sprintf(
-			"request %s: failed to emit results to topic %s",
+			"request %s: failed to emit to topic %s with result: %w",
 			resultSet.Request_id,
 			producer.Topic,
+			resultSet,
 		)
 		log.Error().Err(err).Msgf(message)
 		return err
 	}
+	logger.Debug().Msgf("emitted: %+v", resultSet)
 
 	return nil
 }
