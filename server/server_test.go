@@ -240,59 +240,51 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 }
 
-func (suite *ServerTestSuite) TestRedeemV3() {
+type v3Redemption struct {
+	validFrom       time.Time
+	validTo         time.Time
+	unblindedTokens []*crypto.UnblindedToken
+}
+
+func (suite *ServerTestSuite) TestRotateTimeAwareIsuser() {
+	var buffer = 3
 	var issuerType = test.RandomString()
 	issuer := Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
-		MaxTokens:    1,
+		MaxTokens:    buffer,
 		ExpiresAt:    time.Now().Add(24 * time.Hour),
-		Buffer:       1,
-		Overlap:      1,
-		Duration:     ptr.FromString("PT10S"),
+		Buffer:       buffer,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
 		ValidFrom:    ptr.FromTime(time.Now()),
 	}
 
 	err := suite.srv.createV3Issuer(issuer)
 	suite.Require().NoError(err)
 
+	// wait a few intervals after creation and check number of signing keys left
+	time.Sleep(2 * time.Second)
+	myIssuer, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+
+	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
 
-	issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	myIssuer, err = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
 
-	tokens := make([]*crypto.Token, 1)
-	token, err := crypto.RandomToken()
-	suite.Require().NoError(err, "Must be able to generate random token")
-
-	blindedToken := token.Blind()
-	suite.Require().NoError(err, "Must be able to blind token")
-
-	tokens[0] = token
-
-	var blindedTokensSlice = []*crypto.BlindedToken{
-		blindedToken,
-	}
-
-	// sign some tokens
-	signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, issuerKey.Keys[1].SigningKey)
-
-	unblindedTokens, err := DLEQProof.VerifyAndUnblind(tokens, blindedTokensSlice, signedTokens, issuerKey.Keys[1].SigningKey.PublicKey())
-
-	msg := "test message"
-	preimageText, sigText := suite.prepareRedemption(unblindedTokens[0], msg)
-
-	server := httptest.NewServer(suite.handler)
-	defer server.Close()
-
-	payload := fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
-	redeemURL := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, issuerType)
-
-	response, err := suite.request(http.MethodPost, redeemURL, bytes.NewBuffer([]byte(payload)))
+	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
+	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
+	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now still
 
-	suite.Require().Equal(http.StatusOK, response.StatusCode)
+	// wait a few intervals after creation and check number of signing keys left
+	time.Sleep(2 * time.Second)
+	myIssuer, err = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
 }
 
 func (suite *ServerTestSuite) TestCreateIssuerV3() {
@@ -602,4 +594,96 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 	suite.Require().NoError(err, "Batch verification and token unblinding must succeed")
 
 	return unblindedTokens
+}
+
+func (suite *ServerTestSuite) TestRedeemV3() {
+	var buffer = 10
+	var redemptions = []v3Redemption{}
+	var issuerType = test.RandomString()
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   issuerType,
+		IssuerCohort: 1,
+		MaxTokens:    buffer,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       buffer,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	//err = suite.srv.rotateIssuersV3()
+	//suite.Require().NoError(err)
+
+	issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+
+	tokens := make([]*crypto.Token, buffer)
+	blindedTokensSlice := make([]*crypto.BlindedToken, buffer)
+
+	for i := 0; i < buffer; i++ {
+		token, err := crypto.RandomToken()
+		suite.Require().NoError(err, "Must be able to generate random token")
+
+		blindedToken := token.Blind()
+		suite.Require().NoError(err, "Must be able to blind token")
+
+		tokens[i] = token
+		blindedTokensSlice[i] = blindedToken
+	}
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+	var count = 0
+	for i := 0; i < buffer; i++ {
+		count++
+		var (
+			signingKey *crypto.SigningKey
+			validFrom  *time.Time
+			validTo    *time.Time
+		)
+
+		signingKey = issuerKey.Keys[len(issuerKey.Keys)-count].SigningKey
+		validFrom = issuerKey.Keys[len(issuerKey.Keys)-count].StartAt
+		validTo = issuerKey.Keys[len(issuerKey.Keys)-count].EndAt
+
+		// sign some tokens
+		signedTokens, DLEQProof, err := btd.ApproveTokens(
+			[]*crypto.BlindedToken{blindedTokensSlice[i]},
+			signingKey)
+		suite.Require().NoError(err, "Must be able to approve token")
+
+		unblindedTokens, err := DLEQProof.VerifyAndUnblind(
+			[]*crypto.Token{tokens[i]}, []*crypto.BlindedToken{blindedTokensSlice[i]},
+			signedTokens, signingKey.PublicKey())
+
+		suite.Require().NoError(err, "Must be able to verify and unblind")
+
+		redemptions = append(redemptions, v3Redemption{
+			validFrom: *validFrom, validTo: *validTo, unblindedTokens: unblindedTokens,
+		})
+	}
+
+	for i := 0; i < buffer; i++ {
+		var unblindedToken *crypto.UnblindedToken
+		for _, v := range redemptions {
+
+			if v.validFrom.Before(time.Now()) && v.validTo.After(time.Now()) {
+				unblindedToken = v.unblindedTokens[0]
+			}
+		}
+		msg := "test message"
+		preimageText, sigText := suite.prepareRedemption(unblindedToken, msg) // only 1 per time interval
+
+		payload := fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
+		redeemURL := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, issuerType)
+
+		response, err := suite.request(http.MethodPost, redeemURL, bytes.NewBuffer([]byte(payload)))
+		suite.Require().NoError(err)
+
+		suite.Require().Equal(http.StatusOK, response.StatusCode)
+		time.Sleep(1 * time.Second) // wait for next interval to start
+	}
 }

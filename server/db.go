@@ -866,7 +866,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			tx.Rollback()
 			return err
 		}
-		logger.Infof("iteration key pubkey: %+v", pubKeyTxt)
+		logger.Infof("iteration key pubkey: %s", string(pubKeyTxt))
 
 		tmpStart := *start
 		tmpEnd := *end
