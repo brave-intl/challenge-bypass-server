@@ -462,7 +462,7 @@ OUTER:
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
 		message := fmt.Sprintf(
-			"request %s: failed to emit to topic %s with result: %w",
+			"request %s: failed to emit to topic %s with result: %v",
 			resultSet.Request_id,
 			producer.Topic,
 			resultSet,
