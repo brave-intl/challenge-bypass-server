@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
-	github.com/aws/aws-sdk-go v1.44.124
+	github.com/aws/aws-sdk-go v1.44.135
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.17.3
 	github.com/brave-intl/bat-go/libs v0.0.0-20220823005459-d3a4d8ccf976
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190717223301-f88d942ddfaf
@@ -60,7 +60,7 @@ require (
 	github.com/throttled/throttled v2.2.5+incompatible // indirect
 	go.uber.org/atomic v1.9.0 // indirect
 	golang.org/x/crypto v0.0.0-20220817201139-bc19a97f63c8 // indirect
-	golang.org/x/sys v0.0.0-20220728004956-3c1f35247d10 // indirect
+	golang.org/x/sys v0.1.0 // indirect
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
