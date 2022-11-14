@@ -16,7 +16,7 @@ import (
 )
 
 /*
- SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
+SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
  tokens provided. If it encounters a permanent error, it emits a permanent result for that
  item. If the error is temporary, an error is returned to indicate that progress cannot be
  made.
@@ -262,7 +262,6 @@ func SignedTokenRedeemHandler(
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
 			if strings.Contains(err.Error(), "Duplicate") {
-
 				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
@@ -410,6 +409,7 @@ func handlePermanentRedemptionError(
 		int32(avroSchema.RedeemResultStatusError),
 		logger,
 	)
-	Emit(producer, processingResult.Message, logger)
-	return
+	if err := Emit(producer, processingResult.Message, logger); err != nil {
+		logger.Error().Err(err).Msg("failed to emit")
+	}
 }

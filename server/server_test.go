@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -46,12 +45,12 @@ func (suite *ServerTestSuite) SetupSuite() {
 
 	suite.srv = &Server{}
 
-	err = suite.srv.InitDbConfig()
+	err = suite.srv.InitDBConfig()
 	suite.Require().NoError(err, "Failed to setup db conn")
 
 	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
 
-	suite.srv.InitDb()
+	suite.srv.InitDB()
 	suite.srv.InitDynamo()
 
 	err = test.SetupDynamodbTables(suite.srv.dynamo)
@@ -77,7 +76,7 @@ func (suite *ServerTestSuite) TestPing() {
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	expected := "."
-	actual, err := ioutil.ReadAll(resp.Body)
+	actual, err := io.ReadAll(resp.Body)
 	suite.Assert().NoError(err, "Reading response body should succeed")
 	suite.Assert().Equal(expected, string(actual), "Message should match")
 }
@@ -135,7 +134,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	var issuerResp blindedTokenRedeemResponse
@@ -157,14 +156,15 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	r, err := suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
 	suite.Require().NoError(err, "failed to expire issuer")
+	defer r.Close()
 	// keys are what rotate now, not the issuer itself
 	issuer, _ = suite.srv.GetLatestIssuer(issuerType, issuerCohort)
 
@@ -176,8 +176,9 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	var signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
 	publicKey = signingKey.PublicKey()
 
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
+	r, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
 	suite.Require().NoError(err, "failed to unexpire issuer")
+	defer r.Close()
 
 	unblindedToken = suite.createToken(server.URL, issuerType, publicKey)
 	preimageText, sigText = suite.prepareRedemption(unblindedToken, msg)
@@ -204,7 +205,7 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	var issuerResp blindedTokenRedeemResponse
@@ -225,15 +226,16 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
 
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	r, err := suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
 	suite.Require().NoError(err, "failed to expire issuer")
+	defer r.Close()
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
@@ -261,6 +263,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	suite.Require().NoError(err)
 
 	issuerKey, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	fmt.Println(err)
 
 	tokens := make([]*crypto.Token, 1)
 	token, err := crypto.RandomToken()
@@ -277,8 +280,10 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 
 	// sign some tokens
 	signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, issuerKey.Keys[1].SigningKey)
+	suite.Require().NoError(err)
 
 	unblindedTokens, err := DLEQProof.VerifyAndUnblind(tokens, blindedTokensSlice, signedTokens, issuerKey.Keys[1].SigningKey.PublicKey())
+	suite.Require().NoError(err)
 
 	msg := "test message"
 	preimageText, sigText := suite.prepareRedemption(unblindedTokens[0], msg)
@@ -316,6 +321,7 @@ func (suite *ServerTestSuite) TestCreateIssuerV3() {
 
 	createIssuerURL := fmt.Sprintf("%s/v3/issuer/", server.URL)
 	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer(payload))
+	suite.Require().NoError(err)
 
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -401,13 +407,13 @@ func (suite *ServerTestSuite) TestRunRotate() {
 	suite.Require().NoError(err)
 }
 
-func (suite *ServerTestSuite) request(method string, URL string, payload io.Reader) (*http.Response, error) {
+func (suite *ServerTestSuite) request(method string, url string, payload io.Reader) (*http.Response, error) {
 	var req *http.Request
 	var err error
 	if payload != nil {
-		req, err = http.NewRequest(method, URL, payload)
+		req, err = http.NewRequest(method, url, payload)
 	} else {
-		req, err = http.NewRequest(method, URL, nil)
+		req, err = http.NewRequest(method, url, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -432,7 +438,7 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, 
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp issuerResponse
@@ -452,7 +458,7 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	suite.Require().NoError(err, "Getting alll Issuers must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp []issuerResponse
@@ -481,7 +487,7 @@ func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issue
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp issuerResponse
@@ -523,7 +529,7 @@ func (suite *ServerTestSuite) createTokens(serverURL string, issuerType string, 
 	suite.Require().NoError(err, "Token signing must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Token signing body read must succeed")
 
 	var decodedResp blindedTokenIssueResponse
@@ -588,7 +594,7 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 	suite.Require().NoError(err, "Token signing must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Token signing body read must succeed")
 
 	var decodedResp blindedTokenIssueResponse

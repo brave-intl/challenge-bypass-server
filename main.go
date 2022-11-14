@@ -34,7 +34,7 @@ func main() {
 	srv := *server.DefaultServer
 
 	flag.StringVar(&configFile, "config", "", "local config file for development (overrides cli options)")
-	flag.StringVar(&srv.DbConfigPath, "db_config", "", "path to the json file with database configuration")
+	flag.StringVar(&srv.DBConfigPath, "db_config", "", "path to the json file with database configuration")
 	flag.IntVar(&srv.ListenPort, "p", 2416, "port to listen on")
 	flag.Parse()
 
@@ -52,7 +52,7 @@ func main() {
 		}
 	}
 
-	err = srv.InitDbConfig()
+	err = srv.InitDBConfig()
 	if err != nil {
 		logger.Panic(err)
 	}
@@ -60,7 +60,7 @@ func main() {
 	zeroLogger.Trace().Msg("Initializing persistence and cron jobs")
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
-	srv.InitDb()
+	srv.InitDB()
 	srv.InitDynamo()
 	// Run the cron job unless it's explicitly disabled.
 	if os.Getenv("CRON_ENABLED") != "false" {
