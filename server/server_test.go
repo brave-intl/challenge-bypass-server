@@ -246,7 +246,7 @@ type v3Redemption struct {
 	unblindedTokens []*crypto.UnblindedToken
 }
 
-func (suite *ServerTestSuite) TestRotateTimeAwareIsuser() {
+func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	var buffer = 3
 	var issuerType = test.RandomString()
 	issuer := Issuer{
@@ -275,6 +275,8 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIsuser() {
 
 	myIssuer, err = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
 	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
+
+	time.Sleep(1)
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
