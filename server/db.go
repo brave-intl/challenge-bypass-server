@@ -295,8 +295,12 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	err = tx.Select(
 		&fetchIssuerKeys,
 		`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1 and end_at > now()
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 		convertedIssuer.ID,
 	)
 	if err != nil {
@@ -346,7 +350,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		`SELECT i.*
 		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
 		WHERE i.issuer_type=$1 AND k.cohort=$2
-		ORDER BY i.expires_at DESC NULLS LAST, i.created_at DESC`, issuerType, issuerCohort)
+		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`, issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +374,12 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1 and end_at > now()
-			ORDER BY end_at ASC NULLS LAST, start_at ASC`,
+			FROM v3_issuer_keys where issuer_id=$1 and
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -426,8 +434,12 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	var fetchIssuerKeys []issuerKeys
-	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 
-                             ORDER BY end_at DESC NULLS LAST, start_at DESC`, issuerV3.ID)
+	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+                             ORDER BY end_at ASC NULLS FIRST, start_at ASC`, issuerV3.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -496,8 +508,12 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -571,8 +587,12 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -709,8 +729,12 @@ func (c *Server) rotateIssuersV3() error {
 			&fetchIssuerKeys,
 			`SELECT *
 			FROM v3_issuer_keys where issuer_id=$1
-			and end_at > now()
-			ORDER BY end_at ASC NULLS LAST, start_at ASC`,
+			and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			issuerDTO.ID,
 		)
 		if err != nil {
