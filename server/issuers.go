@@ -214,7 +214,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		req.ExpiresAt = new(time.Time)
 	}
 
-	if err := c.createV3Issuer(Issuer{
+	if err := c.CreateV3Issuer(Issuer{
 		Version:      3,
 		IssuerType:   req.Name,
 		IssuerCohort: req.Cohort,

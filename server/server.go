@@ -50,9 +50,9 @@ type Server struct {
 	MaxTokens    int            `json:"max_tokens,omitempty"`
 	DbConfigPath string         `json:"db_config_path"`
 	Logger       *logrus.Logger `json:",omitempty"`
-	dynamo       *dynamodb.DynamoDB
+	Dynamo       *dynamodb.DynamoDB
 	dbConfig     DbConfig
-	db           *sqlx.DB
+	Db           *sqlx.DB
 
 	caches map[string]CacheInterface
 }
@@ -131,7 +131,7 @@ func SetupLogger(ctx context.Context) (context.Context, *logrus.Logger) {
 	return ctx, logger
 }
 
-func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (context.Context, *chi.Mux) {
+func (c *Server) SetupRouter(ctx context.Context, logger *logrus.Logger) (context.Context, *chi.Mux) {
 	r := chi.NewRouter()
 	r.Use(chiware.RequestID)
 	r.Use(chiware.Heartbeat("/"))
@@ -162,6 +162,6 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
 	addr := fmt.Sprintf(":%d", c.ListenPort)
-	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx, logger))}
+	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.SetupRouter(ctx, logger))}
 	return srv.ListenAndServe()
 }

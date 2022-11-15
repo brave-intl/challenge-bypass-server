@@ -42,45 +42,45 @@ type DbConfig struct {
 }
 
 type issuer struct {
-	ID                   *uuid.UUID  `db:"issuer_id"`
-	IssuerType           string      `db:"issuer_type"`
-	IssuerCohort         int16       `db:"issuer_cohort"`
-	SigningKey           []byte      `db:"signing_key"`
-	MaxTokens            int         `db:"max_tokens"`
-	CreatedAt            pq.NullTime `db:"created_at"`
-	ExpiresAt            pq.NullTime `db:"expires_at"`
-	RotatedAt            pq.NullTime `db:"last_rotated_at"`
-	Version              int         `db:"version"`
-	ValidFrom            *time.Time  `json:"valid_from" db:"valid_from"`
-	Buffer               int         `json:"buffer" db:"buffer"`
-	DaysOut              int         `json:"days_out" db:"days_out"`
-	Overlap              int         `json:"overlap" db:"overlap"`
-	Duration             *string     `json:"duration" db:"duration"`
-	RedemptionRepository string      `json:"-" db:"redemption_repository"`
+	ID                   *uuid.UUID  `Db:"issuer_id"`
+	IssuerType           string      `Db:"issuer_type"`
+	IssuerCohort         int16       `Db:"issuer_cohort"`
+	SigningKey           []byte      `Db:"signing_key"`
+	MaxTokens            int         `Db:"max_tokens"`
+	CreatedAt            pq.NullTime `Db:"created_at"`
+	ExpiresAt            pq.NullTime `Db:"expires_at"`
+	RotatedAt            pq.NullTime `Db:"last_rotated_at"`
+	Version              int         `Db:"version"`
+	ValidFrom            *time.Time  `json:"valid_from" Db:"valid_from"`
+	Buffer               int         `json:"buffer" Db:"buffer"`
+	DaysOut              int         `json:"days_out" Db:"days_out"`
+	Overlap              int         `json:"overlap" Db:"overlap"`
+	Duration             *string     `json:"duration" Db:"duration"`
+	RedemptionRepository string      `json:"-" Db:"redemption_repository"`
 }
 
 // issuerKeys - an issuer that uses time based keys
 type issuerKeys struct {
-	ID         *uuid.UUID `db:"key_id"`
-	SigningKey []byte     `db:"signing_key"`
-	PublicKey  *string    `db:"public_key"`
-	Cohort     int16      `db:"cohort"`
-	IssuerID   *uuid.UUID `db:"issuer_id"`
-	CreatedAt  *time.Time `db:"created_at"`
-	StartAt    *time.Time `db:"start_at"`
-	EndAt      *time.Time `db:"end_at"`
+	ID         *uuid.UUID `Db:"key_id"`
+	SigningKey []byte     `Db:"signing_key"`
+	PublicKey  *string    `Db:"public_key"`
+	Cohort     int16      `Db:"cohort"`
+	IssuerID   *uuid.UUID `Db:"issuer_id"`
+	CreatedAt  *time.Time `Db:"created_at"`
+	StartAt    *time.Time `Db:"start_at"`
+	EndAt      *time.Time `Db:"end_at"`
 }
 
 // IssuerKeys - an issuer that uses time based keys
 type IssuerKeys struct {
 	ID         *uuid.UUID         `json:"id"`
 	SigningKey *crypto.SigningKey `json:"-"`
-	PublicKey  *string            `json:"public_key" db:"public_key"`
-	Cohort     int16              `json:"cohort" db:"cohort"`
-	IssuerID   *uuid.UUID         `json:"issuer_id" db:"issuer_id"`
-	CreatedAt  *time.Time         `json:"created_at" db:"created_at"`
-	StartAt    *time.Time         `json:"start_at" db:"start_at"`
-	EndAt      *time.Time         `json:"end_at" db:"end_at"`
+	PublicKey  *string            `json:"public_key" Db:"public_key"`
+	Cohort     int16              `json:"cohort" Db:"cohort"`
+	IssuerID   *uuid.UUID         `json:"issuer_id" Db:"issuer_id"`
+	CreatedAt  *time.Time         `json:"created_at" Db:"created_at"`
+	StartAt    *time.Time         `json:"start_at" Db:"start_at"`
+	EndAt      *time.Time         `json:"end_at" Db:"end_at"`
 }
 
 // Issuer of tokens
@@ -103,10 +103,10 @@ type Issuer struct {
 
 // Redemption is a token Redeemed
 type Redemption struct {
-	IssuerType string    `json:"issuerType" db:"issuer_type"`
-	ID         string    `json:"id" db:"id"`
-	Timestamp  time.Time `json:"timestamp" db:"ts"`
-	Payload    string    `json:"payload" db:"payload"`
+	IssuerType string    `json:"issuerType" Db:"issuer_type"`
+	ID         string    `json:"id" Db:"id"`
+	Timestamp  time.Time `json:"timestamp" Db:"ts"`
+	Payload    string    `json:"payload" Db:"payload"`
 }
 
 // RedemptionV2 is a token Redeemed
@@ -147,7 +147,7 @@ func (c *Server) InitDb() {
 		panic(err)
 	}
 	db.SetMaxOpenConns(cfg.MaxConnection)
-	c.db = db
+	c.Db = db
 
 	// Database Telemetry (open connections, etc)
 	// Create a new collector, the name will be used as a label on the metrics
@@ -156,7 +156,7 @@ func (c *Server) InitDb() {
 	err = prometheus.Register(collector)
 
 	if ae, ok := err.(prometheus.AlreadyRegisteredError); ok {
-		// take old collector, and add the new db
+		// take old collector, and add the new Db
 		if sc, ok := ae.ExistingCollector.(*metrics.StatsCollector); ok {
 			sc.AddStatsGetter("challenge_bypass_db", db)
 		}
@@ -166,7 +166,7 @@ func (c *Server) InitDb() {
 		time.Sleep(10 * time.Second)
 	}
 
-	driver, err := postgres.WithInstance(c.db.DB, &postgres.Config{})
+	driver, err := postgres.WithInstance(c.Db.DB, &postgres.Config{})
 	if err != nil {
 		panic(err)
 	}
@@ -255,7 +255,7 @@ func incrementCounter(c prometheus.Counter) {
 func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	defer incrementCounter(fetchIssuerCounter)
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 	var err error = nil
 
 	defer func() {
@@ -329,7 +329,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		}
 	}
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 	var err error = nil
 
 	defer func() {
@@ -407,7 +407,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	var issuerV3 issuer
-	err := c.db.GetContext(ctx, &issuerV3,
+	err := c.Db.GetContext(ctx, &issuerV3,
 		`SELECT *
 		FROM v3_issuers
 		WHERE issuer_type=$1
@@ -426,7 +426,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	var fetchIssuerKeys []issuerKeys
-	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 
+	err = c.Db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 
                              ORDER BY end_at DESC NULLS LAST, start_at DESC`, issuerV3.ID)
 	if err != nil {
 		return nil, err
@@ -455,7 +455,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		}
 	}
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 	var err error = nil
 
 	defer func() {
@@ -533,7 +533,7 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 		}
 	}
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 	var err error = nil
 
 	defer func() {
@@ -603,7 +603,7 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 func (c *Server) rotateIssuers() error {
 	cfg := c.dbConfig
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 
 	var err error = nil
 
@@ -636,7 +636,7 @@ func (c *Server) rotateIssuers() error {
 			tx.Rollback()
 			return fmt.Errorf("failed to convert rows on v3 issuer creation: %w", err)
 		}
-		// populate keys in db
+		// populate keys in Db
 		if err := txPopulateIssuerKeys(c.Logger, tx, *issuer); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
@@ -656,7 +656,7 @@ func (c *Server) rotateIssuers() error {
 // rotateIssuers is the function that rotates
 func (c *Server) rotateIssuersV3() error {
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 
 	var err error = nil
 
@@ -699,7 +699,7 @@ func (c *Server) rotateIssuersV3() error {
 		issuerDTO, err := parseIssuer(issuer)
 		if err != nil {
 			tx.Rollback()
-			return fmt.Errorf("error failed to parse db issuer to dto: %w", err)
+			return fmt.Errorf("error failed to parse Db issuer to dto: %w", err)
 		}
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuerDTO); err != nil {
@@ -720,7 +720,7 @@ func (c *Server) rotateIssuersV3() error {
 
 // deleteIssuerKeys deletes v3 issuers keys that have ended more than the duration ago.
 func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
-	result, err := c.db.Exec(`delete from v3_issuer_keys where issuer_id in (select issuer_id from v3_issuers where version = 3) and end_at < now() - $1::interval`, duration)
+	result, err := c.Db.Exec(`delete from v3_issuer_keys where issuer_id in (select issuer_id from v3_issuers where version = 3) and end_at < now() - $1::interval`, duration)
 	if err != nil {
 		return 0, fmt.Errorf("error deleting v3 issuer keys: %w", err)
 	}
@@ -734,7 +734,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createIssuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer Issuer) error {
+func (c *Server) CreateV3Issuer(issuer Issuer) error {
 	defer incrementCounter(createIssuerCounter)
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
@@ -745,7 +745,7 @@ func (c *Server) createV3Issuer(issuer Issuer) error {
 		validFrom = ptr.FromTime(time.Now())
 	}
 
-	tx := c.db.MustBegin()
+	tx := c.Db.MustBegin()
 
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
 	row := tx.QueryRowx(
@@ -937,7 +937,7 @@ func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens
 	}
 
 	// convert to a v3 issuer
-	return c.createV3Issuer(Issuer{
+	return c.CreateV3Issuer(Issuer{
 		IssuerType:   issuerType,
 		IssuerCohort: issuerCohort,
 		Version:      2,
@@ -953,7 +953,7 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int16, maxTokens i
 	}
 
 	// convert to a v3 issuer
-	return c.createV3Issuer(Issuer{
+	return c.CreateV3Issuer(Issuer{
 		IssuerType:   issuerType,
 		IssuerCohort: issuerCohort,
 		Version:      1,
@@ -971,7 +971,7 @@ type Queryable interface {
 func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string) error {
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
-		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
+		return redeemTokenWithDB(c.Db, issuerForRedemption.IssuerType, preimage, payload)
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
 		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload)
 	}
@@ -1016,7 +1016,7 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
-	rows, err := c.db.Query(
+	rows, err := c.Db.Query(
 		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
 	queryTimer.ObserveDuration()
 

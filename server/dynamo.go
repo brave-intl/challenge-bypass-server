@@ -13,7 +13,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// InitDynamo initialzes the dynamo database connection
+// InitDynamo initialzes the Dynamo database connection
 func (c *Server) InitDynamo() {
 	sess := session.Must(session.NewSessionWithOptions(session.Options{
 		SharedConfigState: session.SharedConfigEnable,
@@ -29,7 +29,7 @@ func (c *Server) InitDynamo() {
 	}
 
 	svc := dynamodb.New(sess, config)
-	c.dynamo = svc
+	c.Dynamo = svc
 }
 
 // fetchRedemptionV2 takes a UUID v5 which is used to fetch and return a RedemptionV2 record
@@ -47,7 +47,7 @@ func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
 			},
 		},
 	}
-	result, err := c.dynamo.GetItem(input)
+	result, err := c.Dynamo.GetItem(input)
 	if err != nil {
 		c.Logger.Error("Unable to get item")
 		return nil, err
@@ -97,7 +97,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *Issuer, preimage *crypto.TokenPre
 		TableName:           aws.String("redemptions"),
 	}
 
-	_, err = c.dynamo.PutItem(input)
+	_, err = c.Dynamo.PutItem(input)
 	if err != nil {
 		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
 			c.Logger.Error("Duplicate redemption")

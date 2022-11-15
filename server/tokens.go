@@ -359,10 +359,10 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 		return handlers.WrapError(err, "Could not parse the request body", 400)
 	}
 
-	tx, err := c.db.Begin()
+	tx, err := c.Db.Begin()
 	if err != nil {
-		c.Logger.Debug("Could not start bulk token redemption db transaction")
-		return handlers.WrapError(err, "Could not start bulk token redemption db transaction", 400)
+		c.Logger.Debug("Could not start bulk token redemption Db transaction")
+		return handlers.WrapError(err, "Could not start bulk token redemption Db transaction", 400)
 	}
 
 	for _, token := range request.Tokens {

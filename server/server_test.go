@@ -47,24 +47,24 @@ func (suite *ServerTestSuite) SetupSuite() {
 	suite.srv = &Server{}
 
 	err = suite.srv.InitDbConfig()
-	suite.Require().NoError(err, "Failed to setup db conn")
+	suite.Require().NoError(err, "Failed to setup Db conn")
 
-	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
+	suite.handler = chi.ServerBaseContext(suite.srv.SetupRouter(SetupLogger(context.Background())))
 
 	suite.srv.InitDb()
 	suite.srv.InitDynamo()
 
-	err = test.SetupDynamodbTables(suite.srv.dynamo)
+	err = test.SetupDynamodbTables(suite.srv.Dynamo)
 	suite.Require().NoError(err)
 
-	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
+	suite.handler = chi.ServerBaseContext(suite.srv.SetupRouter(SetupLogger(context.Background())))
 }
 
 func (suite *ServerTestSuite) SetupTest() {
 	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 
 	for _, table := range tables {
-		_, err := suite.srv.db.Exec("delete from " + table)
+		_, err := suite.srv.Db.Exec("delete from " + table)
 		suite.Require().NoError(err, "Failed to get clean table")
 	}
 }
@@ -163,7 +163,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	_, err = suite.srv.Db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
 	suite.Require().NoError(err, "failed to expire issuer")
 	// keys are what rotate now, not the issuer itself
 	issuer, _ = suite.srv.GetLatestIssuer(issuerType, issuerCohort)
@@ -176,7 +176,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	var signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
 	publicKey = signingKey.PublicKey()
 
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
+	_, err = suite.srv.Db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
 	suite.Require().NoError(err, "failed to unexpire issuer")
 
 	unblindedToken = suite.createToken(server.URL, issuerType, publicKey)
@@ -232,7 +232,7 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
 
-	_, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	_, err = suite.srv.Db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
 	suite.Require().NoError(err, "failed to expire issuer")
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
@@ -254,7 +254,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 		ValidFrom:    ptr.FromTime(time.Now()),
 	}
 
-	err := suite.srv.createV3Issuer(issuer)
+	err := suite.srv.CreateV3Issuer(issuer)
 	suite.Require().NoError(err)
 
 	err = suite.srv.rotateIssuersV3()
@@ -349,7 +349,7 @@ func (suite *ServerTestSuite) TestGetIssuerV2() {
 		ValidFrom:    ptr.FromTime(time.Now()),
 	}
 
-	err := suite.srv.createV3Issuer(issuer)
+	err := suite.srv.CreateV3Issuer(issuer)
 	suite.Require().NoError(err)
 
 	request := issuerFetchRequestV2{
@@ -385,7 +385,7 @@ func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
 		ValidFrom:    ptr.FromTime(time.Now()),
 	}
 
-	err := suite.srv.createV3Issuer(issuer)
+	err := suite.srv.CreateV3Issuer(issuer)
 	suite.Require().NoError(err)
 
 	time.Sleep(2 * time.Second)
