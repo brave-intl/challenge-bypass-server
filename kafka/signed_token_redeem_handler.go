@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -220,8 +221,11 @@ func SignedTokenRedeemHandler(
 		}
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 		if err != nil {
-			if err.Temporary {
-				return err
+			var processingError *utils.ProcessingError
+			if errors.As(err, &processingError) {
+				if processingError.Temporary {
+					return err
+				}
 			}
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 			handlePermanentRedemptionError(
@@ -265,8 +269,11 @@ func SignedTokenRedeemHandler(
 				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
-					if err.Temporary {
-						return err
+					var processingError *utils.ProcessingError
+					if errors.As(err, &processingError) {
+						if processingError.Temporary {
+							return err
+						}
 					}
 					handlePermanentRedemptionError(
 						message,
