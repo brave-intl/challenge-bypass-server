@@ -11,6 +11,7 @@ import (
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 )
@@ -122,8 +123,11 @@ OUTER:
 		issuer, err := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if err != nil {
 			logger.Error().Err(err).Msg("error retrieving issuer")
-			if err.Temporary {
-				return err
+			var processingError *utils.ProcessingError
+			if errors.As(err, &processingError) {
+				if processingError.Temporary {
+					return err
+				}
 			}
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,

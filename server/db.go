@@ -319,7 +319,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, *utils.ProcessingError) {
+func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
 	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
 	if c.caches != nil {
@@ -442,7 +442,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, *utils.ProcessingError) {
+func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
 			return cached.(*[]Issuer), nil

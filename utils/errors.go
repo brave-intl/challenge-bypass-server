@@ -26,10 +26,10 @@ func (e ProcessingError) Cause() error {
 }
 
 // ProcessingErrorFromError - given an error turn it into a processing error
-func ProcessingErrorFromError(err error, temporary bool) *ProcessingError {
+func ProcessingErrorFromError(cause error, isTemporary bool) error {
 	return &ProcessingError{
-		OriginalError:  err,
-		FailureMessage: err.Error(),
-		Temporary:      temporary,
+		OriginalError:  cause,
+		FailureMessage: cause.Error(),
+		Temporary:      isTemporary,
 	}
 }
