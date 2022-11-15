@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"os"
 	"time"
 
@@ -182,19 +183,22 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 	// to determine whether the body is equivalent to what was provided or just the
 	// id.
 	if err == nil {
-		if redemption.Payload == *&existingRedemption.Payload {
+		if redemption.Payload == existingRedemption.Payload {
 			return &redemption, BindingEquivalence, nil
 		}
 		return &redemption, IDEquivalence, nil
 	}
-	var ok bool
-	if err, ok = err.(*awsDynamoTypes.ProvisionedThroughputExceededException); ok {
-		temporary = true
-	}
-	if err, ok = err.(*awsDynamoTypes.RequestLimitExceeded); ok {
-		temporary = true
-	}
-	if err, ok = err.(*awsDynamoTypes.InternalServerError); ok {
+
+	var (
+		ptee *awsDynamoTypes.ProvisionedThroughputExceededException
+		rle  *awsDynamoTypes.RequestLimitExceeded
+		ise  *awsDynamoTypes.InternalServerError
+	)
+
+	// is this a temporary error?
+	if errors.As(err, &ptee) ||
+		errors.As(err, &rle) ||
+		errors.As(err, &ise) {
 		temporary = true
 	}
 	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, temporary)

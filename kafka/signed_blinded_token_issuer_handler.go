@@ -16,7 +16,7 @@ import (
 )
 
 /*
- SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
  In cases where there are unrecoverable errors that prevent progress we will return nil.
  These permanent failure cases are different from cases where we encounter temporary
  errors inside the request data. For permanent failures inside the data processing loop we
@@ -533,7 +533,6 @@ func handlePermanentIssuanceError(
 	producer *kafka.Writer,
 	logger *zerolog.Logger,
 ) {
-
 	processingResult := avroIssuerErrorResultFromError(
 		message,
 		marshalledBlindedTokens,
@@ -547,6 +546,7 @@ func handlePermanentIssuanceError(
 		logger,
 	)
 
-	Emit(producer, processingResult.Message, logger)
-	return
+	if err := Emit(producer, processingResult.Message, logger); err != nil {
+		logger.Error().Err(err).Msg("failed to emit")
+	}
 }

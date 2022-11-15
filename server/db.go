@@ -32,8 +32,8 @@ type CachingConfig struct {
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-// DbConfig defines app configurations
-type DbConfig struct {
+// DBConfig defines app configurations
+type DBConfig struct {
 	ConnectionURI           string        `json:"connectionURI"`
 	CachingConfig           CachingConfig `json:"caching"`
 	MaxConnection           int           `json:"maxConnection"`
@@ -135,13 +135,13 @@ var (
 	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
 )
 
-// LoadDbConfig loads config into server variable
-func (c *Server) LoadDbConfig(config DbConfig) {
+// LoadDBConfig loads config into server variable
+func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
 }
 
-// InitDb initialzes the database connection based on a server's configuration
-func (c *Server) InitDb() {
+// InitDB initialzes the database connection based on a server's configuration
+func (c *Server) InitDB() {
 	cfg := c.dbConfig
 
 	db, err := sqlx.Open("postgres", cfg.ConnectionURI)
@@ -254,7 +254,7 @@ func incrementCounter(c prometheus.Counter) {
 	c.Add(1)
 }
 
-func (c *Server) fetchIssuer(issuerID string) (*Issuer, *utils.ProcessingError) {
+func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	defer incrementCounter(fetchIssuerCounter)
 
 	var (
@@ -518,7 +518,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, *utils.ProcessingEr
 
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
-func (c *Server) FetchAllIssuers() (*[]Issuer, *utils.ProcessingError) {
+func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get("all"); found {
 			return cached.(*[]Issuer), nil
@@ -624,7 +624,6 @@ func (c *Server) rotateIssuers() error {
 		issuer := c.convertDBIssuer(v)
 		// populate keys in db
 		if err := txPopulateIssuerKeys(c.Logger, tx, *issuer); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
 		}
 
@@ -683,12 +682,10 @@ func (c *Server) rotateIssuersV3() error {
 	for _, issuer := range fetchedIssuers {
 		issuerDTO := parseIssuer(issuer)
 		if err != nil {
-			tx.Rollback()
 			return fmt.Errorf("error failed to parse db issuer to dto: %w", err)
 		}
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuerDTO); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 		}
 		// denote that the v3 issuer was rotated at this time
@@ -719,7 +716,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createIssuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer Issuer) error {
+func (c *Server) createV3Issuer(issuer Issuer) (err error) {
 	defer incrementCounter(createIssuerCounter)
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
@@ -731,6 +728,13 @@ func (c *Server) createV3Issuer(issuer Issuer) error {
 	}
 
 	tx := c.db.MustBegin()
+	defer func() {
+		if err != nil {
+			err = tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
 
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
 	row := tx.QueryRowx(
@@ -761,16 +765,14 @@ func (c *Server) createV3Issuer(issuer Issuer) error {
 	)
 	// get the newly inserted issuer identifier
 	if err := row.Scan(&issuer.ID); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("failed to get v3 issuer id: %w", err)
 	}
 
 	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 	}
 	queryTimer.ObserveDuration()
-	return tx.Commit()
+	return nil
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
@@ -826,7 +828,6 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			// start/end, increment every iteration
 			end, err = duration.From(*start)
 			if err != nil {
-				tx.Rollback()
 				return fmt.Errorf("unable to calculate end time: %w", err)
 			}
 		}
@@ -834,21 +835,18 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		signingKey, err := crypto.RandomSigningKey()
 		if err != nil {
 			logger.Error("Error generating key")
-			tx.Rollback()
 			return err
 		}
 
 		signingKeyTxt, err := signingKey.MarshalText()
 		if err != nil {
 			logger.Error("Error marshalling signing key")
-			tx.Rollback()
 			return err
 		}
 
 		pubKeyTxt, err := signingKey.PublicKey().MarshalText()
 		if err != nil {
 			logger.Error("Error marshalling public key")
-			tx.Rollback()
 			return err
 		}
 		logger.Infof("iteration key pubkey: %+v", pubKeyTxt)
@@ -867,7 +865,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 
 		keys = append(keys, k)
 
-		if issuer.ValidFrom != nil && !(*start).Equal(*issuer.ValidFrom) {
+		if issuer.ValidFrom != nil && !start.Equal(*issuer.ValidFrom) {
 			valueFmtStr += ", "
 		}
 		valueFmtStr += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d)",
@@ -909,10 +907,10 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		VALUES %s`, valueFmtStr), values...)
 	if err != nil {
 		logger.Error("Could not insert the new issuer keys into the DB")
-		tx.Rollback()
 		return err
 	}
-	return rows.Close()
+	defer rows.Close()
+	return nil
 }
 
 func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens int, expiresAt *time.Time) error {
@@ -960,7 +958,7 @@ func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.Token
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
 		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
-	return errors.New("Wrong Issuer Version")
+	return errors.New("wrong issuer version")
 }
 
 func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.TokenPreimage, payload string) error {
@@ -972,37 +970,29 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 	queryTimer := prometheus.NewTimer(createRedemptionDBDuration)
 	rows, err := db.Query(
 		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, stringIssuer, payload)
-	defer func() error {
-		if rows != nil {
-			err := rows.Close()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}()
 	if err != nil {
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
 			return errDuplicateRedemption
 		}
 		return err
 	}
+	defer rows.Close()
 
 	queryTimer.ObserveDuration()
 	return nil
 }
 
-func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
+func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
 	if c.caches != nil {
-		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, ID)); found {
+		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, id)); found {
 			return cached.(*Redemption), nil
 		}
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.db.Query(
-		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
+		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
 	queryTimer.ObserveDuration()
 
 	if err != nil {
@@ -1019,7 +1009,7 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, ID), redemption)
+			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), redemption)
 		}
 
 		return redemption, nil

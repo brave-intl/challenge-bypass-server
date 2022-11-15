@@ -25,6 +25,7 @@ func (e ProcessingError) Cause() error {
 	return e.OriginalError
 }
 
+// ProcessingErrorFromError - given an error turn it into a processing error
 func ProcessingErrorFromError(err error, temporary bool) *ProcessingError {
 	return &ProcessingError{
 		OriginalError:  err,
