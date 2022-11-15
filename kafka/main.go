@@ -159,7 +159,7 @@ func processMessagesIntoBatchPipeline(
 			// this batch and fetch another.
 			if err == io.EOF {
 				logger.Info().Msg("Batch complete")
-			} else if strings.ToLower(err.Error()) != "context deadline exceeded" {
+			} else if errors.Is(err, context.DeadlineExceeded) {
 				logger.Error().Err(err).Msg("batch item error")
 				panic("failed to fetch kafka messages and closed channel")
 			}
