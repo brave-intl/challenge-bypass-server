@@ -89,7 +89,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 
 	reader := newConsumer(topics, adsConsumerGroupV1, logger)
 
-	batchPipeline := make(chan *MessageContext)
+	batchPipeline := make(chan *MessageContext, 100)
 	ctx := context.Background()
 	go processMessagesIntoBatchPipeline(ctx, topicMappings, providedServer, reader, batchPipeline, logger)
 	for {
