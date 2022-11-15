@@ -295,8 +295,12 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	err = tx.Select(
 		&fetchIssuerKeys,
 		`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 		convertedIssuer.ID,
 	)
 	if err != nil {
@@ -346,7 +350,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		`SELECT i.*
 		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
 		WHERE i.issuer_type=$1 AND k.cohort=$2
-		ORDER BY i.expires_at DESC NULLS LAST, i.created_at DESC`, issuerType, issuerCohort)
+		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`, issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
 	}
@@ -370,8 +374,12 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -426,8 +434,12 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	var fetchIssuerKeys []issuerKeys
-	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 
-                             ORDER BY end_at DESC NULLS LAST, start_at DESC`, issuerV3.ID)
+	err = c.db.SelectContext(ctx, &fetchIssuerKeys, `SELECT * FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+                             ORDER BY end_at ASC NULLS FIRST, start_at ASC`, issuerV3.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -496,8 +508,12 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -571,8 +587,12 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			ORDER BY end_at DESC NULLS LAST, start_at DESC`,
+			FROM v3_issuer_keys where issuer_id=$1 and
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			convertedIssuer.ID,
 		)
 		if err != nil {
@@ -685,7 +705,7 @@ func (c *Server) rotateIssuersV3() error {
 		where
 			i.version = 3 and
 			i.expires_at is not null and
-			i.expires_at < now()
+			i.expires_at > now()
 			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now() + i.buffer * i.duration::interval
 		for update skip locked
 		`,
@@ -701,6 +721,36 @@ func (c *Server) rotateIssuersV3() error {
 			tx.Rollback()
 			return fmt.Errorf("error failed to parse db issuer to dto: %w", err)
 		}
+		// get this issuer's keys populated
+
+		var fetchIssuerKeys = []issuerKeys{}
+		// get all the future keys for this issuer
+		err = tx.Select(
+			&fetchIssuerKeys,
+			`SELECT *
+			FROM v3_issuer_keys where issuer_id=$1
+			and 
+			(
+				(select version from v3_issuers where issuer_id=$1)<=2
+				or end_at > now()
+			)
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
+			issuerDTO.ID,
+		)
+		if err != nil {
+			c.Logger.Error("Failed to extract issuer keys from DB")
+			return err
+		}
+
+		for _, v := range fetchIssuerKeys {
+			k, err := c.convertDBIssuerKeys(v)
+			if err != nil {
+				c.Logger.Error("Failed to convert issuer keys from DB")
+				return err
+			}
+			issuerDTO.Keys = append(issuerDTO.Keys, *k)
+		}
+
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuerDTO); err != nil {
 			tx.Rollback()
@@ -835,6 +885,8 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	var keys []issuerKeys
 	var position = 0
 	// Create signing keys for buffer and overlap
+	// we really just want signing keys for the buckets that do not exist
+	// not all the buckets
 	for ; i < issuer.Buffer+issuer.Overlap; i++ {
 		end := new(time.Time)
 		if duration != nil {
@@ -866,7 +918,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			tx.Rollback()
 			return err
 		}
-		logger.Infof("iteration key pubkey: %+v", pubKeyTxt)
+		logger.Infof("iteration key pubkey: %s", string(pubKeyTxt))
 
 		tmpStart := *start
 		tmpEnd := *end
@@ -881,10 +933,10 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		}
 
 		keys = append(keys, k)
-
-		if issuer.ValidFrom != nil && !(*start).Equal(*issuer.ValidFrom) {
+		if position != 0 {
 			valueFmtStr += ", "
 		}
+
 		valueFmtStr += fmt.Sprintf("($%d, $%d, $%d, $%d, $%d, $%d)",
 			position+1,
 			position+2,
@@ -908,6 +960,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	for _, v := range keys {
 		values = append(values,
 			v.IssuerID, v.SigningKey, v.PublicKey, v.Cohort, v.StartAt, v.EndAt)
+	}
+
+	if len(values) == 0 {
+		// nothing to insert, return
+		return nil
 	}
 
 	rows, err := tx.Query(
