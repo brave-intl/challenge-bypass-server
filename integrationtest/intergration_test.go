@@ -14,6 +14,7 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 	"github.com/go-chi/chi"
+	"github.com/rs/zerolog"
 	uuid "github.com/satori/go.uuid"
 	kafkago "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
@@ -145,8 +146,9 @@ func (suite *ServerTestSuite) TestE2ESignAndRedeemV3() {
 	suite.Require().NoError(err)
 
 	// Process the signing request using kafka handler
+	zeroLogger := zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
 
-	err = kafka.SignedBlindedTokenIssuerHandler(data, kafkaWriter, suite.srv, nil)
+	err = kafka.SignedBlindedTokenIssuerHandler(data, kafkaWriter, suite.srv, &zeroLogger)
 	suite.Require().NoError(err)
 
 	// Redeem Tokens

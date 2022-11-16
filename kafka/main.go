@@ -2,12 +2,12 @@ package kafka
 
 import (
 	"context"
+	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
@@ -193,12 +193,10 @@ func Emit(producer *kafka.Writer, message []byte, logger *zerolog.Logger) error 
 func getDialer(logger *zerolog.Logger) *kafka.Dialer {
 	var dialer *kafka.Dialer
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
-	if os.Getenv("ENV") != "local" {
-		tlsDialer, _, err := batgo_kafka.TLSDialer()
-		dialer = tlsDialer
-		if err != nil {
-			logger.Error().Msgf("Failed to initialize TLS dialer: %e", err)
-		}
+	tlsDialer, _, err := batgo_kafka.TLSDialer()
+	dialer = tlsDialer
+	if err != nil {
+		logger.Error().Msgf("Failed to initialize TLS dialer: %e", err)
 	}
 	return dialer
 }
