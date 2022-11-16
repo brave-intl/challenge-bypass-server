@@ -932,10 +932,8 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		position += 6
 
 		// increment start
-		if start != nil && end != nil {
-			tmp := *end
-			start = &tmp
-		}
+		tmp := *end
+		start = &tmp
 	}
 
 	var values []interface{}
