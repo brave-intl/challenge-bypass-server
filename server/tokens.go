@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/go-chi/chi"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
 )
 
 const (
@@ -222,7 +224,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 		}
 
 		var signingKey *crypto.SigningKey
-		for _, k := range issuer.Keys {
+		for i, k := range issuer.Keys {
 			if k.StartAt == nil || k.EndAt == nil {
 				return &handlers.AppError{
 					Message: "Issuer has invalid keys for v3",
@@ -231,6 +233,14 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 			}
 
 			if k.StartAt.Before(time.Now()) && k.EndAt.After(time.Now()) {
+				pubKeyTxt, _ := k.SigningKey.PublicKey().MarshalText()
+				c.Logger.WithFields(logrus.Fields{
+					"now":      time.Now(),
+					"start_at": k.StartAt,
+					"end_at":   k.EndAt,
+					"key":      string(pubKeyTxt),
+					"i":        fmt.Sprintf("%d", i),
+				}).Error("found appropriate key")
 				signingKey = k.SigningKey
 				break
 			}
@@ -244,7 +254,6 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 
 		if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload,
 			[]*crypto.SigningKey{signingKey}); err != nil {
-			c.Logger.Error("error verifying token")
 			return &handlers.AppError{
 				Message: "Could not verify that token redemption is valid",
 				Code:    http.StatusBadRequest,
