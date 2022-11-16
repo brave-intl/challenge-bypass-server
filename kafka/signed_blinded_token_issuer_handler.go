@@ -11,20 +11,35 @@ import (
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 )
 
-// SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
-// @TODO: It would be better for the Server implementation and the Kafka implementation of
-// this behavior to share utility functions rather than passing an instance of the server
-// as an argument here. That will require a bit of refactoring.
-func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server *cbpServer.Server, log *zerolog.Logger) error {
+/*
+SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+ In cases where there are unrecoverable errors that prevent progress we will return nil.
+ These permanent failure cases are different from cases where we encounter temporary
+ errors inside the request data. For permanent failures inside the data processing loop we
+ simply add the error to the results. However, temporary errors inside the loop should break
+ the loop and return non-nil just like the errors outside the data processing loop. This is
+ because future attempts to process permanent failure cases will not succeed.
+ @TODO: It would be better for the Server implementation and the Kafka implementation of
+ this behavior to share utility functions rather than passing an instance of the server
+ as an argument here. That will require a bit of refactoring.
+*/
+func SignedBlindedTokenIssuerHandler(
+	msg kafka.Message,
+	producer *kafka.Writer,
+	server *cbpServer.Server,
+	log *zerolog.Logger,
+) error {
 	const (
 		issuerOk      = 0
 		issuerInvalid = 1
 		issuerError   = 2
 	)
+	data := msg.Value
 
 	log.Info().Msg("starting blinded token processor")
 
@@ -38,8 +53,23 @@ func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server
 
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
-		log.Error().Err(err).Msg("failed to deserialize avro request message")
-		return fmt.Errorf("request %s: failed avro deserialization: %w", blindedTokenRequestSet.Request_id, err)
+		message := fmt.Sprintf(
+			"request %s: failed avro deserialization",
+			blindedTokenRequestSet.Request_id,
+		)
+		handlePermanentIssuanceError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			msg,
+			producer,
+			log,
+		)
+		return nil
 	}
 
 	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
@@ -50,9 +80,23 @@ func SignedBlindedTokenIssuerHandler(data []byte, producer *kafka.Writer, server
 	if len(blindedTokenRequestSet.Data) > 1 {
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
-		return fmt.Errorf(`request %s: data array unexpectedly contained more than a single message. this array is 
-						intended to make future extension easier, but no more than a single value is currently expected`,
-			blindedTokenRequestSet.Request_id)
+		message := fmt.Sprintf(
+			"request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected",
+			blindedTokenRequestSet.Request_id,
+		)
+		handlePermanentIssuanceError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			msg,
+			producer,
+			&logger,
+		)
+		return nil
 	}
 
 OUTER:
@@ -66,7 +110,7 @@ OUTER:
 				Status:            issuerError,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		// check to see if issuer cohort will overflow
@@ -79,20 +123,26 @@ OUTER:
 				Status:            issuerError,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		logger.Info().Msgf("getting latest issuer: %+v - %+v", request.Issuer_type, request.Issuer_cohort)
-		issuer, appErr := server.GetLatestIssuer(request.Issuer_type, int16(request.Issuer_cohort))
+		issuer, appErr := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if appErr != nil {
 			logger.Error().Err(appErr).Msg("error retrieving issuer")
+			var processingError *utils.ProcessingError
+			if errors.As(err, &processingError) {
+				if processingError.Temporary {
+					return err
+				}
+			}
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
 				Status:            issuerInvalid,
 				Associated_data:   request.Associated_data,
 			})
-			break OUTER
+			continue OUTER
 		}
 
 		logger.Info().Msgf("checking if issuer is version 3: %+v", issuer)
@@ -106,7 +156,7 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				break OUTER
+				continue OUTER
 			}
 		}
 
@@ -192,39 +242,88 @@ OUTER:
 
 				marshaledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
-					return fmt.Errorf("request %s: could not marshal dleq proof: %w", blindedTokenRequestSet.Request_id, err)
+					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
+					handlePermanentIssuanceError(
+						message,
+						nil,
+						nil,
+						nil,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						msg,
+						producer,
+						&logger,
+					)
+					return nil
 				}
 
-				var marshalledBlindedTokens []string
+				var marshaledBlindedTokens []string
 				for _, token := range blindedTokensSlice {
 					marshaledToken, err := token.MarshalText()
 					if err != nil {
-						return fmt.Errorf("request %s: could not marshal blinded token slice to bytes: %w",
-							blindedTokenRequestSet.Request_id, err)
+						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
+						handlePermanentIssuanceError(
+							message,
+							marshaledBlindedTokens,
+							nil,
+							nil,
+							nil,
+							issuerError,
+							blindedTokenRequestSet.Request_id,
+							msg,
+							producer,
+							&logger,
+						)
+						return nil
 					}
-					marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+					marshaledBlindedTokens = append(marshaledBlindedTokens, string(marshaledToken))
 				}
 
 				var marshaledSignedTokens []string
 				for _, token := range signedTokens {
 					marshaledToken, err := token.MarshalText()
 					if err != nil {
-						return fmt.Errorf("request %s: could not marshal new tokens to bytes: %w",
-							blindedTokenRequestSet.Request_id, err)
+						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
+						handlePermanentIssuanceError(
+							message,
+							marshaledBlindedTokens,
+							marshaledSignedTokens,
+							nil,
+							nil,
+							issuerError,
+							blindedTokenRequestSet.Request_id,
+							msg,
+							producer,
+							&logger,
+						)
+						return nil
 					}
-					marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken[:]))
+					marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken))
 				}
 
 				logger.Info().Msg("getting public key")
 				publicKey := signingKey.PublicKey()
 				marshaledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
-					return fmt.Errorf("request %s: could not marshal signing key: %w",
-						blindedTokenRequestSet.Request_id, err)
+					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
+					handlePermanentIssuanceError(
+						message,
+						marshaledBlindedTokens,
+						marshaledSignedTokens,
+						marshaledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						msg,
+						producer,
+						&logger,
+					)
+					return nil
 				}
 
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
-					Blinded_tokens:    marshalledBlindedTokens,
+					Blinded_tokens:    marshaledBlindedTokens,
 					Signed_tokens:     marshaledSignedTokens,
 					Proof:             string(marshaledDLEQProof),
 					Issuer_public_key: string(marshaledPublicKey),
@@ -234,7 +333,7 @@ OUTER:
 					Associated_data:   request.Associated_data,
 				})
 				logger.Info().
-					Str("blinded_tokens", fmt.Sprintf("%+v", marshalledBlindedTokens)).
+					Str("blinded_tokens", fmt.Sprintf("%+v", marshaledBlindedTokens)).
 					Str("signed_tokens", fmt.Sprintf("%+v", marshaledSignedTokens)).
 					Str("proof", string(marshaledDLEQProof)).
 					Str("public_key", string(marshaledPublicKey)).
@@ -262,42 +361,93 @@ OUTER:
 					Status:            issuerError,
 					Associated_data:   request.Associated_data,
 				})
-				break OUTER
+				continue OUTER
 			}
 
 			marshaledDLEQProof, err := DLEQProof.MarshalText()
 			if err != nil {
-				return fmt.Errorf("request %s: could not marshal dleq proof: %w",
+				message := fmt.Sprintf("request %s: could not marshal dleq proof: %s",
 					blindedTokenRequestSet.Request_id, err)
+				handlePermanentIssuanceError(
+					message,
+					nil,
+					nil,
+					marshaledDLEQProof,
+					nil,
+					issuerError,
+					blindedTokenRequestSet.Request_id,
+					msg,
+					producer,
+					&logger,
+				)
+				return nil
 			}
 
-			var marshalledBlindedTokens []string
+			var marshaledBlindedTokens []string
 			for _, token := range blindedTokens {
 				marshaledToken, err := token.MarshalText()
 				if err != nil {
-					return fmt.Errorf("request %s: could not marshal blinded token slice to bytes: %w",
-						blindedTokenRequestSet.Request_id, err)
+					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
+					handlePermanentIssuanceError(
+						message,
+						marshaledBlindedTokens,
+						nil,
+						marshaledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						msg,
+						producer,
+						&logger,
+					)
+					return nil
 				}
-				marshalledBlindedTokens = append(marshalledBlindedTokens, string(marshaledToken[:]))
+				marshaledBlindedTokens = append(marshaledBlindedTokens, string(marshaledToken))
 			}
 
 			var marshaledSignedTokens []string
 			for _, token := range signedTokens {
 				marshaledToken, err := token.MarshalText()
 				if err != nil {
-					return fmt.Errorf("error could not marshal new tokens to bytes: %w", err)
+					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
+					handlePermanentIssuanceError(
+						message,
+						marshaledBlindedTokens,
+						marshaledSignedTokens,
+						marshaledDLEQProof,
+						nil,
+						issuerError,
+						blindedTokenRequestSet.Request_id,
+						msg,
+						producer,
+						&logger,
+					)
+					return nil
 				}
-				marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken[:]))
+				marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken))
 			}
 
 			publicKey := signingKey.PublicKey()
 			marshaledPublicKey, err := publicKey.MarshalText()
 			if err != nil {
-				return fmt.Errorf("error could not marshal signing key: %w", err)
+				message := fmt.Sprintf("error could not marshal signing key: %s", err)
+				handlePermanentIssuanceError(
+					message,
+					marshaledBlindedTokens,
+					marshaledSignedTokens,
+					marshaledDLEQProof,
+					marshaledPublicKey,
+					issuerError,
+					blindedTokenRequestSet.Request_id,
+					msg,
+					producer,
+					&logger,
+				)
+				return nil
 			}
 
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
-				Blinded_tokens:    marshalledBlindedTokens,
+				Blinded_tokens:    marshaledBlindedTokens,
 				Signed_tokens:     marshaledSignedTokens,
 				Proof:             string(marshaledDLEQProof),
 				Issuer_public_key: string(marshaledPublicKey),
@@ -316,19 +466,116 @@ OUTER:
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
-		return fmt.Errorf("request %s: failed to serialize result set: %s: %w",
-			blindedTokenRequestSet.Request_id, resultSetBuffer.String(), err)
+		message := fmt.Sprintf(
+			"request %s: failed to serialize ResultSet: %+v",
+			blindedTokenRequestSet.Request_id,
+			resultSet,
+		)
+		handlePermanentIssuanceError(
+			message,
+			nil,
+			nil,
+			nil,
+			nil,
+			issuerError,
+			blindedTokenRequestSet.Request_id,
+			msg,
+			producer,
+			&logger,
+		)
+		return nil
 	}
 
 	logger.Info().Msg("ending blinded token request processor loop")
 	logger.Info().Msgf("about to emit: %+v", resultSet)
 	err = Emit(producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
-		logger.Error().Msgf("failed to emit: %+v", resultSet)
-		return fmt.Errorf("request %s: failed to emit results to topic %s: %w",
-			blindedTokenRequestSet.Request_id, producer.Topic, err)
+		message := fmt.Sprintf(
+			"request %s: failed to emit to topic %s with result: %v",
+			resultSet.Request_id,
+			producer.Topic,
+			resultSet,
+		)
+		log.Error().Err(err).Msgf(message)
+		return err
 	}
 	logger.Info().Msgf("emitted: %+v", resultSet)
 
 	return nil
+}
+
+// avroIssuerErrorResultFromError returns a ProcessingResult that is constructed from the
+// provided values.
+func avroIssuerErrorResultFromError(
+	message string,
+	marshaledBlindedTokens []string,
+	marshaledSignedTokens []string,
+	marshaledDLEQProof []byte,
+	marshaledPublicKey []byte,
+	issuerResultStatus int32,
+	requestID string,
+	msg kafka.Message,
+	producer *kafka.Writer,
+	logger *zerolog.Logger,
+) *ProcessingResult {
+	signingResult := avroSchema.SigningResultV2{
+		Blinded_tokens:    marshaledBlindedTokens,
+		Signed_tokens:     marshaledSignedTokens,
+		Proof:             string(marshaledDLEQProof),
+		Issuer_public_key: string(marshaledPublicKey),
+		Status:            avroSchema.SigningResultV2Status(issuerResultStatus),
+		Associated_data:   []byte(message),
+	}
+	resultSet := avroSchema.SigningResultV2Set{
+		Request_id: "",
+		Data:       []avroSchema.SigningResultV2{signingResult},
+	}
+	var resultSetBuffer bytes.Buffer
+	err := resultSet.Serialize(&resultSetBuffer)
+	if err != nil {
+		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
+		return &ProcessingResult{
+			Message:        []byte(message),
+			ResultProducer: producer,
+			RequestID:      requestID,
+		}
+	}
+
+	return &ProcessingResult{
+		Message:        []byte(message),
+		ResultProducer: producer,
+		RequestID:      requestID,
+	}
+}
+
+// handlePermanentIssuanceError is a convenience function to both generate a result from
+// an errorand emit it.
+func handlePermanentIssuanceError(
+	message string,
+	marshaledBlindedTokens []string,
+	marshaledSignedTokens []string,
+	marshaledDLEQProof []byte,
+	marshaledPublicKey []byte,
+	issuerResultStatus int32,
+	requestID string,
+	msg kafka.Message,
+	producer *kafka.Writer,
+	logger *zerolog.Logger,
+) {
+	processingResult := avroIssuerErrorResultFromError(
+		message,
+		marshaledBlindedTokens,
+		marshaledSignedTokens,
+		marshaledDLEQProof,
+		marshaledPublicKey,
+		issuerResultStatus,
+		requestID,
+		msg,
+		producer,
+		logger,
+	)
+
+	if err := Emit(producer, processingResult.Message, logger); err != nil {
+		logger.Error().Err(err).Msg("failed to emit")
+	}
 }

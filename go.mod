@@ -6,7 +6,7 @@ require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
 	github.com/aws/aws-sdk-go v1.44.136
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.17.4
-	github.com/brave-intl/bat-go/libs v0.0.0-20220823005459-d3a4d8ccf976
+	github.com/brave-intl/bat-go/libs v0.0.0-20220913154833-730f36b772de
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190717223301-f88d942ddfaf
 	github.com/getsentry/raven-go v0.2.0
 	github.com/go-chi/chi v4.1.2+incompatible
@@ -32,7 +32,6 @@ require (
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/certifi/gocertifi v0.0.0-20200922220541-2c3bb06c6054 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
-	github.com/containerd/containerd v1.6.6 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/getsentry/sentry-go v0.13.0 // indirect
 	github.com/go-chi/chi/v5 v5.0.7 // indirect
@@ -48,7 +47,6 @@ require (
 	github.com/mattn/go-colorable v0.1.12 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.2-0.20181231171920-c182affec369 // indirect
-	github.com/opencontainers/image-spec v1.0.3-0.20211202183452-c5a74bcca799 // indirect
 	github.com/pierrec/lz4/v4 v4.1.15 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect

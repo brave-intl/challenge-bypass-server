@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
@@ -31,8 +32,8 @@ type CachingConfig struct {
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-// DbConfig defines app configurations
-type DbConfig struct {
+// DBConfig defines app configurations
+type DBConfig struct {
 	ConnectionURI           string        `json:"connectionURI"`
 	CachingConfig           CachingConfig `json:"caching"`
 	MaxConnection           int           `json:"maxConnection"`
@@ -117,6 +118,7 @@ type RedemptionV2 struct {
 	Timestamp time.Time `json:"timestamp"`
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
+	Offset    int64     `json:"offset"`
 }
 
 // CacheInterface cache functions
@@ -127,19 +129,19 @@ type CacheInterface interface {
 }
 
 var (
-	errIssuerNotFound       = errors.New("Issuer with the given name does not exist")
-	errIssuerCohortNotFound = errors.New("Issuer with the given name and cohort does not exist")
-	errDuplicateRedemption  = errors.New("Duplicate Redemption")
-	errRedemptionNotFound   = errors.New("Redemption with the given id does not exist")
+	errIssuerNotFound       = errors.New("issuer with the given name does not exist")
+	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
+	errDuplicateRedemption  = errors.New("duplicate Redemption")
+	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
 )
 
-// LoadDbConfig loads config into server variable
-func (c *Server) LoadDbConfig(config DbConfig) {
+// LoadDBConfig loads config into server variable
+func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
 }
 
-// InitDb initialzes the database connection based on a server's configuration
-func (c *Server) InitDb() {
+// InitDB initialzes the database connection based on a server's configuration
+func (c *Server) InitDB() {
 	cfg := c.dbConfig
 
 	db, err := sqlx.Open("postgres", cfg.ConnectionURI)
@@ -255,16 +257,10 @@ func incrementCounter(c prometheus.Counter) {
 func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	defer incrementCounter(fetchIssuerCounter)
 
-	tx := c.db.MustBegin()
-	var err error = nil
-
-	defer func() {
-		if err != nil {
-			err = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
+	var (
+		err       error
+		temporary = false
+	)
 
 	if c.caches != nil {
 		if cached, found := c.caches["issuer"].Get(issuerID); found {
@@ -273,26 +269,26 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	}
 
 	fetchedIssuer := issuer{}
-	err = tx.Get(&fetchedIssuer, `
+	err = c.db.Select(&fetchedIssuer, `
 	    SELECT * FROM v3_issuers
 	    WHERE issuer_id=$1
 	`, issuerID)
 
 	if err != nil {
-		return nil, errIssuerNotFound
+		if !isPostgresNotFoundError(err) {
+			temporary = true
+		}
+		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, temporary)
 	}
 
-	convertedIssuer, err := c.convertDBIssuer(fetchedIssuer)
-	if err != nil {
-		return nil, err
-	}
+	convertedIssuer := c.convertDBIssuer(fetchedIssuer)
 	// get the signing keys
 	if convertedIssuer.Keys == nil {
 		convertedIssuer.Keys = []IssuerKeys{}
 	}
 
 	var fetchIssuerKeys = []issuerKeys{}
-	err = tx.Select(
+	err = c.db.Select(
 		&fetchIssuerKeys,
 		`SELECT *
 			FROM v3_issuer_keys where issuer_id=$1 and 
@@ -304,15 +300,18 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		convertedIssuer.ID,
 	)
 	if err != nil {
-		c.Logger.Error("Failed to extract issuer keys from DB")
-		return nil, err
+		if !isPostgresNotFoundError(err) {
+			c.Logger.Error("Postgres encountered temporary error")
+			temporary = true
+		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	for _, v := range fetchIssuerKeys {
 		k, err := c.convertDBIssuerKeys(v)
 		if err != nil {
 			c.Logger.Error("Failed to convert issuer keys from DB")
-			return nil, err
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 		convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 	}
@@ -333,45 +332,40 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		}
 	}
 
-	tx := c.db.MustBegin()
-	var err error = nil
-
-	defer func() {
-		if err != nil {
-			err = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
-	err = tx.Select(
+	err = c.db.Select(
 		&fetchedIssuers,
 		`SELECT i.*
 		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
 		WHERE i.issuer_type=$1 AND k.cohort=$2
 		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`, issuerType, issuerCohort)
 	if err != nil {
-		return nil, err
+		c.Logger.Error("Failed to extract issuers from DB")
+		if isPostgresNotFoundError(err) {
+			temporary = true
+		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	if len(fetchedIssuers) < 1 {
-		return nil, errIssuerCohortNotFound
+		return nil, utils.ProcessingErrorFromError(errIssuerCohortNotFound, temporary)
 	}
 
 	issuers := []Issuer{}
 	for _, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer, err := c.convertDBIssuer(fetchedIssuer)
-		if err != nil {
-			return nil, err
-		}
+		convertedIssuer := c.convertDBIssuer(fetchedIssuer)
 		// get the keys for the Issuer
 		if convertedIssuer.Keys == nil {
 			convertedIssuer.Keys = []IssuerKeys{}
 		}
 
 		var fetchIssuerKeys = []issuerKeys{}
-		err = tx.Select(
+		err = c.db.Select(
 			&fetchIssuerKeys,
 			`SELECT *
 			FROM v3_issuer_keys where issuer_id=$1 and
@@ -383,15 +377,18 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			c.Logger.Error("Failed to extract issuer keys from DB")
-			return nil, err
+			if !isPostgresNotFoundError(err) {
+				c.Logger.Error("Postgres encountered temporary error")
+				temporary = true
+			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
@@ -424,10 +421,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 		return nil, err
 	}
 
-	convertedIssuer, err := c.convertDBIssuer(issuerV3)
-	if err != nil {
-		return nil, err
-	}
+	convertedIssuer := c.convertDBIssuer(issuerV3)
 
 	if convertedIssuer.Keys == nil {
 		convertedIssuer.Keys = []IssuerKeys{}
@@ -467,45 +461,40 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		}
 	}
 
-	tx := c.db.MustBegin()
-	var err error = nil
-
-	defer func() {
-		if err != nil {
-			err = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
-	err = tx.Select(
+	err = c.db.Select(
 		&fetchedIssuers,
 		`SELECT *
 		FROM v3_issuers
 		WHERE issuer_type=$1
 		ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerType)
 	if err != nil {
-		return nil, err
+		c.Logger.Error("Failed to extract issuers from DB")
+		if !isPostgresNotFoundError(err) {
+			temporary = true
+		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	if len(fetchedIssuers) < 1 {
-		return nil, errIssuerNotFound
+		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, temporary)
 	}
 
 	issuers := []Issuer{}
 	for _, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer, err := c.convertDBIssuer(fetchedIssuer)
-		if err != nil {
-			return nil, err
-		}
+		convertedIssuer := c.convertDBIssuer(fetchedIssuer)
 		// get the keys for the Issuer
 		if convertedIssuer.Keys == nil {
 			convertedIssuer.Keys = []IssuerKeys{}
 		}
 
 		var fetchIssuerKeys = []issuerKeys{}
-		err = tx.Select(
+		err = c.db.Select(
 			&fetchIssuerKeys,
 			`SELECT *
 			FROM v3_issuer_keys where issuer_id=$1 and 
@@ -517,15 +506,18 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			c.Logger.Error("Failed to extract issuer keys from DB")
-			return nil, err
+			if !isPostgresNotFoundError(err) {
+				c.Logger.Error("Failed to extract issuer keys from DB")
+				temporary = true
+			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
@@ -549,42 +541,37 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 		}
 	}
 
-	tx := c.db.MustBegin()
-	var err error = nil
-
-	defer func() {
-		if err != nil {
-			err = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
+	var (
+		err       error
+		temporary = false
+	)
 
 	fetchedIssuers := []issuer{}
-	err = tx.Select(
+	err = c.db.Select(
 		&fetchedIssuers,
 		`SELECT *
 		FROM v3_issuers
 		ORDER BY expires_at DESC NULLS LAST, created_at DESC`)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
-		return nil, err
+		if !isPostgresNotFoundError(err) {
+			temporary = true
+		} else {
+			panic("Postgres encountered temporary error")
+		}
+		return nil, utils.ProcessingErrorFromError(err, temporary)
 	}
 
 	issuers := []Issuer{}
 	for _, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer, err := c.convertDBIssuer(fetchedIssuer)
-		if err != nil {
-			c.Logger.Error("Error converting extracted Issuer")
-			return nil, err
-		}
+		convertedIssuer := c.convertDBIssuer(fetchedIssuer)
 
 		if convertedIssuer.Keys == nil {
 			convertedIssuer.Keys = []IssuerKeys{}
 		}
 
 		var fetchIssuerKeys = []issuerKeys{}
-		err = tx.Select(
+		err = c.db.Select(
 			&fetchIssuerKeys,
 			`SELECT *
 			FROM v3_issuer_keys where issuer_id=$1 and
@@ -596,15 +583,18 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 			convertedIssuer.ID,
 		)
 		if err != nil {
-			c.Logger.Error("Failed to extract issuer keys from DB")
-			return nil, err
+			if !isPostgresNotFoundError(err) {
+				c.Logger.Error("Postgres encountered temporary error")
+				temporary = true
+			}
+			return nil, utils.ProcessingErrorFromError(err, temporary)
 		}
 
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
 				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, err
+				return nil, utils.ProcessingErrorFromError(err, temporary)
 			}
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
@@ -625,7 +615,7 @@ func (c *Server) rotateIssuers() error {
 
 	tx := c.db.MustBegin()
 
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -651,14 +641,9 @@ func (c *Server) rotateIssuers() error {
 
 	for _, v := range fetchedIssuers {
 		// converted
-		issuer, err := c.convertDBIssuer(v)
-		if err != nil {
-			tx.Rollback()
-			return fmt.Errorf("failed to convert rows on v3 issuer creation: %w", err)
-		}
+		issuer := c.convertDBIssuer(v)
 		// populate keys in db
 		if err := txPopulateIssuerKeys(c.Logger, tx, *issuer); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
 		}
 
@@ -675,10 +660,9 @@ func (c *Server) rotateIssuers() error {
 
 // rotateIssuers is the function that rotates
 func (c *Server) rotateIssuersV3() error {
-
 	tx := c.db.MustBegin()
 
-	var err error = nil
+	var err error
 
 	defer func() {
 		if err != nil {
@@ -716,9 +700,8 @@ func (c *Server) rotateIssuersV3() error {
 
 	// for each issuer fetched
 	for _, issuer := range fetchedIssuers {
-		issuerDTO, err := parseIssuer(issuer)
+		issuerDTO := parseIssuer(issuer)
 		if err != nil {
-			tx.Rollback()
 			return fmt.Errorf("error failed to parse db issuer to dto: %w", err)
 		}
 		// get this issuer's keys populated
@@ -753,7 +736,6 @@ func (c *Server) rotateIssuersV3() error {
 
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuerDTO); err != nil {
-			tx.Rollback()
 			return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 		}
 		// denote that the v3 issuer was rotated at this time
@@ -784,7 +766,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createIssuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer Issuer) error {
+func (c *Server) createV3Issuer(issuer Issuer) (err error) {
 	defer incrementCounter(createIssuerCounter)
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
@@ -796,6 +778,13 @@ func (c *Server) createV3Issuer(issuer Issuer) error {
 	}
 
 	tx := c.db.MustBegin()
+	defer func() {
+		if err != nil {
+			err = tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
 
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
 	row := tx.QueryRowx(
@@ -826,16 +815,14 @@ func (c *Server) createV3Issuer(issuer Issuer) error {
 	)
 	// get the newly inserted issuer identifier
 	if err := row.Scan(&issuer.ID); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("failed to get v3 issuer id: %w", err)
 	}
 
 	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
-		tx.Rollback()
 		return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 	}
 	queryTimer.ObserveDuration()
-	return tx.Commit()
+	return nil
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
@@ -893,7 +880,6 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			// start/end, increment every iteration
 			end, err = duration.From(*start)
 			if err != nil {
-				tx.Rollback()
 				return fmt.Errorf("unable to calculate end time: %w", err)
 			}
 		}
@@ -901,21 +887,18 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		signingKey, err := crypto.RandomSigningKey()
 		if err != nil {
 			logger.Error("Error generating key")
-			tx.Rollback()
 			return err
 		}
 
 		signingKeyTxt, err := signingKey.MarshalText()
 		if err != nil {
 			logger.Error("Error marshalling signing key")
-			tx.Rollback()
 			return err
 		}
 
 		pubKeyTxt, err := signingKey.PublicKey().MarshalText()
 		if err != nil {
 			logger.Error("Error marshalling public key")
-			tx.Rollback()
 			return err
 		}
 		logger.Infof("iteration key pubkey: %s", string(pubKeyTxt))
@@ -949,10 +932,8 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		position += 6
 
 		// increment start
-		if start != nil && end != nil {
-			tmp := *end
-			start = &tmp
-		}
+		tmp := *end
+		start = &tmp
 	}
 
 	var values []interface{}
@@ -981,10 +962,10 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		VALUES %s`, valueFmtStr), values...)
 	if err != nil {
 		logger.Error("Could not insert the new issuer keys into the DB")
-		tx.Rollback()
 		return err
 	}
-	return rows.Close()
+	defer rows.Close()
+	return nil
 }
 
 func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens int, expiresAt *time.Time) error {
@@ -1025,14 +1006,14 @@ type Queryable interface {
 }
 
 // RedeemToken redeems a token given an issuer and and preimage
-func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string) error {
+func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
-		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload)
+		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
-	return errors.New("Wrong Issuer Version")
+	return errors.New("wrong issuer version")
 }
 
 func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.TokenPreimage, payload string) error {
@@ -1044,37 +1025,29 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 	queryTimer := prometheus.NewTimer(createRedemptionDBDuration)
 	rows, err := db.Query(
 		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, stringIssuer, payload)
-	defer func() error {
-		if rows != nil {
-			err := rows.Close()
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}()
 	if err != nil {
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
 			return errDuplicateRedemption
 		}
 		return err
 	}
+	defer rows.Close()
 
 	queryTimer.ObserveDuration()
 	return nil
 }
 
-func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
+func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
 	if c.caches != nil {
-		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, ID)); found {
+		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, id)); found {
 			return cached.(*Redemption), nil
 		}
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.db.Query(
-		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, ID, issuerType)
+		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
 	queryTimer.ObserveDuration()
 
 	if err != nil {
@@ -1091,7 +1064,7 @@ func (c *Server) fetchRedemption(issuerType, ID string) (*Redemption, error) {
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, ID), redemption)
+			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), redemption)
 		}
 
 		return redemption, nil
@@ -1123,24 +1096,25 @@ func (c *Server) convertDBIssuerKeys(issuerKeyToConvert issuerKeys) (*IssuerKeys
 	return &parsedIssuerKeys, nil
 }
 
-func (c *Server) convertDBIssuer(issuerToConvert issuer) (*Issuer, error) {
+// convertDBIssuer takes an issuer from the database and returns a reference to that issuer
+// Represented as an Issuer struct. It will return out of the cache if possible. If there
+// is no cache record, the database issuer will be parsed into an Issuer, the cache will be
+// updated, and then the Issuer reference will be returned.
+func (c *Server) convertDBIssuer(issuerToConvert issuer) *Issuer {
 	stringifiedID := string(issuerToConvert.ID.String())
 	if c.caches != nil {
 		if cached, found := c.caches["convertedissuers"].Get(stringifiedID); found {
-			return cached.(*Issuer), nil
+			return cached.(*Issuer)
 		}
 	}
 
-	parsedIssuer, err := parseIssuer(issuerToConvert)
-	if err != nil {
-		return nil, err
-	}
+	parsedIssuer := parseIssuer(issuerToConvert)
 
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(stringifiedID, parseIssuer)
+		c.caches["issuer"].SetDefault(stringifiedID, parsedIssuer)
 	}
 
-	return &parsedIssuer, nil
+	return &parsedIssuer
 }
 
 func parseIssuerKeys(issuerKeysToParse issuerKeys) (IssuerKeys, error) {
@@ -1162,7 +1136,8 @@ func parseIssuerKeys(issuerKeysToParse issuerKeys) (IssuerKeys, error) {
 	return parsedIssuerKey, nil
 }
 
-func parseIssuer(issuerToParse issuer) (Issuer, error) {
+// parseIssuer converts a database issuer into an Issuer struct with no additional side-effects
+func parseIssuer(issuerToParse issuer) Issuer {
 	parsedIssuer := Issuer{
 		ID:           issuerToParse.ID,
 		Version:      issuerToParse.Version,
@@ -1184,5 +1159,19 @@ func parseIssuer(issuerToParse issuer) (Issuer, error) {
 		parsedIssuer.RotatedAt = issuerToParse.RotatedAt.Time
 	}
 
-	return parsedIssuer, nil
+	return parsedIssuer
+}
+
+// isPostgresNotFoundError uses the error map found at the below URL to determine if an
+// error is a Postgres no_data_found error.
+// https://github.com/lib/pq/blob/d5affd5073b06f745459768de35356df2e5fd91d/error.go#L348
+func isPostgresNotFoundError(err error) bool {
+	pqError, ok := err.(*pq.Error)
+	if !ok {
+		return false
+	}
+	if pqError.Code.Class().Name() != "no_data_found" {
+		return true
+	}
+	return false
 }

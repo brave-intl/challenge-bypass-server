@@ -46,6 +46,7 @@ type issuerFetchRequestV2 struct {
 	Cohort int16 `json:"cohort"`
 }
 
+// GetLatestIssuer - get the latest issuer by type/cohort
 func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
@@ -67,6 +68,17 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer
 	return &(*issuer)[0], nil
 }
 
+// GetLatestIssuerKafka - get the issuer and any processing error
+func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*Issuer, error) {
+	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+	if err != nil {
+		return nil, err
+	}
+
+	return &(*issuer)[0], nil
+}
+
+// GetIssuers - get all issuers by issuer type
 func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
 	issuers, err := c.getIssuers(issuerType)
 	if err != nil {
@@ -225,7 +237,6 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		ValidFrom:    req.ValidFrom,
 		Duration:     &req.Duration,
 	}); err != nil {
-
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
 			if pqErr.Code == "23505" { // unique violation
