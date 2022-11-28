@@ -134,6 +134,41 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *han
 	return nil
 }
 
+func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	issuerType := chi.URLParam(r, "type")
+
+	if issuerType != "" {
+		// need an issuer type, 404 otherwise
+		return &handlers.AppError{
+			Message: "Issuer with given type not found",
+			Code:    http.StatusNotFound,
+		}
+	}
+
+	issuer, appErr := c.GetLatestIssuer(issuerType, v3Cohort)
+	if appErr != nil {
+		return appErr
+	}
+
+	expiresAt := ""
+	if !issuer.ExpiresAt.IsZero() {
+		expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+	}
+
+	// get the signing public key
+	var publicKey *crypto.PublicKey
+	for _, k := range issuer.Keys {
+		publicKey = k.SigningKey.PublicKey()
+	}
+
+	err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
+	if err != nil {
+		c.Logger.Error("Error encoding the issuer response")
+		panic(err)
+	}
+	return nil
+}
+
 func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Context(), r.Body)
 
@@ -396,6 +431,7 @@ func (c *Server) issuerRouterV3() chi.Router {
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
 	}
+	r.Method("GET", "/{type}", middleware.InstrumentHandler("GetIssuerV3", handlers.AppHandler(c.issuerHandlerV3)))
 	r.Method("POST", "/", middleware.InstrumentHandler("CreateIssuerV3", handlers.AppHandler(c.issuerV3CreateHandler)))
 	return r
 }
