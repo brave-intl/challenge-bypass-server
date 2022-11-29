@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/lib/pq"
 	"github.com/pressly/lg"
+	"github.com/sirupsen/logrus"
 )
 
 type issuerResponse struct {
@@ -50,14 +51,17 @@ type issuerFetchRequestV2 struct {
 func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
-		if err == errIssuerCohortNotFound {
+		if errors.Is(err, errIssuerCohortNotFound) {
 			c.Logger.Error("Issuer with given type and cohort not found")
 			return nil, &handlers.AppError{
 				Message: "Issuer with given type and cohort not found",
 				Code:    404,
 			}
 		}
-		c.Logger.Error("Error finding issuer")
+		c.Logger.WithFields(
+			logrus.Fields{
+				"err": err.Error(),
+			}).Error("Error finding issuer")
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",
@@ -91,12 +95,16 @@ func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
 func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
-		if err == errIssuerNotFound {
+		if errors.Is(err, errIssuerNotFound) {
 			return nil, &handlers.AppError{
 				Message: "Issuer not found",
 				Code:    404,
 			}
 		}
+		c.Logger.WithFields(
+			logrus.Fields{
+				"err": err.Error(),
+			}).Error("Error finding issuer")
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",

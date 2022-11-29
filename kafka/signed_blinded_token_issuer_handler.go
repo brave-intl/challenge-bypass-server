@@ -191,6 +191,10 @@ OUTER:
 			count := 0
 			for i := 0; i < len(blindedTokens); i += numT {
 				count++
+				if count > len(issuer.Keys) {
+					return fmt.Errorf("num keys %d: error invalid number of blindedTokens, not enough keys for signing request",
+						len(issuer.Keys))
+				}
 
 				logger.Info().Msgf("version 3 issuer: %+v , numT: %+v", issuer, numT)
 				var (
