@@ -21,6 +21,7 @@ import (
 
 const (
 	v1Cohort = int16(1)
+	v3Cohort = int16(1)
 )
 
 type blindedTokenIssueRequest struct {
