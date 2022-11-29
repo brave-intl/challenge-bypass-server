@@ -145,7 +145,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *han
 func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	issuerType := chi.URLParam(r, "type")
 
-	if issuerType != "" {
+	if issuerType == "" {
 		// need an issuer type, 404 otherwise
 		return &handlers.AppError{
 			Message: "Issuer with given type not found",
