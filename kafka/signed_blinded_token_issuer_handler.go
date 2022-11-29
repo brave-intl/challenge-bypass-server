@@ -192,7 +192,7 @@ OUTER:
 			for i := 0; i < len(blindedTokens); i += numT {
 				count++
 				if count > len(issuer.Keys) {
-					return fmt.Errorf("num keys %s: error invalid number of blindedTokens, not enough keys for signing request",
+					return fmt.Errorf("num keys %d: error invalid number of blindedTokens, not enough keys for signing request",
 						len(issuer.Keys))
 				}
 
