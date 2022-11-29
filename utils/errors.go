@@ -25,6 +25,11 @@ func (e ProcessingError) Cause() error {
 	return e.OriginalError
 }
 
+// Unwrap implements Unwrap for error
+func (e ProcessingError) Unwrap() error {
+	return e.OriginalError
+}
+
 // ProcessingErrorFromError - given an error turn it into a processing error
 func ProcessingErrorFromError(cause error, isTemporary bool) error {
 	return &ProcessingError{
