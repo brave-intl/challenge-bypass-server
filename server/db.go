@@ -690,7 +690,9 @@ func (c *Server) rotateIssuersV3() error {
 			i.version = 3 and
 			i.expires_at is not null and
 			i.expires_at > now()
-			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now() + i.buffer * i.duration::interval
+			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now()
+				+ i.buffer * i.duration::interval
+				+ i.overlap * i.duration::interval
 		for update skip locked
 		`,
 	)

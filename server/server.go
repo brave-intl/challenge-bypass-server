@@ -149,6 +149,11 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 
 	c.Logger = logger
 
+	// kick rotate v3 issuers on start
+	if err := c.rotateIssuersV3(); err != nil {
+		panic(err)
+	}
+
 	r.Mount("/v1/blindedToken", c.tokenRouterV1())
 	r.Mount("/v1/issuer", c.issuerRouterV1())
 
