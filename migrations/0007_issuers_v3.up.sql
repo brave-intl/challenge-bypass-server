@@ -46,15 +46,18 @@ where version = 1;
 insert into v3_issuers (
     issuer_id, issuer_type, created_at, expires_at, last_rotated_at, valid_from,
     buffer, days_out, overlap, issuer_cohort, redemption_repository, version, max_tokens)
-select
+select distinct on (issuer_type)
     id, issuer_type, created_at, expires_at, rotated_at, created_at,
     1, 30, 7, 1, 'dynamodb', version, max_tokens
 from issuers
-where version = 2;
+where version = 2
+order by issuer_type, expires_at desc;
 
 -- keys introduction
 insert into v3_issuer_keys (
     issuer_id, created_at, signing_key, cohort)
-select
-    id, created_at, signing_key, issuer_cohort
-from issuers;
+with
+    s1 as (
+        select id, v3_issuers.issuer_id, issuers.created_at, signing_key, issuers.issuer_cohort from issuers left join v3_issuers on v3_issuers.issuer_type = issuers.issuer_type
+    )
+select s1.issuer_id, s1.created_at, s1.signing_key, s1.issuer_cohort from s1;
