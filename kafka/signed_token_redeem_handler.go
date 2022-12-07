@@ -408,6 +408,7 @@ func handlePermanentRedemptionError(
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
 ) {
+	logger.Error().Msgf("encountered permanent failure: %v", message)
 	processingResult := avroRedeemErrorResultFromError(
 		message,
 		msg,
