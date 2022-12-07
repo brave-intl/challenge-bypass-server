@@ -24,6 +24,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.38
 	github.com/sirupsen/logrus v1.9.0
 	github.com/stretchr/testify v1.8.1
+	golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4
 )
 
 require (
