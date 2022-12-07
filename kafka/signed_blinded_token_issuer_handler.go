@@ -126,7 +126,7 @@ OUTER:
 			continue OUTER
 		}
 
-		logger.Info().Msgf("getting latest issuer: %+v - %+v", request.Issuer_type, request.Issuer_cohort)
+		logger.Info().Msgf("getting latest issuer: %+v with cohort: %+v", request.Issuer_type, request.Issuer_cohort)
 		issuer, appErr := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if appErr != nil {
 			logger.Error().Err(appErr).Msg("error retrieving issuer")
