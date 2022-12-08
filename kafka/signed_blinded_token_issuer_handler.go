@@ -17,19 +17,17 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-/*
-SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
-
-	In cases where there are unrecoverable errors that prevent progress we will return nil.
-	These permanent failure cases are different from cases where we encounter temporary
-	errors inside the request data. For permanent failures inside the data processing loop we
-	simply add the error to the results. However, temporary errors inside the loop should break
-	the loop and return non-nil just like the errors outside the data processing loop. This is
-	because future attempts to process permanent failure cases will not succeed.
-	@TODO: It would be better for the Server implementation and the Kafka implementation of
-	this behavior to share utility functions rather than passing an instance of the server
-	as an argument here. That will require a bit of refactoring.
-*/
+/*SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
+* In cases where there are unrecoverable errors that prevent progress we will return nil.
+* These permanent failure cases are different from cases where we encounter temporary
+* errors inside the request data. For permanent failures inside the data processing loop we
+* simply add the error to the results. However, temporary errors inside the loop should break
+* the loop and return non-nil just like the errors outside the data processing loop. This is
+* because future attempts to process permanent failure cases will not succeed.
+* @TODO: It would be better for the Server implementation and the Kafka implementation of
+*   this behavior to share utility functions rather than passing an instance of the server
+*   as an argument here. That will require a bit of refactoring.
+**/
 func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,

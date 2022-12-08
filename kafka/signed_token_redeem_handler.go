@@ -17,13 +17,10 @@ import (
 	kafka "github.com/segmentio/kafka-go"
 )
 
-/*
-SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
-
-	tokens provided. If it encounters a permanent error, it emits a permanent result for that
-	item. If the error is temporary, an error is returned to indicate that progress cannot be
-	made.
-*/
+/*SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
+* tokens provided. If it encounters a permanent error, it emits a permanent result for that
+* item. If the error is temporary, an error is returned to indicate that progress cannot be made.
+**/
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
