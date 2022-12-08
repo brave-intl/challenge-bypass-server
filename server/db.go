@@ -429,17 +429,22 @@ func (c *Server) fetchIssuers(ctx context.Context, issuerType string) ([]Issuer,
 		}
 	}
 
-	selectBy := "SELECT * FROM v3_issuers"
-	orderBy := "ORDER BY expires_at DESC NULLS LAST, created_at DESC"
-	where := ""
-	if issuerType != "all" {
-		where = fmt.Sprintf("WHERE issuer_type='%s'", issuerType)
+	var err error
+	var fetchedIssuers []issuer
+	if issuerType == "all" {
+		err = c.db.Select(
+			&fetchedIssuers,
+			`SELECT * FROM v3_issuers ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
+		)
+	} else {
+		err = c.db.Select(
+			&fetchedIssuers,
+			`SELECT * FROM v3_issuers WHERE issuer_type=$1 ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
+			issuerType,
+		)
 	}
 
 	temporary := false
-	var fetchedIssuers []issuer
-	query := fmt.Sprintf("%s %s %s", selectBy, where, orderBy)
-	err := c.db.Select(&fetchedIssuers, query)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		if !isPostgresNotFoundError(err) {
@@ -468,7 +473,7 @@ func (c *Server) fetchIssuerKeys(ctx context.Context, fetchedIssuers []issuer, t
 	g, ctx := errgroup.WithContext(ctx)
 	var issuers []Issuer
 	for _, fetchedIssuer := range fetchedIssuers {
-		fetchedIssuer := fetchedIssuer
+		fetchedIssuer := fetchedIssuer // https://golang.org/doc/faq#closures_and_goroutines
 		g.Go(func() error {
 			convertedIssuer := c.convertDBIssuer(fetchedIssuer)
 			// get the keys for the Issuer
