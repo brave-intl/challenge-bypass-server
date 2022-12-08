@@ -324,7 +324,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]Issuer, error) {
+func (c *Server) fetchIssuersByCohort(ctx context.Context, issuerType string, issuerCohort int16) ([]Issuer, error) {
 	// will not lose resolution int16->int
 	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
 	if c.caches != nil {
@@ -353,7 +353,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]
 		return nil, utils.ProcessingErrorFromError(errIssuerCohortNotFound, temporary)
 	}
 
-	issuerWithKey, err := c.fetchIssuerKeys(context.Background(), fetchedIssuers, &temporary)
+	issuerWithKey, err := c.fetchIssuerKeys(ctx, fetchedIssuers, &temporary)
 	if err != nil {
 		return nil, err
 	}
@@ -418,17 +418,19 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
-func (c *Server) FetchAllIssuers() ([]Issuer, error) {
-	return c.fetchIssuers("all")
+func (c *Server) FetchAllIssuers(ctx context.Context) ([]Issuer, error) {
+	return c.fetchIssuers(ctx, "all")
 }
 
-func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
+func (c *Server) fetchIssuers(ctx context.Context, issuerType string) ([]Issuer, error) {
 	if c.caches != nil {
 		if cached, found := c.caches["issuers"].Get(issuerType); found {
 			return cached.([]Issuer), nil
 		}
 	}
 
+	selectBy := "SELECT * FROM v3_issuers"
+	orderBy := "ORDER BY expires_at DESC NULLS LAST, created_at DESC"
 	where := ""
 	if issuerType != "all" {
 		where = fmt.Sprintf("WHERE issuer_type='%s'", issuerType)
@@ -436,7 +438,7 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 
 	temporary := false
 	var fetchedIssuers []issuer
-	query := fmt.Sprintf("SELECT * FROM v3_issuers %s ORDER BY expires_at DESC NULLS LAST, created_at DESC", where)
+	query := fmt.Sprintf("%s %s %s", selectBy, where, orderBy)
 	err := c.db.Select(&fetchedIssuers, query)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
@@ -450,7 +452,7 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, temporary)
 	}
 
-	issuerWithKey, err := c.fetchIssuerKeys(context.Background(), fetchedIssuers, &temporary)
+	issuerWithKey, err := c.fetchIssuerKeys(ctx, fetchedIssuers, &temporary)
 	if err != nil {
 		return nil, err
 	}
@@ -479,7 +481,8 @@ func (c *Server) fetchIssuerKeys(ctx context.Context, fetchedIssuers []issuer, t
 				lteVersionTwo = "true"
 			}
 			var fetchIssuerKeys []issuerKeys
-			err := c.db.Select(
+			err := c.db.SelectContext(
+				ctx,
 				&fetchIssuerKeys,
 				`SELECT *
 			FROM v3_issuer_keys 

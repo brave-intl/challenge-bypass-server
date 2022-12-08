@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -48,8 +49,8 @@ type issuerFetchRequestV2 struct {
 }
 
 // GetLatestIssuer - get the latest issuer by type/cohort
-func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+func (c *Server) GetLatestIssuer(ctx context.Context, issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
+	issuer, err := c.fetchIssuersByCohort(ctx, issuerType, issuerCohort)
 	if err != nil {
 		if errors.Is(err, errIssuerCohortNotFound) {
 			c.Logger.Error("Issuer with given type and cohort not found")
@@ -73,8 +74,8 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer
 }
 
 // GetLatestIssuerKafka - get the issuer and any processing error
-func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*Issuer, error) {
-	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+func (c *Server) GetLatestIssuerKafka(ctx context.Context, issuerType string, issuerCohort int16) (*Issuer, error) {
+	issuer, err := c.fetchIssuersByCohort(ctx, issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
 	}
@@ -83,8 +84,9 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 }
 
 // GetIssuers - get all issuers by issuer type
-func (c *Server) GetIssuers(issuerType string) ([]Issuer, error) {
-	issuers, err := c.getIssuers(issuerType)
+// TODO: No Direct Usage of this function
+func (c *Server) GetIssuers(ctx context.Context, issuerType string) ([]Issuer, error) {
+	issuers, err := c.getIssuers(ctx, issuerType)
 	if err != nil {
 		c.Logger.Error(err)
 		return nil, err
@@ -92,8 +94,8 @@ func (c *Server) GetIssuers(issuerType string) ([]Issuer, error) {
 	return issuers, nil
 }
 
-func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]Issuer, *handlers.AppError) {
+	issuer, err := c.fetchIssuers(ctx, issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {
 			return nil, &handlers.AppError{
@@ -118,7 +120,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *han
 	defer closers.Panic(r.Context(), r.Body)
 
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
+		issuer, appErr := c.GetLatestIssuer(r.Context(), issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -153,7 +155,7 @@ func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handle
 		}
 	}
 
-	issuer, appErr := c.GetLatestIssuer(issuerType, v3Cohort)
+	issuer, appErr := c.GetLatestIssuer(r.Context(), issuerType, v3Cohort)
 	if appErr != nil {
 		return appErr
 	}
@@ -188,7 +190,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 	}
 
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.GetLatestIssuer(issuerType, req.Cohort)
+		issuer, appErr := c.GetLatestIssuer(r.Context(), issuerType, req.Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -216,7 +218,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Context(), r.Body)
 
-	issuers, appErr := c.FetchAllIssuers()
+	issuers, appErr := c.FetchAllIssuers(r.Context())
 	if appErr != nil {
 		return &handlers.AppError{
 			Cause:   appErr,

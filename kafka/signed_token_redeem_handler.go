@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -18,9 +19,10 @@ import (
 
 /*
 SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
- tokens provided. If it encounters a permanent error, it emits a permanent result for that
- item. If the error is temporary, an error is returned to indicate that progress cannot be
- made.
+
+	tokens provided. If it encounters a permanent error, it emits a permanent result for that
+	item. If the error is temporary, an error is returned to indicate that progress cannot be
+	made.
 */
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
@@ -65,7 +67,7 @@ func SignedTokenRedeemHandler(
 		)
 		return nil
 	}
-	issuers, err := server.FetchAllIssuers()
+	issuers, err := server.FetchAllIssuers(context.Background())
 	if err != nil {
 		if processingError, ok := err.(*utils.ProcessingError); ok && processingError.Temporary {
 			return processingError
@@ -150,7 +152,7 @@ func SignedTokenRedeemHandler(
 			)
 			return nil
 		}
-		for _, issuer := range *issuers {
+		for _, issuer := range issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 				continue
 			}

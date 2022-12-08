@@ -89,7 +89,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		issuer, appErr := c.GetLatestIssuer(issuerType, request.IssuerCohort)
+		issuer, appErr := c.GetLatestIssuer(r.Context(), issuerType, request.IssuerCohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -125,7 +125,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	var response blindedTokenIssueResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
+		issuer, appErr := c.GetLatestIssuer(r.Context(), issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
 		}
@@ -284,7 +284,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	var response blindedTokenRedeemResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuers, appErr := c.getIssuers(issuerType)
+		issuers, appErr := c.getIssuers(r.Context(), issuerType)
 		if appErr != nil {
 			return appErr
 		}
@@ -378,7 +378,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 	for _, token := range request.Tokens {
 		// @TODO: this code seems to be from an old version - we use the `redeemTokenWithDB`, and we have no tests, so I
 		// assume that is no longer used, hence the usage of v1Cohort.
-		issuer, appErr := c.GetLatestIssuer(token.Issuer, v1Cohort)
+		issuer, appErr := c.GetLatestIssuer(r.Context(), token.Issuer, v1Cohort)
 
 		if appErr != nil {
 			_ = tx.Rollback()

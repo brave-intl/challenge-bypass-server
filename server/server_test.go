@@ -126,7 +126,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 
 	expiresAt := time.Now().AddDate(0, 0, 1)
 	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, issuerCohort, expiresAt)
-	issuer, _ := suite.srv.GetLatestIssuer(issuerType, issuerCohort)
+	issuer, _ := suite.srv.GetLatestIssuer(context.Background(), issuerType, issuerCohort)
 
 	unblindedToken := suite.createToken(server.URL, issuerType, publicKey)
 	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
@@ -166,7 +166,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Require().NoError(err, "failed to expire issuer")
 	defer r.Close()
 	// keys are what rotate now, not the issuer itself
-	issuer, _ = suite.srv.GetLatestIssuer(issuerType, issuerCohort)
+	issuer, _ = suite.srv.GetLatestIssuer(context.Background(), issuerType, issuerCohort)
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
@@ -197,7 +197,7 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 
 	expiresAt := time.Now().AddDate(0, 0, 1)
 	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, issuerCohort, expiresAt)
-	issuer, _ := suite.srv.GetLatestIssuer(issuerType, issuerCohort)
+	issuer, _ := suite.srv.GetLatestIssuer(context.Background(), issuerType, issuerCohort)
 
 	unblindedToken := suite.createCohortToken(server.URL, issuerType, issuerCohort, publicKey)
 	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
@@ -268,7 +268,7 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 
 	// wait a few intervals after creation and check number of signing keys left
 	time.Sleep(2 * time.Second)
-	myIssuer, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	myIssuer, err := suite.srv.GetLatestIssuer(context.Background(), issuer.IssuerType, issuer.IssuerCohort)
 	fmt.Println(err)
 	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
 
@@ -276,7 +276,7 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
 
-	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	myIssuer, _ = suite.srv.GetLatestIssuer(context.Background(), issuer.IssuerType, issuer.IssuerCohort)
 	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
@@ -286,7 +286,7 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 
 	// wait a few intervals after creation and check number of signing keys left
 	time.Sleep(2 * time.Second)
-	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	myIssuer, _ = suite.srv.GetLatestIssuer(context.Background(), issuer.IssuerType, issuer.IssuerCohort)
 	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
 }
 
@@ -619,7 +619,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	err := suite.srv.createV3Issuer(issuer)
 	suite.Require().NoError(err)
 
-	issuerKey, _ := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	issuerKey, _ := suite.srv.GetLatestIssuer(context.Background(), issuer.IssuerType, issuer.IssuerCohort)
 
 	tokens := make([]*crypto.Token, buffer)
 	blindedTokensSlice := make([]*crypto.BlindedToken, buffer)
