@@ -557,7 +557,7 @@ func avroIssuerErrorResultFromError(
 	}
 
 	return &ProcessingResult{
-		Message:        []byte(message),
+		Message:        resultSetBuffer.Bytes(),
 		ResultProducer: producer,
 		RequestID:      requestID,
 	}
