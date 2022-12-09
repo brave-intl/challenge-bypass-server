@@ -59,6 +59,7 @@ func SignedBlindedTokenIssuerHandler(
 		)
 		handlePermanentIssuanceError(
 			message,
+			err,
 			nil,
 			nil,
 			nil,
@@ -86,6 +87,7 @@ func SignedBlindedTokenIssuerHandler(
 		)
 		handlePermanentIssuanceError(
 			message,
+			err,
 			nil,
 			nil,
 			nil,
@@ -249,6 +251,7 @@ OUTER:
 					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
 					handlePermanentIssuanceError(
 						message,
+						err,
 						nil,
 						nil,
 						nil,
@@ -269,6 +272,7 @@ OUTER:
 						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
 						handlePermanentIssuanceError(
 							message,
+							err,
 							marshaledBlindedTokens,
 							nil,
 							nil,
@@ -291,6 +295,7 @@ OUTER:
 						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
 						handlePermanentIssuanceError(
 							message,
+							err,
 							marshaledBlindedTokens,
 							marshaledSignedTokens,
 							nil,
@@ -313,6 +318,7 @@ OUTER:
 					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
 					handlePermanentIssuanceError(
 						message,
+						err,
 						marshaledBlindedTokens,
 						marshaledSignedTokens,
 						marshaledDLEQProof,
@@ -374,6 +380,7 @@ OUTER:
 					blindedTokenRequestSet.Request_id, err)
 				handlePermanentIssuanceError(
 					message,
+					err,
 					nil,
 					nil,
 					marshaledDLEQProof,
@@ -394,6 +401,7 @@ OUTER:
 					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
 					handlePermanentIssuanceError(
 						message,
+						err,
 						marshaledBlindedTokens,
 						nil,
 						marshaledDLEQProof,
@@ -416,6 +424,7 @@ OUTER:
 					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
 					handlePermanentIssuanceError(
 						message,
+						err,
 						marshaledBlindedTokens,
 						marshaledSignedTokens,
 						marshaledDLEQProof,
@@ -437,6 +446,7 @@ OUTER:
 				message := fmt.Sprintf("error could not marshal signing key: %s", err)
 				handlePermanentIssuanceError(
 					message,
+					err,
 					marshaledBlindedTokens,
 					marshaledSignedTokens,
 					marshaledDLEQProof,
@@ -477,6 +487,7 @@ OUTER:
 		)
 		handlePermanentIssuanceError(
 			message,
+			err,
 			nil,
 			nil,
 			nil,
@@ -546,7 +557,7 @@ func avroIssuerErrorResultFromError(
 	}
 
 	return &ProcessingResult{
-		Message:        []byte(message),
+		Message:        resultSetBuffer.Bytes(),
 		ResultProducer: producer,
 		RequestID:      requestID,
 	}
@@ -556,6 +567,7 @@ func avroIssuerErrorResultFromError(
 // an errorand emit it.
 func handlePermanentIssuanceError(
 	message string,
+	cause error,
 	marshaledBlindedTokens []string,
 	marshaledSignedTokens []string,
 	marshaledDLEQProof []byte,
@@ -566,6 +578,7 @@ func handlePermanentIssuanceError(
 	producer *kafka.Writer,
 	logger *zerolog.Logger,
 ) {
+	logger.Error().Err(cause).Msgf("encountered permanent issuance failure: %v", message)
 	processingResult := avroIssuerErrorResultFromError(
 		message,
 		marshaledBlindedTokens,

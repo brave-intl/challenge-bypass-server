@@ -401,7 +401,7 @@ func avroRedeemErrorResultFromError(
 		}
 	}
 	return &ProcessingResult{
-		Message:        []byte(message),
+		Message:        resultSetBuffer.Bytes(),
 		ResultProducer: producer,
 		RequestID:      requestID,
 	}
@@ -418,7 +418,7 @@ func handlePermanentRedemptionError(
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
 ) {
-	logger.Error().Err(cause).Msgf("encountered permanent failure: %v", message)
+	logger.Error().Err(cause).Msgf("encountered permanent redemption failure: %v", message)
 	processingResult := avroRedeemErrorResultFromError(
 		message,
 		msg,
