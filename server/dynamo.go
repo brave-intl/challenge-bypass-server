@@ -187,6 +187,8 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 			return &redemption, BindingEquivalence, nil
 		}
 		return &redemption, IDEquivalence, nil
+	} else if err.Error() == "redemption with the given id does not exist" {
+		return &redemption, NoEquivalence, nil
 	}
 
 	var (
