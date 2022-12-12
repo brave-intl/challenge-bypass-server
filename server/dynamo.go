@@ -188,6 +188,9 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 		}
 		return &redemption, IDEquivalence, nil
 	}
+	if errors.Is(err, errRedemptionNotFound) {
+		return &redemption, NoEquivalence, nil
+	}
 
 	var (
 		ptee *awsDynamoTypes.ProvisionedThroughputExceededException
