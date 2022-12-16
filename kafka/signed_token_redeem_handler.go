@@ -35,6 +35,7 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
 		handlePermanentRedemptionError(
 			message,
+			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -55,6 +56,7 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
 		handlePermanentRedemptionError(
 			message,
+			errors.New("multiple messages"),
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -71,6 +73,7 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
 		handlePermanentRedemptionError(
 			message,
+			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -122,6 +125,7 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
 			handlePermanentRedemptionError(
 				message,
+				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -137,6 +141,7 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
 			handlePermanentRedemptionError(
 				message,
+				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -174,6 +179,7 @@ func SignedTokenRedeemHandler(
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
 				handlePermanentRedemptionError(
 					message,
+					err,
 					msg,
 					producer,
 					tokenRedeemRequestSet.Request_id,
@@ -230,6 +236,7 @@ func SignedTokenRedeemHandler(
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 			handlePermanentRedemptionError(
 				message,
+				err,
 				msg,
 				producer,
 				tokenRedeemRequestSet.Request_id,
@@ -277,6 +284,7 @@ func SignedTokenRedeemHandler(
 					}
 					handlePermanentRedemptionError(
 						message,
+						err,
 						msg,
 						producer,
 						tokenRedeemRequestSet.Request_id,
@@ -338,6 +346,7 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
 		handlePermanentRedemptionError(
 			message,
+			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
@@ -392,7 +401,7 @@ func avroRedeemErrorResultFromError(
 		}
 	}
 	return &ProcessingResult{
-		Message:        []byte(message),
+		Message:        resultSetBuffer.Bytes(),
 		ResultProducer: producer,
 		RequestID:      requestID,
 	}
@@ -402,12 +411,14 @@ func avroRedeemErrorResultFromError(
 // when handling all errors in the redeem flow
 func handlePermanentRedemptionError(
 	message string,
+	cause error,
 	msg kafka.Message,
 	producer *kafka.Writer,
 	requestID string,
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
 ) {
+	logger.Error().Err(cause).Msgf("encountered permanent redemption failure: %v", message)
 	processingResult := avroRedeemErrorResultFromError(
 		message,
 		msg,
