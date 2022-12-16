@@ -658,7 +658,12 @@ func (c *Server) rotateIssuers() error {
 	return nil
 }
 
-// rotateIssuers is the function that rotates
+// RotateIssuersV3 is the function that rotates time aware issuers
+func (c *Server) RotateIssuersV3() error {
+	return c.rotateIssuersV3()
+}
+
+// rotateIssuersV3 is the function implementation that rotates time aware issuers
 func (c *Server) rotateIssuersV3() error {
 	tx := c.db.MustBegin()
 

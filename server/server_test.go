@@ -48,10 +48,10 @@ func (suite *ServerTestSuite) SetupSuite() {
 	err = suite.srv.InitDBConfig()
 	suite.Require().NoError(err, "Failed to setup db conn")
 
-	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
-
 	suite.srv.InitDB()
 	suite.srv.InitDynamo()
+
+	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
 
 	err = test.SetupDynamodbTables(suite.srv.dynamo)
 	suite.Require().NoError(err)
