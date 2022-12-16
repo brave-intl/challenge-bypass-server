@@ -32,6 +32,7 @@ func main() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 
 	srv := *server.DefaultServer
+	srv.Logger = logger
 
 	flag.StringVar(&configFile, "config", "", "local config file for development (overrides cli options)")
 	flag.StringVar(&srv.DBConfigPath, "db_config", "", "path to the json file with database configuration")
