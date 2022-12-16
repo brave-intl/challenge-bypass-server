@@ -4,6 +4,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -120,8 +121,8 @@ func readAndCommitBatchPipelineResults(
 	}
 	err := <-msgCtx.errorResult
 	if err != nil {
-		logger.Error().Msg("temporary failure encountered")
-		return errors.New("temporary failure encountered")
+		logger.Error().Err(err).Msg("temporary failure encountered")
+		return fmt.Errorf("temporary failure encountered: %w", err)
 	}
 	logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {

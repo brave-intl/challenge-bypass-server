@@ -194,6 +194,12 @@ OUTER:
 			for i := 0; i < len(blindedTokens); i += numT {
 				count++
 				if count > len(issuer.Keys) {
+					// perform a rotation in an attempt to get that last key
+					if err := server.RotateIssuersV3(); err != nil {
+						// temporary error returned, rotation failed, try again next time
+						return errors.New("failed to rotate issuer: not enough keys for signing request")
+					}
+					// temporary error returned, have the message retried as we just performed a rotation
 					return fmt.Errorf("num keys %d: error invalid number of blindedTokens, not enough keys for signing request",
 						len(issuer.Keys))
 				}
