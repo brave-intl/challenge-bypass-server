@@ -697,7 +697,7 @@ func (c *Server) rotateIssuersV3() error {
 			i.expires_at > now()
 			and (select max(end_at) from v3_issuer_keys where issuer_id=i.issuer_id) < now()
 				+ i.buffer * i.duration::interval
-				+ i.overlap * i.duration::interval
+				+ i.overlap * i.duration::interval -1 * i.duration::interval
 		for update skip locked
 		`,
 	)
@@ -718,12 +718,7 @@ func (c *Server) rotateIssuersV3() error {
 		err = tx.Select(
 			&fetchIssuerKeys,
 			`SELECT *
-			FROM v3_issuer_keys where issuer_id=$1
-			and 
-			(
-				(select version from v3_issuers where issuer_id=$1)<=2
-				or end_at > now()
-			)
+			FROM v3_issuer_keys where issuer_id=$1 and end_at > now()
 			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
 			issuerDTO.ID,
 		)
@@ -843,9 +838,13 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	if issuer.Version == 3 {
 		// get the duration from the issuer
 		if issuer.Duration != nil {
-			logger.Debug("making sure duration is not nil")
+			logger.Warn("invalid duration for a v3 issuer")
 			duration, err = timeutils.ParseDuration(*issuer.Duration)
 			if err != nil {
+				logger.WithFields(
+					logrus.Fields{
+						"err": err.Error(),
+					}).Error("failed to parse issuer duration")
 				return fmt.Errorf("failed to parse issuer duration: %w", err)
 			}
 		}
@@ -887,25 +886,38 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			// start/end, increment every iteration
 			end, err = duration.From(*start)
 			if err != nil {
+				logger.WithFields(
+					logrus.Fields{
+						"err": err.Error(),
+					}).Error("unable to calculate end time")
 				return fmt.Errorf("unable to calculate end time: %w", err)
 			}
 		}
 
 		signingKey, err := crypto.RandomSigningKey()
 		if err != nil {
-			logger.Error("Error generating key")
+			logger.WithFields(
+				logrus.Fields{
+					"err": err.Error(),
+				}).Error("error generating key")
 			return err
 		}
 
 		signingKeyTxt, err := signingKey.MarshalText()
 		if err != nil {
-			logger.Error("Error marshalling signing key")
+			logger.WithFields(
+				logrus.Fields{
+					"err": err.Error(),
+				}).Error("error marshalling signing key")
 			return err
 		}
 
 		pubKeyTxt, err := signingKey.PublicKey().MarshalText()
 		if err != nil {
-			logger.Error("Error marshalling public key")
+			logger.WithFields(
+				logrus.Fields{
+					"err": err.Error(),
+				}).Error("error marshalling public key")
 			return err
 		}
 		logger.Infof("iteration key pubkey: %s", string(pubKeyTxt))
@@ -968,7 +980,10 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			)
 		VALUES %s`, valueFmtStr), values...)
 	if err != nil {
-		logger.Error("Could not insert the new issuer keys into the DB")
+		logger.WithFields(
+			logrus.Fields{
+				"err": err.Error(),
+			}).Error("could not insert the new issuer keys into the db")
 		return err
 	}
 	defer rows.Close()
