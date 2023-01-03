@@ -727,6 +727,8 @@ func (c *Server) rotateIssuersV3() error {
 			return err
 		}
 
+		c.Logger.Info("fetched the issuer keys")
+
 		for _, v := range fetchIssuerKeys {
 			k, err := c.convertDBIssuerKeys(v)
 			if err != nil {
@@ -734,7 +736,12 @@ func (c *Server) rotateIssuersV3() error {
 				return err
 			}
 			issuerDTO.Keys = append(issuerDTO.Keys, *k)
+			c.Logger.Info("appended keys")
 		}
+		c.Logger.WithFields(
+			logrus.Fields{
+				"issuer keys": issuerDTO.Keys,
+			}).Info("calling txpopulateissuerkeys")
 
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuerDTO); err != nil {
@@ -838,7 +845,6 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	if issuer.Version == 3 {
 		// get the duration from the issuer
 		if issuer.Duration != nil {
-			logger.Warn("invalid duration for a v3 issuer")
 			duration, err = timeutils.ParseDuration(*issuer.Duration)
 			if err != nil {
 				logger.WithFields(
@@ -869,9 +875,13 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		// if the issuer has keys already, start needs to be the last item in slice
 		tmp := *issuer.Keys[len(issuer.Keys)-1].EndAt
 		start = &tmp
-		i = len(issuer.Keys)
+		i = len(issuer.Keys) - 1
+		logger.WithFields(
+			logrus.Fields{
+				"i":     i,
+				"start": start,
+			}).Info("figured out the lacking keys")
 	}
-	logger.Debug("about to make the issuer keys")
 
 	valueFmtStr := ""
 
@@ -880,6 +890,13 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	// Create signing keys for buffer and overlap
 	// we really just want signing keys for the buckets that do not exist
 	// not all the buckets
+	logger.WithFields(
+		logrus.Fields{
+			"i":       i,
+			"buffer":  issuer.Buffer,
+			"overlap": issuer.Overlap,
+		}).Info("issuer buffer/overlap")
+
 	for ; i < issuer.Buffer+issuer.Overlap; i++ {
 		end := new(time.Time)
 		if duration != nil {
@@ -893,6 +910,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 				return fmt.Errorf("unable to calculate end time: %w", err)
 			}
 		}
+
+		logger.WithFields(
+			logrus.Fields{
+				"end": end,
+			}).Info("making keys")
 
 		signingKey, err := crypto.RandomSigningKey()
 		if err != nil {
@@ -961,6 +983,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		values = append(values,
 			v.IssuerID, v.SigningKey, v.PublicKey, v.Cohort, v.StartAt, v.EndAt)
 	}
+	logger.WithFields(
+		logrus.Fields{
+			"fmtstr": valueFmtStr,
+			"values": values,
+		}).Info("about to insert")
 
 	if len(values) == 0 {
 		// nothing to insert, return
@@ -986,6 +1013,11 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			}).Error("could not insert the new issuer keys into the db")
 		return err
 	}
+	logger.WithFields(
+		logrus.Fields{
+			"fmtstr": valueFmtStr,
+			"values": values,
+		}).Info("performed insert")
 	defer rows.Close()
 	return nil
 }
