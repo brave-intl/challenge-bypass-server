@@ -157,20 +157,10 @@ func SignedTokenRedeemHandler(
 
 			// get latest signing key from issuer
 			var signingKey *crypto.SigningKey
-			if issuer.Version < 3 {
-				// non-time aware verification use latest issuer key
-				if len(issuer.Keys) > 0 {
-					signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
-				}
-			} else if issuer.Version == 3 {
-				// iterate through keys until we find the one that is valid now
-				for _, k := range issuer.Keys {
-					if k.StartAt.Before(time.Now()) && k.EndAt.After(time.Now()) {
-						signingKey = k.SigningKey
-						break
-					}
-				}
+			if len(issuer.Keys) > 0 {
+				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
 			}
+
 			// Only attempt token verification with the issuer that was provided.
 			issuerPublicKey := signingKey.PublicKey()
 			marshaledPublicKey, err := issuerPublicKey.MarshalText()
