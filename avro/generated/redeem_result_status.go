@@ -4,7 +4,8 @@
  *     redeem_request.avsc
  *     redeem_result.avsc
  *     signing_request.avsc
- *     signing_result.avsc
+ *     signing_result_v1.avsc
+ *     signing_result_v2.avsc
  */
 package generated
 
@@ -22,10 +23,11 @@ var _ = fmt.Printf
 type RedeemResultStatus int32
 
 const (
-	RedeemResultStatusOk                   RedeemResultStatus = 0
-	RedeemResultStatusDuplicate_redemption RedeemResultStatus = 1
-	RedeemResultStatusUnverified           RedeemResultStatus = 2
-	RedeemResultStatusError                RedeemResultStatus = 3
+	RedeemResultStatusOk                    RedeemResultStatus = 0
+	RedeemResultStatusDuplicate_redemption  RedeemResultStatus = 1
+	RedeemResultStatusUnverified            RedeemResultStatus = 2
+	RedeemResultStatusError                 RedeemResultStatus = 3
+	RedeemResultStatusIdempotent_redemption RedeemResultStatus = 4
 )
 
 func (e RedeemResultStatus) String() string {
@@ -38,6 +40,8 @@ func (e RedeemResultStatus) String() string {
 		return "unverified"
 	case RedeemResultStatusError:
 		return "error"
+	case RedeemResultStatusIdempotent_redemption:
+		return "idempotent_redemption"
 	}
 	return "unknown"
 }
@@ -56,6 +60,8 @@ func NewRedeemResultStatusValue(raw string) (r RedeemResultStatus, err error) {
 		return RedeemResultStatusUnverified, nil
 	case "error":
 		return RedeemResultStatusError, nil
+	case "idempotent_redemption":
+		return RedeemResultStatusIdempotent_redemption, nil
 	}
 
 	return -1, fmt.Errorf("invalid value for RedeemResultStatus: '%s'", raw)

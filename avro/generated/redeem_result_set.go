@@ -4,7 +4,8 @@
  *     redeem_request.avsc
  *     redeem_result.avsc
  *     signing_request.avsc
- *     signing_result.avsc
+ *     signing_result_v1.avsc
+ *     signing_result_v2.avsc
  */
 package generated
 
@@ -27,7 +28,7 @@ type RedeemResultSet struct {
 	Data []RedeemResult `json:"data"`
 }
 
-const RedeemResultSetAvroCRC64Fingerprint = "\xa5a\x92\xe9\xfb@i\""
+const RedeemResultSetAvroCRC64Fingerprint = "\x04\xe6\xb5@7\xfb\xc28"
 
 func NewRedeemResultSet() RedeemResultSet {
 	r := RedeemResultSet{}
@@ -77,7 +78,7 @@ func (r RedeemResultSet) Serialize(w io.Writer) error {
 }
 
 func (r RedeemResultSet) Schema() string {
-	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\",\"unverified\",\"error\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"RedeemResult\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemResultSet\",\"type\":\"record\"}"
+	return "{\"doc\":\"Top level request containing the data to be processed, as well as any top level metadata for this message.\",\"fields\":[{\"name\":\"request_id\",\"type\":\"string\"},{\"name\":\"data\",\"type\":{\"items\":{\"fields\":[{\"name\":\"issuer_name\",\"type\":\"string\"},{\"name\":\"issuer_cohort\",\"type\":\"int\"},{\"name\":\"status\",\"type\":{\"name\":\"RedeemResultStatus\",\"symbols\":[\"ok\",\"duplicate_redemption\",\"unverified\",\"error\",\"idempotent_redemption\"],\"type\":\"enum\"}},{\"doc\":\"contains METADATA\",\"name\":\"associated_data\",\"type\":\"bytes\"}],\"name\":\"RedeemResult\",\"namespace\":\"brave.cbp\",\"type\":\"record\"},\"type\":\"array\"}}],\"name\":\"brave.cbp.RedeemResultSet\",\"type\":\"record\"}"
 }
 
 func (r RedeemResultSet) SchemaName() string {

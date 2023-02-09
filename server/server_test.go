@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,7 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/brave-intl/bat-go/middleware"
+	"github.com/brave-intl/challenge-bypass-server/btd"
+	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
+
+	"github.com/brave-intl/challenge-bypass-server/utils/test"
+
+	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
 	uuid "github.com/satori/go.uuid"
@@ -33,7 +37,7 @@ func TestServerTestSuite(t *testing.T) {
 }
 
 func (suite *ServerTestSuite) SetupSuite() {
-	err := os.Setenv("ENV", "production")
+	err := os.Setenv("ENV", "localtest")
 	suite.Require().NoError(err)
 
 	suite.accessToken = uuid.NewV4().String()
@@ -41,17 +45,22 @@ func (suite *ServerTestSuite) SetupSuite() {
 
 	suite.srv = &Server{}
 
-	err = suite.srv.InitDbConfig()
+	err = suite.srv.InitDBConfig()
 	suite.Require().NoError(err, "Failed to setup db conn")
 
-	suite.srv.InitDb()
+	suite.srv.InitDB()
 	suite.srv.InitDynamo()
+
+	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
+
+	err = test.SetupDynamodbTables(suite.srv.dynamo)
+	suite.Require().NoError(err)
 
 	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
 }
 
 func (suite *ServerTestSuite) SetupTest() {
-	tables := []string{"issuers", "redemptions"}
+	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 
 	for _, table := range tables {
 		_, err := suite.srv.db.Exec("delete from " + table)
@@ -67,7 +76,7 @@ func (suite *ServerTestSuite) TestPing() {
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	expected := "."
-	actual, err := ioutil.ReadAll(resp.Body)
+	actual, err := io.ReadAll(resp.Body)
 	suite.Assert().NoError(err, "Reading response body should succeed")
 	suite.Assert().Equal(expected, string(actual), "Message should match")
 }
@@ -125,7 +134,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	var issuerResp blindedTokenRedeemResponse
@@ -141,28 +150,36 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	preimageText, sigText = suite.prepareRedemption(unblindedToken, msg)
 	unblindedToken2 := suite.createToken(server.URL, issuerType, publicKey)
 	preimageText2, sigText2 := suite.prepareRedemption(unblindedToken2, msg)
+	// should create a new key in keys table
 	_ = suite.srv.rotateIssuers()
 	resp, _ = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
-
-	_, _ = suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
-	issuers, _ := suite.srv.fetchIssuers(issuerType)
-	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
+	r, err := suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	suite.Require().NoError(err, "failed to expire issuer")
+	defer r.Close()
+	// keys are what rotate now, not the issuer itself
 	issuer, _ = suite.srv.GetLatestIssuer(issuerType, issuerCohort)
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 
-	publicKey = issuer.SigningKey.PublicKey()
+	// get public key from issuer keys
+	var signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+	publicKey = signingKey.PublicKey()
+
+	r, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
+	suite.Require().NoError(err, "failed to unexpire issuer")
+	defer r.Close()
+
 	unblindedToken = suite.createToken(server.URL, issuerType, publicKey)
 	preimageText, sigText = suite.prepareRedemption(unblindedToken, msg)
 	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
@@ -188,7 +205,7 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	var issuerResp blindedTokenRedeemResponse
@@ -209,29 +226,184 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "Attempted redemption request should succeed")
 
-	body, err = ioutil.ReadAll(resp.Body)
+	body, err = io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Redemption response body read must succeed")
 
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Redemption response body unmarshal must succeed")
 	suite.Assert().NotEqual(issuerResp.Cohort, 1-issuerCohort, "Redemption of a token should return the same cohort with which it was signed")
 
-	_, _ = suite.srv.db.Query(`UPDATE issuers SET expires_at=$1 WHERE id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
-	issuers, _ := suite.srv.fetchIssuers(issuerType)
-	suite.Assert().Equal(len(*issuers), 2, "There should be two issuers of same type")
+	r, err := suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, -1), issuer.ID)
+	suite.Require().NoError(err, "failed to expire issuer")
+	defer r.Close()
 
 	resp, err = suite.attemptRedeem(server.URL, preimageText2, sigText2, issuerType, msg)
 	suite.Assert().NoError(err, "HTTP Request should complete")
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 }
 
-func (suite *ServerTestSuite) request(method string, URL string, payload io.Reader) (*http.Response, error) {
+type v3Redemption struct {
+	validFrom       time.Time
+	validTo         time.Time
+	unblindedTokens []*crypto.UnblindedToken
+}
+
+func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
+	var buffer = 3
+	var issuerType = test.RandomString()
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   issuerType,
+		IssuerCohort: 1,
+		MaxTokens:    buffer,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       buffer,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	// wait a few intervals after creation and check number of signing keys left
+	time.Sleep(2 * time.Second)
+	myIssuer, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	fmt.Println(err)
+	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+
+	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
+	err = suite.srv.rotateIssuersV3()
+	suite.Require().NoError(err)
+
+	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
+
+	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
+	err = suite.srv.rotateIssuersV3()
+	suite.Require().NoError(err)
+	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now still
+
+	// wait a few intervals after creation and check number of signing keys left
+	time.Sleep(2 * time.Second)
+	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+}
+
+func (suite *ServerTestSuite) TestCreateIssuerV3() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	ctx := context.Background()
+
+	request := issuerV3CreateRequest{
+		Name:      test.RandomString(),
+		Cohort:    3,
+		MaxTokens: 10,
+		ValidFrom: ptr.FromTime(time.Now()),
+		Duration:  "P1M",
+		Buffer:    10,
+		Overlap:   2,
+	}
+
+	payload, err := json.Marshal(request)
+	suite.Require().NoError(err)
+
+	createIssuerURL := fmt.Sprintf("%s/v3/issuer/", server.URL)
+	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer(payload))
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	actualIssuer, err := suite.srv.fetchIssuerByType(ctx, request.Name)
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(request.Name, actualIssuer.IssuerType)
+	suite.Assert().Equal(request.Cohort, actualIssuer.IssuerCohort)
+	suite.Assert().Equal(request.MaxTokens, actualIssuer.MaxTokens)
+	suite.Assert().Equal(request.MaxTokens, actualIssuer.MaxTokens)
+	suite.Assert().WithinDuration(*request.ValidFrom, *actualIssuer.ValidFrom, 100*time.Millisecond)
+	suite.Assert().Equal(request.Duration, *actualIssuer.Duration)
+	suite.Assert().Equal(request.Buffer, actualIssuer.Buffer)
+	suite.Assert().Equal(request.Overlap, actualIssuer.Overlap)
+}
+
+func (suite *ServerTestSuite) TestGetIssuerV2() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	var issuerType = test.RandomString()
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   issuerType,
+		IssuerCohort: 1,
+		MaxTokens:    1,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       1,
+		Overlap:      1,
+		Duration:     ptr.FromString("PT10S"),
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	request := issuerFetchRequestV2{
+		issuer.IssuerCohort,
+	}
+
+	payload, err := json.Marshal(request)
+	suite.Require().NoError(err)
+
+	url := fmt.Sprintf("%s/v2/issuer/%s", server.URL, issuer.IssuerType)
+	resp, err := suite.request(http.MethodGet, url, bytes.NewBuffer(payload))
+	suite.Require().NoError(err)
+
+	suite.Require().Equal(http.StatusOK, resp.StatusCode)
+
+	var actual issuerResponse
+	err = json.NewDecoder(resp.Body).Decode(&actual)
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(issuer.IssuerType, actual.Name)
+}
+
+func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   test.RandomString(),
+		IssuerCohort: 1,
+		MaxTokens:    5,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       4,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"),
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	time.Sleep(2 * time.Second)
+
+	rows, err := suite.srv.deleteIssuerKeys("PT1S")
+	suite.Require().NoError(err)
+
+	suite.Assert().Equal(int64(1), rows)
+}
+
+func (suite *ServerTestSuite) TestRunRotate() {
+	err := suite.srv.rotateIssuersV3()
+	suite.Require().NoError(err)
+}
+
+func (suite *ServerTestSuite) request(method string, url string, payload io.Reader) (*http.Response, error) {
 	var req *http.Request
 	var err error
 	if payload != nil {
-		req, err = http.NewRequest(method, URL, payload)
+		req, err = http.NewRequest(method, url, payload)
 	} else {
-		req, err = http.NewRequest(method, URL, nil)
+		req, err = http.NewRequest(method, url, nil)
 	}
 	if err != nil {
 		return nil, err
@@ -243,7 +415,7 @@ func (suite *ServerTestSuite) request(method string, URL string, payload io.Read
 	return http.DefaultClient.Do(req)
 }
 
-func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, issuerCohort int) *crypto.PublicKey {
+func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, issuerCohort int16) *crypto.PublicKey {
 	payload := fmt.Sprintf(`{"name":"%s", "cohort": %d, "max_tokens":100}`, issuerType, issuerCohort)
 	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", serverURL)
 	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
@@ -256,7 +428,7 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, 
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp issuerResponse
@@ -276,7 +448,7 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	suite.Require().NoError(err, "Getting alll Issuers must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp []issuerResponse
@@ -291,9 +463,10 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	return issuerResp
 }
 
-func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issuerType string, issuerCohort int, expiresAt time.Time) *crypto.PublicKey {
+func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issuerType string, issuerCohort int16, expiresAt time.Time) *crypto.PublicKey {
 	payload := fmt.Sprintf(`{"name":"%s", "cohort": %d, "max_tokens":100, "expires_at":"%s"}`, issuerType, issuerCohort, expiresAt.Format("2006-01-02T15:04:05Z07:00"))
-	createIssuerURL := fmt.Sprintf("%s/v1/issuer/", serverURL)
+	// v2+ has expirations
+	createIssuerURL := fmt.Sprintf("%s/v2/issuer/", serverURL)
 	resp, err := suite.request("POST", createIssuerURL, bytes.NewBuffer([]byte(payload)))
 	suite.Require().NoError(err, "Issuer creation must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
@@ -304,7 +477,7 @@ func (suite *ServerTestSuite) createIssuerWithExpiration(serverURL string, issue
 	suite.Require().NoError(err, "Issuer fetch must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Issuer fetch body read must succeed")
 
 	var issuerResp issuerResponse
@@ -346,7 +519,7 @@ func (suite *ServerTestSuite) createTokens(serverURL string, issuerType string, 
 	suite.Require().NoError(err, "Token signing must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Token signing body read must succeed")
 
 	var decodedResp blindedTokenIssueResponse
@@ -384,11 +557,11 @@ func (suite *ServerTestSuite) attemptRedeem(serverURL string, preimageText []byt
 	return suite.request("POST", redeemURL, bytes.NewBuffer([]byte(payload)))
 }
 
-func (suite *ServerTestSuite) createCohortToken(serverURL string, issuerType string, issuerCohort int, publicKey *crypto.PublicKey) *crypto.UnblindedToken {
+func (suite *ServerTestSuite) createCohortToken(serverURL string, issuerType string, issuerCohort int16, publicKey *crypto.PublicKey) *crypto.UnblindedToken {
 	return suite.createCohortTokens(serverURL, issuerType, issuerCohort, publicKey, 1)[0]
 }
 
-func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType string, issuerCohort int, publicKey *crypto.PublicKey, numTokens int) []*crypto.UnblindedToken {
+func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType string, issuerCohort int16, publicKey *crypto.PublicKey, numTokens int) []*crypto.UnblindedToken {
 	tokens := make([]*crypto.Token, numTokens)
 	blindedTokens := make([]*crypto.BlindedToken, numTokens)
 
@@ -411,7 +584,7 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 	suite.Require().NoError(err, "Token signing must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	suite.Require().NoError(err, "Token signing body read must succeed")
 
 	var decodedResp blindedTokenIssueResponse
@@ -425,4 +598,92 @@ func (suite *ServerTestSuite) createCohortTokens(serverURL string, issuerType st
 	suite.Require().NoError(err, "Batch verification and token unblinding must succeed")
 
 	return unblindedTokens
+}
+
+func (suite *ServerTestSuite) TestRedeemV3() {
+	var buffer = 10
+	var redemptions = []v3Redemption{}
+	var issuerType = test.RandomString()
+	issuer := Issuer{
+		Version:      3,
+		IssuerType:   issuerType,
+		IssuerCohort: 1,
+		MaxTokens:    buffer,
+		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		Buffer:       buffer,
+		Overlap:      0,
+		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
+		ValidFrom:    ptr.FromTime(time.Now()),
+	}
+
+	err := suite.srv.createV3Issuer(issuer)
+	suite.Require().NoError(err)
+
+	issuerKey, _ := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
+
+	tokens := make([]*crypto.Token, buffer)
+	blindedTokensSlice := make([]*crypto.BlindedToken, buffer)
+
+	for i := 0; i < buffer; i++ {
+		token, err := crypto.RandomToken()
+		suite.Require().NoError(err, "Must be able to generate random token")
+
+		blindedToken := token.Blind()
+		suite.Require().NoError(err, "Must be able to blind token")
+
+		tokens[i] = token
+		blindedTokensSlice[i] = blindedToken
+	}
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+	var count = 0
+	for i := 0; i < buffer; i++ {
+		count++
+		var (
+			signingKey *crypto.SigningKey
+			validFrom  *time.Time
+			validTo    *time.Time
+		)
+
+		signingKey = issuerKey.Keys[len(issuerKey.Keys)-count].SigningKey
+		validFrom = issuerKey.Keys[len(issuerKey.Keys)-count].StartAt
+		validTo = issuerKey.Keys[len(issuerKey.Keys)-count].EndAt
+
+		// sign some tokens
+		signedTokens, DLEQProof, err := btd.ApproveTokens(
+			[]*crypto.BlindedToken{blindedTokensSlice[i]},
+			signingKey)
+		suite.Require().NoError(err, "Must be able to approve token")
+
+		unblindedTokens, err := DLEQProof.VerifyAndUnblind(
+			[]*crypto.Token{tokens[i]}, []*crypto.BlindedToken{blindedTokensSlice[i]},
+			signedTokens, signingKey.PublicKey())
+
+		suite.Require().NoError(err, "Must be able to verify and unblind")
+
+		redemptions = append(redemptions, v3Redemption{
+			validFrom: *validFrom, validTo: *validTo, unblindedTokens: unblindedTokens,
+		})
+	}
+
+	for i := 0; i < buffer; i++ {
+		var unblindedToken *crypto.UnblindedToken
+		for _, v := range redemptions {
+			if v.validFrom.Before(time.Now()) && v.validTo.After(time.Now()) {
+				unblindedToken = v.unblindedTokens[0]
+			}
+		}
+		msg := "test message"
+		preimageText, sigText := suite.prepareRedemption(unblindedToken, msg) // only 1 per time interval
+
+		payload := fmt.Sprintf(`{"t":"%s", "signature":"%s", "payload":"%s"}`, preimageText, sigText, msg)
+		redeemURL := fmt.Sprintf("%s/v3/blindedToken/%s/redemption/", server.URL, issuerType)
+
+		response, err := suite.request(http.MethodPost, redeemURL, bytes.NewBuffer([]byte(payload)))
+		suite.Require().NoError(err)
+
+		suite.Require().Equal(http.StatusOK, response.StatusCode)
+		time.Sleep(1 * time.Second) // wait for next interval to start
+	}
 }

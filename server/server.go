@@ -5,14 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/brave-intl/bat-go/middleware"
+	"github.com/brave-intl/bat-go/libs/middleware"
 	"github.com/go-chi/chi"
 	chiware "github.com/go-chi/chi/middleware"
 	"github.com/go-chi/httplog"
@@ -23,11 +22,15 @@ import (
 )
 
 var (
+	// Version - the version?
 	Version        = "dev"
 	maxRequestSize = int64(1024 * 1024) // 1MiB
 
-	ErrNoSecretKey         = errors.New("server config does not contain a key")
-	ErrRequestTooLarge     = errors.New("request too large to process")
+	// ErrNoSecretKey - configuration error, no secret key
+	ErrNoSecretKey = errors.New("server config does not contain a key")
+	// ErrRequestTooLarge - processing error, request is too big
+	ErrRequestTooLarge = errors.New("request too large to process")
+	// ErrUnrecognizedRequest - processing error, request unrecognized
 	ErrUnrecognizedRequest = errors.New("received unrecognized request type")
 )
 
@@ -45,13 +48,14 @@ func init() {
 	prometheus.MustRegister(fetchRedemptionDBDuration)
 }
 
+// Server - base server type
 type Server struct {
 	ListenPort   int            `json:"listen_port,omitempty"`
 	MaxTokens    int            `json:"max_tokens,omitempty"`
-	DbConfigPath string         `json:"db_config_path"`
+	DBConfigPath string         `json:"db_config_path"`
 	Logger       *logrus.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
-	dbConfig     DbConfig
+	dbConfig     DBConfig
 	db           *sqlx.DB
 
 	caches map[string]CacheInterface
@@ -65,7 +69,7 @@ var DefaultServer = &Server{
 // LoadConfigFile loads a file into conf and returns
 func LoadConfigFile(filePath string) (Server, error) {
 	conf := *DefaultServer
-	data, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return conf, err
 	}
@@ -76,9 +80,9 @@ func LoadConfigFile(filePath string) (Server, error) {
 	return conf, nil
 }
 
-// InitDbConfig reads os environment and update conf
-func (c *Server) InitDbConfig() error {
-	conf := DbConfig{
+// InitDBConfig reads os environment and update conf
+func (c *Server) InitDBConfig() error {
+	conf := DBConfig{
 		DefaultDaysBeforeExpiry: 7,
 		DefaultIssuerValidDays:  30,
 		MaxConnection:           100,
@@ -111,7 +115,7 @@ func (c *Server) InitDbConfig() error {
 		}
 	}
 
-	c.LoadDbConfig(conf)
+	c.LoadDBConfig(conf)
 
 	return nil
 }
@@ -145,12 +149,21 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 
 	c.Logger = logger
 
+	// kick rotate v3 issuers on start
+	if err := c.rotateIssuersV3(); err != nil {
+		panic(err)
+	}
+
 	r.Mount("/v1/blindedToken", c.tokenRouterV1())
 	r.Mount("/v1/issuer", c.issuerRouterV1())
 
 	r.Mount("/v2/blindedToken", c.tokenRouterV2())
 	r.Mount("/v2/issuer", c.issuerRouterV2())
 	r.Get("/metrics", middleware.Metrics())
+
+	// time aware token router
+	r.Mount("/v3/blindedToken", c.tokenRouterV3())
+	r.Mount("/v3/issuer", c.issuerRouterV3())
 
 	return ctx, r
 }

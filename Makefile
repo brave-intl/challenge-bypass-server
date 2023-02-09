@@ -27,4 +27,10 @@ docker-release:
 	docker push brave/challenge-bypass:latest
 
 generate-avro:
-	gogen-avro --package=generated ./avro/generated ./avro/schemas/*
+	rm ./avro/generated/*
+	gogen-avro --containers=true --package=generated ./avro/generated ./avro/schemas/*
+	sed -i 's/Public_key/Issuer_public_key/g' ./avro/generated/signing_result*.go
+	sed -i 's/"public_key/"issuer_public_key/g' ./avro/generated/signing_result*.go
+
+lint:
+	docker run --rm -v "$$(pwd):/app" --workdir /app golangci/golangci-lint:v1.49.0 golangci-lint run -v ./...

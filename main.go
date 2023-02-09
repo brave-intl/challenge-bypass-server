@@ -7,6 +7,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
@@ -23,13 +24,18 @@ func main() {
 	serverCtx, logger := server.SetupLogger(context.Background())
 	zeroLogger := zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
 	if os.Getenv("ENV") != "production" {
-		zerolog.SetGlobalLevel(zerolog.TraceLevel)
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+		if os.Getenv("ENV") == "local" {
+			zerolog.SetGlobalLevel(zerolog.TraceLevel)
+		}
 	}
+	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 
 	srv := *server.DefaultServer
+	srv.Logger = logger
 
 	flag.StringVar(&configFile, "config", "", "local config file for development (overrides cli options)")
-	flag.StringVar(&srv.DbConfigPath, "db_config", "", "path to the json file with database configuration")
+	flag.StringVar(&srv.DBConfigPath, "db_config", "", "path to the json file with database configuration")
 	flag.IntVar(&srv.ListenPort, "p", 2416, "port to listen on")
 	flag.Parse()
 
@@ -47,7 +53,7 @@ func main() {
 		}
 	}
 
-	err = srv.InitDbConfig()
+	err = srv.InitDBConfig()
 	if err != nil {
 		logger.Panic(err)
 	}
@@ -55,9 +61,12 @@ func main() {
 	zeroLogger.Trace().Msg("Initializing persistence and cron jobs")
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
-	srv.InitDb()
+	srv.InitDB()
 	srv.InitDynamo()
-	srv.SetupCronTasks()
+	// Run the cron job unless it's explicitly disabled.
+	if os.Getenv("CRON_ENABLED") != "false" {
+		srv.SetupCronTasks()
+	}
 
 	zeroLogger.Trace().Msg("Persistence and cron jobs initialized")
 
@@ -78,15 +87,7 @@ func main() {
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		go func() {
-			zeroLogger.Trace().Msg("Initializing Kafka consumers")
-			err = kafka.StartConsumers(&srv, &zeroLogger)
-
-			if err != nil {
-				zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
-				return
-			}
-		}()
+		go startKafka(srv, zeroLogger)
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
@@ -98,5 +99,17 @@ func main() {
 		raven.CaptureErrorAndWait(err, nil)
 		logger.Panic(err)
 		return
+	}
+}
+
+func startKafka(srv server.Server, zeroLogger zerolog.Logger) {
+	zeroLogger.Trace().Msg("Initializing Kafka consumers")
+	err := kafka.StartConsumers(&srv, &zeroLogger)
+
+	if err != nil {
+		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
+		// If err is something then start consumer again
+		time.Sleep(10 * time.Second)
+		startKafka(srv, zeroLogger)
 	}
 }

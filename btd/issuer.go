@@ -9,8 +9,10 @@ import (
 )
 
 var (
-	ErrInvalidMAC        = errors.New("binding MAC didn't match derived MAC")
-	ErrInvalidBatchProof = errors.New("New batch proof for signed tokens is invalid")
+	// ErrInvalidMAC - the mac was invalid
+	ErrInvalidMAC = errors.New("binding MAC didn't match derived MAC")
+	// ErrInvalidBatchProof - the batch proof was invalid
+	ErrInvalidBatchProof = errors.New("new batch proof for signed tokens is invalid")
 
 	latencyBuckets = []float64{.25, .5, 1, 2.5, 5, 10}
 
@@ -74,7 +76,7 @@ func init() {
 func ApproveTokens(blindedTokens []*crypto.BlindedToken, key *crypto.SigningKey) ([]*crypto.SignedToken, *crypto.BatchDLEQProof, error) {
 	var err error
 	if len(blindedTokens) < 1 {
-		err = errors.New("Provided blindedTokens array was empty.")
+		err = errors.New("provided blindedTokens array was empty")
 		return []*crypto.SignedToken{}, nil, err
 	}
 
