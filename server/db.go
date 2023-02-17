@@ -342,7 +342,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 		&fetchedIssuers,
 		`SELECT i.*
 		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
-		WHERE i.issuer_type=$1 AND k.cohort=$2
+		WHERE i.issuer_type like $1 || '%' AND k.cohort=$2
 		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`, issuerType, issuerCohort)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
