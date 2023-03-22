@@ -186,12 +186,10 @@ func (c *Server) InitDB() {
 	if cfg.CachingConfig.Enabled {
 		c.caches = make(map[string]CacheInterface)
 		defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
-		convertedissuersDuration := time.Duration(1 * time.Hour)
 		c.caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
 		c.caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
 		c.caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
 		c.caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["convertedissuers"] = cache.New(convertedissuersDuration, 2*convertedissuersDuration)
 	}
 }
 
@@ -323,6 +321,10 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	return convertedIssuer, nil
 }
 
+// fetchIssuersByCohort was created to fetch multiple issuers based on their cohort when
+// the Ads implementation had non-unique issuer types. This is no longer the case and this
+// function should be refactored or removed. For now, it will return an array of a single
+// issuer.
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
 	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
@@ -1125,40 +1127,17 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 }
 
 func (c *Server) convertDBIssuerKeys(issuerKeyToConvert issuerKeys) (*IssuerKeys, error) {
-	stringifiedSigningKey := string(issuerKeyToConvert.SigningKey)
-	if c.caches != nil {
-		if cached, found := c.caches["convertedissuerkeyss"].Get(stringifiedSigningKey); found {
-			return cached.(*IssuerKeys), nil
-		}
-	}
 	parsedIssuerKeys, err := parseIssuerKeys(issuerKeyToConvert)
 	if err != nil {
 		return nil, err
-	}
-	if c.caches != nil {
-		c.caches["issuerkeys"].SetDefault(stringifiedSigningKey, parseIssuerKeys)
 	}
 	return &parsedIssuerKeys, nil
 }
 
 // convertDBIssuer takes an issuer from the database and returns a reference to that issuer
-// Represented as an Issuer struct. It will return out of the cache if possible. If there
-// is no cache record, the database issuer will be parsed into an Issuer, the cache will be
-// updated, and then the Issuer reference will be returned.
+// Represented as an Issuer struct.
 func (c *Server) convertDBIssuer(issuerToConvert issuer) *Issuer {
-	stringifiedID := string(issuerToConvert.ID.String())
-	if c.caches != nil {
-		if cached, found := c.caches["convertedissuers"].Get(stringifiedID); found {
-			return cached.(*Issuer)
-		}
-	}
-
 	parsedIssuer := parseIssuer(issuerToConvert)
-
-	if c.caches != nil {
-		c.caches["issuer"].SetDefault(stringifiedID, parsedIssuer)
-	}
-
 	return &parsedIssuer
 }
 

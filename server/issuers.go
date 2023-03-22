@@ -83,6 +83,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 }
 
 // GetIssuers - get all issuers by issuer type
+// @TODO: This function is no longer needed. Delete.
 func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
 	issuers, err := c.getIssuers(issuerType)
 	if err != nil {
@@ -92,6 +93,7 @@ func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
 	return issuers, nil
 }
 
+// @TODO: This function is no longer needed. Delete.
 func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
