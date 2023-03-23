@@ -62,7 +62,13 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 	assert.Equal(t, cached.(*Issuer), &issuerToCache)
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &issuerToCache)
-	assert.Panics(t, func() { _ = cacheMiss.(*Issuer) })
+	assert.Panics(t, func() {
+		_, ok := cacheMiss.(*Issuer)
+		if ok != true {
+			// Satisfy linter
+			panic("Bad assertion")
+		}
+	})
 }
 
 // TestIssuersCacheRetrieval tests that getting values from the cache works
@@ -75,7 +81,13 @@ func TestIssuersCacheRetrieval(t *testing.T) {
 	assert.Equal(t, cached.(*[]Issuer), &[]Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &[]Issuer{issuerToCache})
-	assert.Panics(t, func() { _ = cacheMiss.(*[]Issuer) })
+	assert.Panics(t, func() {
+		_, ok := cacheMiss.(*[]Issuer)
+		if ok != true {
+			// Satisfy linter
+			panic("Bad assertion")
+		}
+	})
 }
 
 // TestRedemptionsCacheRetrieval tests that getting values from the cache works
@@ -94,7 +106,13 @@ func TestRedemCacheRetrieval(t *testing.T) {
 	assert.Equal(t, cached.(*Redemption), &redemption)
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &redemption)
-	assert.Panics(t, func() { _ = cacheMiss.(*Redemption) })
+	assert.Panics(t, func() {
+		_, ok := cacheMiss.(*Redemption)
+		if ok != true {
+			// Satisfy linter
+			panic("Bad assertion")
+		}
+	})
 }
 
 // TestIssuerCohortCacheRetrieval tests that getting values from the cache works
@@ -107,5 +125,11 @@ func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	assert.Equal(t, cached.(*[]Issuer), &[]Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &[]Issuer{issuerToCache})
-	assert.Panics(t, func() { _ = cacheMiss.(*Issuer) })
+	assert.Panics(t, func() {
+		_, ok := cacheMiss.(*Issuer)
+		if ok != true {
+			// Satisfy linter
+			panic("Bad assertion")
+		}
+	})
 }
