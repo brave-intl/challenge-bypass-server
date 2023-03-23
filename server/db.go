@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/utils"
@@ -184,12 +183,7 @@ func (c *Server) InitDB() {
 	}
 
 	if cfg.CachingConfig.Enabled {
-		c.caches = make(map[string]CacheInterface)
-		defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
-		c.caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
+		c.caches = bootstraCache(cfg)
 	}
 }
 
@@ -260,10 +254,8 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		temporary = false
 	)
 
-	if c.caches != nil {
-		if cached, found := c.caches["issuer"].Get(issuerID); found {
-			return cached.(*Issuer), nil
-		}
+	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
+		return cached.(*Issuer), nil
 	}
 
 	fetchedIssuer := issuer{}
@@ -327,11 +319,8 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 // issuer.
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
-	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
-	if c.caches != nil {
-		if cached, found := c.caches["issuercohort"].Get(compositeCacheKey); found {
-			return cached.(*[]Issuer), nil
-		}
+	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
+		return cached.(*[]Issuer), nil
 	}
 
 	var (
@@ -399,18 +388,15 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(compositeCacheKey, issuers)
+		c.caches["issuercohort"].SetDefault(issuerType, issuers)
 	}
 
 	return &issuers, nil
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuer"].Get(issuerType); found {
-			// TODO: check this
-			return cached.(*Issuer), nil
-		}
+	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
+		return cached.(*Issuer), nil
 	}
 
 	var issuerV3 issuer
@@ -457,10 +443,8 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 }
 
 func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(issuerType); found {
-			return cached.(*[]Issuer), nil
-		}
+	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
+		return cached.(*[]Issuer), nil
 	}
 
 	var (
@@ -537,10 +521,8 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get("all"); found {
-			return cached.(*[]Issuer), nil
-		}
+	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
+		return cached.(*[]Issuer), nil
 	}
 
 	var (
@@ -1086,10 +1068,9 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
-	if c.caches != nil {
-		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, id)); found {
-			return cached.(*Redemption), nil
-		}
+
+	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
+		return cached.(*Redemption), nil
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
@@ -1198,4 +1179,27 @@ func isPostgresNotFoundError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func retrieveFromCache(
+	caches map[string]CacheInterface,
+	cacheName string,
+	key string,
+) interface{} {
+	if caches != nil {
+		if cached, found := caches[cacheName].Get(key); found {
+			return cached
+		}
+	}
+	return nil
+}
+
+func bootstraCache(cfg DBConfig) map[string]CacheInterface {
+	caches := make(map[string]CacheInterface)
+	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
+	caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
+	return caches
 }
