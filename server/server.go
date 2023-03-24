@@ -120,7 +120,7 @@ func (c *Server) InitDBConfig() error {
 			Enabled:       true,
 			ExpirationSec: 10,
 		}
-		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheEnabled != "" {
+		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheDurationSecs != "" {
 			if secs, err := strconv.Atoi(cacheDurationSecs); err == nil {
 				cachingConfig.ExpirationSec = secs
 			}
