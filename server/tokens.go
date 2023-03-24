@@ -281,7 +281,6 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	return handlers.RenderContent(r.Context(), response, w, http.StatusOK)
 }
 
-// @TODO: This function is no longer needed. Delete.
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	var response blindedTokenRedeemResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
@@ -308,7 +307,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		var verified = false
 		var verifiedIssuer = &Issuer{}
 		var verifiedCohort = int16(0)
-		for _, issuer := range *issuers {
+		for _, issuer := range issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 				continue
 			}

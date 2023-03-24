@@ -45,7 +45,7 @@ var (
 )
 
 func TestBootstrapCache(t *testing.T) {
-	caches := bootstraCache(dbConfig)
+	caches := bootstrapCache(dbConfig)
 	assert.Contains(t, caches, "issuers")
 	assert.Contains(t, caches, "issuer")
 	assert.Contains(t, caches, "redemptions")
@@ -54,7 +54,7 @@ func TestBootstrapCache(t *testing.T) {
 
 // TestIssuerCacheRetrieval tests that getting values from the cache works
 func TestIssuerCacheRetrieval(t *testing.T) {
-	caches := bootstraCache(dbConfig)
+	caches := bootstrapCache(dbConfig)
 	caches["issuer"].SetDefault(issuerID.String(), &issuerToCache)
 
 	cached := retrieveFromCache(caches, "issuer", issuerID.String())
@@ -74,17 +74,17 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 
 // TestIssuersCacheRetrieval tests that getting values from the cache works
 func TestIssuersCacheRetrieval(t *testing.T) {
-	caches := bootstraCache(dbConfig)
-	caches["issuers"].SetDefault(issuerToCache.IssuerType, &[]Issuer{issuerToCache})
+	caches := bootstrapCache(dbConfig)
+	caches["issuers"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
 
 	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuers", "test")
 
-	assert.Equal(t, cached.(*[]Issuer), &[]Issuer{issuerToCache})
+	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, &[]Issuer{issuerToCache})
+	assert.NotEqual(t, cacheMiss, []Issuer{issuerToCache})
 	assert.Panics(t, func() {
-		_, ok := cacheMiss.(*[]Issuer)
+		_, ok := cacheMiss.([]Issuer)
 		if ok != true {
 			// Satisfy linter
 			panic("Bad assertion")
@@ -100,7 +100,7 @@ func TestRedemCacheRetrieval(t *testing.T) {
 		Timestamp:  now,
 		Payload:    "",
 	}
-	caches := bootstraCache(dbConfig)
+	caches := bootstrapCache(dbConfig)
 	caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), &redemption)
 
 	cached := retrieveFromCache(caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
@@ -120,17 +120,17 @@ func TestRedemCacheRetrieval(t *testing.T) {
 
 // TestIssuerCohortCacheRetrieval tests that getting values from the cache works
 func TestIssuerCohortCacheRetrieval(t *testing.T) {
-	caches := bootstraCache(dbConfig)
-	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, &[]Issuer{issuerToCache})
+	caches := bootstrapCache(dbConfig)
+	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
 
 	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuercohort", "test")
 
-	assert.Equal(t, cached.(*[]Issuer), &[]Issuer{issuerToCache})
+	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, &[]Issuer{issuerToCache})
+	assert.NotEqual(t, cacheMiss, []Issuer{issuerToCache})
 	assert.Panics(t, func() {
-		_, ok := cacheMiss.(*Issuer)
+		_, ok := cacheMiss.([]Issuer)
 		if ok != true {
 			// Satisfy linter
 			panic("Bad assertion")
