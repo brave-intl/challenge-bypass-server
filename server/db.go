@@ -183,7 +183,7 @@ func (c *Server) InitDB() {
 	}
 
 	if cfg.CachingConfig.Enabled {
-		c.caches = bootstraCache(cfg)
+		c.caches = bootstrapCache(cfg)
 	}
 }
 
@@ -448,9 +448,11 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
+func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
-		return cached.(*[]Issuer), nil
+		if issuers, ok := cached.([]Issuer); ok {
+			return issuers, nil
+		}
 	}
 
 	var (
@@ -518,10 +520,10 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, &issuers)
+		c.caches["issuers"].SetDefault(issuerType, issuers)
 	}
 
-	return &issuers, nil
+	return issuers, nil
 }
 
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
@@ -1204,7 +1206,7 @@ func retrieveFromCache(
 	return nil
 }
 
-func bootstraCache(cfg DBConfig) map[string]CacheInterface {
+func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
 	caches := make(map[string]CacheInterface)
 	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
 	caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
