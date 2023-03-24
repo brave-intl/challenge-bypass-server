@@ -255,8 +255,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	)
 
 	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
-		issuer, ok := cached.(*Issuer)
-		if ok == true {
+		if issuer, ok := cached.(*Issuer); ok {
 			return issuer, nil
 		}
 	}
@@ -323,8 +322,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
 	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
-		issuers, ok := cached.(*[]Issuer)
-		if ok == true {
+		if issuers, ok := cached.(*[]Issuer); ok {
 			return issuers, nil
 		}
 	}
@@ -402,8 +400,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
-		issuer, ok := cached.(*Issuer)
-		if ok == true {
+		if issuer, ok := cached.(*Issuer); ok {
 			return issuer, nil
 		}
 	}
@@ -531,8 +528,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
-		issuers, ok := cached.(*[]Issuer)
-		if ok == true {
+		if issuers, ok := cached.(*[]Issuer); ok {
 			return issuers, nil
 		}
 	}
@@ -1082,8 +1078,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
 
 	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
-		redemption, ok := cached.(*Redemption)
-		if ok == true {
+		if redemption, ok := cached.(*Redemption); ok {
 			return redemption, nil
 		}
 	}
