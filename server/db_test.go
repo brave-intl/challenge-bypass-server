@@ -56,6 +56,7 @@ func TestBootstrapCache(t *testing.T) {
 func TestIssuerCacheRetrieval(t *testing.T) {
 	caches := bootstraCache(dbConfig)
 	caches["issuer"].SetDefault(issuerID.String(), &issuerToCache)
+
 	cached := retrieveFromCache(caches, "issuer", issuerID.String())
 	cacheMiss := retrieveFromCache(caches, "issuer", "test")
 
@@ -75,6 +76,7 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 func TestIssuersCacheRetrieval(t *testing.T) {
 	caches := bootstraCache(dbConfig)
 	caches["issuers"].SetDefault(issuerToCache.IssuerType, &[]Issuer{issuerToCache})
+
 	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuers", "test")
 
@@ -100,6 +102,7 @@ func TestRedemCacheRetrieval(t *testing.T) {
 	}
 	caches := bootstraCache(dbConfig)
 	caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), &redemption)
+
 	cached := retrieveFromCache(caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
 	cacheMiss := retrieveFromCache(caches, "redemptions", "test")
 
@@ -119,6 +122,7 @@ func TestRedemCacheRetrieval(t *testing.T) {
 func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	caches := bootstraCache(dbConfig)
 	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, &[]Issuer{issuerToCache})
+
 	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuercohort", "test")
 

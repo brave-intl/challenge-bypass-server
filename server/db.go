@@ -255,7 +255,10 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	)
 
 	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
-		return cached.(*Issuer), nil
+		issuer, ok := cached.(*Issuer)
+		if ok == true {
+			return issuer, nil
+		}
 	}
 
 	fetchedIssuer := issuer{}
@@ -307,7 +310,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerID, *convertedIssuer)
+		c.caches["issuer"].SetDefault(issuerID, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
@@ -320,7 +323,10 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
 	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
-		return cached.(*[]Issuer), nil
+		issuers, ok := cached.(*[]Issuer)
+		if ok == true {
+			return issuers, nil
+		}
 	}
 
 	var (
@@ -388,7 +394,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(issuerType, issuers)
+		c.caches["issuercohort"].SetDefault(issuerType, &issuers)
 	}
 
 	return &issuers, nil
@@ -396,7 +402,10 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
-		return cached.(*Issuer), nil
+		issuer, ok := cached.(*Issuer)
+		if ok == true {
+			return issuer, nil
+		}
 	}
 
 	var issuerV3 issuer
@@ -436,7 +445,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerType, issuerV3)
+		c.caches["issuer"].SetDefault(issuerType, &issuerV3)
 	}
 
 	return convertedIssuer, nil
@@ -512,7 +521,7 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuers)
+		c.caches["issuers"].SetDefault(issuerType, &issuers)
 	}
 
 	return &issuers, nil
@@ -522,7 +531,10 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
-		return cached.(*[]Issuer), nil
+		issuers, ok := cached.(*[]Issuer)
+		if ok == true {
+			return issuers, nil
+		}
 	}
 
 	var (
@@ -587,7 +599,7 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault("all", issuers)
+		c.caches["issuers"].SetDefault("all", &issuers)
 	}
 
 	return &issuers, nil
@@ -1070,7 +1082,10 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
 
 	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
-		return cached.(*Redemption), nil
+		redemption, ok := cached.(*Redemption)
+		if ok == true {
+			return redemption, nil
+		}
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
@@ -1085,17 +1100,17 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer rows.Close()
 
 	if rows.Next() {
-		var redemption = &Redemption{}
+		var redemption = Redemption{}
 		if err := rows.Scan(&redemption.ID, &redemption.IssuerType, &redemption.Timestamp, &redemption.Payload); err != nil {
 			c.Logger.Error("Unable to convert DB values into redemption data structure")
 			return nil, err
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), redemption)
+			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
 		}
 
-		return redemption, nil
+		return &redemption, nil
 	}
 
 	if err := rows.Err(); err != nil {
