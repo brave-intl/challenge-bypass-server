@@ -83,7 +83,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 }
 
 // GetIssuers - get all issuers by issuer type
-func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
+func (c *Server) GetIssuers(issuerType string) ([]Issuer, error) {
 	issuers, err := c.getIssuers(issuerType)
 	if err != nil {
 		c.Logger.Error(err)
@@ -92,7 +92,7 @@ func (c *Server) GetIssuers(issuerType string) (*[]Issuer, error) {
 	return issuers, nil
 }
 
-func (c *Server) getIssuers(issuerType string) (*[]Issuer, *handlers.AppError) {
+func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {

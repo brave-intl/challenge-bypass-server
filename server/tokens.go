@@ -307,7 +307,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		var verified = false
 		var verifiedIssuer = &Issuer{}
 		var verifiedCohort = int16(0)
-		for _, issuer := range *issuers {
+		for _, issuer := range issuers {
 			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 				continue
 			}

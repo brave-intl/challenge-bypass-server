@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/utils"
@@ -184,14 +183,7 @@ func (c *Server) InitDB() {
 	}
 
 	if cfg.CachingConfig.Enabled {
-		c.caches = make(map[string]CacheInterface)
-		defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
-		convertedissuersDuration := time.Duration(1 * time.Hour)
-		c.caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
-		c.caches["convertedissuers"] = cache.New(convertedissuersDuration, 2*convertedissuersDuration)
+		c.caches = bootstrapCache(cfg)
 	}
 }
 
@@ -262,9 +254,9 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		temporary = false
 	)
 
-	if c.caches != nil {
-		if cached, found := c.caches["issuer"].Get(issuerID); found {
-			return cached.(*Issuer), nil
+	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
+		if issuer, ok := cached.(*Issuer); ok {
+			return issuer, nil
 		}
 	}
 
@@ -317,18 +309,21 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerID, *convertedIssuer)
+		c.caches["issuer"].SetDefault(issuerID, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
 }
 
+// fetchIssuersByCohort was created to fetch multiple issuers based on their cohort when
+// the Ads implementation had non-unique issuer types. This is no longer the case and this
+// function should be refactored or removed. For now, it will return an array of a single
+// issuer.
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
-	compositeCacheKey := issuerType + strconv.Itoa(int(issuerCohort))
-	if c.caches != nil {
-		if cached, found := c.caches["issuercohort"].Get(compositeCacheKey); found {
-			return cached.(*[]Issuer), nil
+	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
+		if issuers, ok := cached.(*[]Issuer); ok {
+			return issuers, nil
 		}
 	}
 
@@ -397,17 +392,16 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(compositeCacheKey, issuers)
+		c.caches["issuercohort"].SetDefault(issuerType, &issuers)
 	}
 
 	return &issuers, nil
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuer"].Get(issuerType); found {
-			// TODO: check this
-			return cached.(*Issuer), nil
+	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
+		if issuer, ok := cached.(*Issuer); ok {
+			return issuer, nil
 		}
 	}
 
@@ -448,16 +442,16 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	}
 
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerType, issuerV3)
+		c.caches["issuer"].SetDefault(issuerType, &issuerV3)
 	}
 
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get(issuerType); found {
-			return cached.(*[]Issuer), nil
+func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
+	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
+		if issuers, ok := cached.([]Issuer); ok {
+			return issuers, nil
 		}
 	}
 
@@ -529,15 +523,15 @@ func (c *Server) fetchIssuers(issuerType string) (*[]Issuer, error) {
 		c.caches["issuers"].SetDefault(issuerType, issuers)
 	}
 
-	return &issuers, nil
+	return issuers, nil
 }
 
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
-	if c.caches != nil {
-		if cached, found := c.caches["issuers"].Get("all"); found {
-			return cached.(*[]Issuer), nil
+	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
+		if issuers, ok := cached.(*[]Issuer); ok {
+			return issuers, nil
 		}
 	}
 
@@ -603,7 +597,7 @@ func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault("all", issuers)
+		c.caches["issuers"].SetDefault("all", &issuers)
 	}
 
 	return &issuers, nil
@@ -1084,9 +1078,10 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
-	if c.caches != nil {
-		if cached, found := c.caches["redemptions"].Get(fmt.Sprintf("%s:%s", issuerType, id)); found {
-			return cached.(*Redemption), nil
+
+	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
+		if redemption, ok := cached.(*Redemption); ok {
+			return redemption, nil
 		}
 	}
 
@@ -1102,17 +1097,17 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer rows.Close()
 
 	if rows.Next() {
-		var redemption = &Redemption{}
+		var redemption = Redemption{}
 		if err := rows.Scan(&redemption.ID, &redemption.IssuerType, &redemption.Timestamp, &redemption.Payload); err != nil {
 			c.Logger.Error("Unable to convert DB values into redemption data structure")
 			return nil, err
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), redemption)
+			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
 		}
 
-		return redemption, nil
+		return &redemption, nil
 	}
 
 	if err := rows.Err(); err != nil {
@@ -1125,40 +1120,17 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 }
 
 func (c *Server) convertDBIssuerKeys(issuerKeyToConvert issuerKeys) (*IssuerKeys, error) {
-	stringifiedSigningKey := string(issuerKeyToConvert.SigningKey)
-	if c.caches != nil {
-		if cached, found := c.caches["convertedissuerkeyss"].Get(stringifiedSigningKey); found {
-			return cached.(*IssuerKeys), nil
-		}
-	}
 	parsedIssuerKeys, err := parseIssuerKeys(issuerKeyToConvert)
 	if err != nil {
 		return nil, err
-	}
-	if c.caches != nil {
-		c.caches["issuerkeys"].SetDefault(stringifiedSigningKey, parseIssuerKeys)
 	}
 	return &parsedIssuerKeys, nil
 }
 
 // convertDBIssuer takes an issuer from the database and returns a reference to that issuer
-// Represented as an Issuer struct. It will return out of the cache if possible. If there
-// is no cache record, the database issuer will be parsed into an Issuer, the cache will be
-// updated, and then the Issuer reference will be returned.
+// Represented as an Issuer struct.
 func (c *Server) convertDBIssuer(issuerToConvert issuer) *Issuer {
-	stringifiedID := string(issuerToConvert.ID.String())
-	if c.caches != nil {
-		if cached, found := c.caches["convertedissuers"].Get(stringifiedID); found {
-			return cached.(*Issuer)
-		}
-	}
-
 	parsedIssuer := parseIssuer(issuerToConvert)
-
-	if c.caches != nil {
-		c.caches["issuer"].SetDefault(stringifiedID, parsedIssuer)
-	}
-
 	return &parsedIssuer
 }
 
@@ -1219,4 +1191,27 @@ func isPostgresNotFoundError(err error) bool {
 		return true
 	}
 	return false
+}
+
+func retrieveFromCache(
+	caches map[string]CacheInterface,
+	cacheName string,
+	key string,
+) interface{} {
+	if caches != nil {
+		if cached, found := caches[cacheName].Get(key); found {
+			return cached
+		}
+	}
+	return nil
+}
+
+func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
+	caches := make(map[string]CacheInterface)
+	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
+	caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
+	caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
+	return caches
 }
