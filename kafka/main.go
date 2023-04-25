@@ -226,7 +226,7 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
 	kafkaLogger := logrus.New()
-	kafkaLogger.SetLevel(logrus.WarnLevel)
+	kafkaLogger.SetLevel(logrus.ErrorLevel)
 	dialer := getDialer(logger)
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -240,7 +240,7 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 		MinBytes:       1e3,              // 1KB
 		MaxBytes:       10e6,             // 10MB
 	})
-	logger.Trace().Msgf("Reader create with subscription")
+	logger.Trace().Msgf("Reader created with subscription")
 	return reader
 }
 
