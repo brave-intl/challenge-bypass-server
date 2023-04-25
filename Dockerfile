@@ -1,4 +1,8 @@
 FROM rustlang/rust@sha256:5af55c68b21232886d8d9bd35563b8a2ac0f71952369fb71346a51b331acd0d4 as rust_builder
+#Update stretch repositories
+RUN sed -i s/deb.debian.org/archive.debian.org/g /etc/apt/sources.list
+RUN sed -i 's|security.debian.org|archive.debian.org/|g' /etc/apt/sources.list
+RUN sed -i '/stretch-updates/d' /etc/apt/sources.list
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools
 RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
