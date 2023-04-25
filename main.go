@@ -24,12 +24,12 @@ func main() {
 	serverCtx, logger := server.SetupLogger(context.Background())
 	zeroLogger := zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
 	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
-	if os.Getenv("ENV") != "production" {
-		zerolog.SetGlobalLevel(zerolog.WarnLevel)
-		if os.Getenv("ENV") == "local" {
-			zerolog.SetGlobalLevel(zerolog.TraceLevel)
-		}
-	}
+	//	if os.Getenv("ENV") != "production" {
+	//		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	//		if os.Getenv("ENV") == "local" {
+	//			zerolog.SetGlobalLevel(zerolog.TraceLevel)
+	//		}
+	//	}
 
 	srv := *server.DefaultServer
 	srv.Logger = logger
