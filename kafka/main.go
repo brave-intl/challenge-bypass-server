@@ -15,7 +15,6 @@ import (
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
-	"github.com/sirupsen/logrus"
 )
 
 var brokers []string
@@ -225,8 +224,6 @@ func processMessageIntoErrorResultChannel(
 func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
-	kafkaLogger := logrus.New()
-	kafkaLogger.SetLevel(logrus.ErrorLevel)
 	dialer := getDialer(logger)
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
@@ -234,7 +231,7 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 		GroupTopics:    topics,
 		GroupID:        groupID,
 		StartOffset:    kafka.FirstOffset,
-		Logger:         kafkaLogger,
+		Logger:         logger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
 		MinBytes:       1e3,              // 1KB
