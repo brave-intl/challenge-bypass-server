@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/brave-intl/bat-go/libs/logging"
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
@@ -18,18 +19,18 @@ import (
 
 func main() {
 	// Server setup
-	var configFile string
-	var err error
+	var (
+		configFile string
+		err        error
+		logLevel   zerolog.Level
+	)
 
 	serverCtx, logger := server.SetupLogger(context.Background())
-	zeroLogger := zerolog.New(os.Stderr).With().Timestamp().Caller().Logger()
-	zerolog.SetGlobalLevel(zerolog.ErrorLevel)
-	if os.Getenv("ENV") != "production" {
-		zerolog.SetGlobalLevel(zerolog.WarnLevel)
-		if os.Getenv("ENV") == "local" {
-			zerolog.SetGlobalLevel(zerolog.TraceLevel)
-		}
+	logLevel = zerolog.WarnLevel
+	if os.Getenv("ENV") == "local" {
+		logLevel = zerolog.TraceLevel
 	}
+	_, zeroLogger := logging.SetupLoggerWithLevel(serverCtx, logLevel)
 
 	srv := *server.DefaultServer
 	srv.Logger = logger
@@ -102,9 +103,9 @@ func main() {
 	}
 }
 
-func startKafka(srv server.Server, zeroLogger zerolog.Logger) {
+func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
 	zeroLogger.Trace().Msg("Initializing Kafka consumers")
-	err := kafka.StartConsumers(&srv, &zeroLogger)
+	err := kafka.StartConsumers(&srv, zeroLogger)
 
 	if err != nil {
 		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
