@@ -10,7 +10,7 @@ require (
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
 	github.com/getsentry/raven-go v0.2.0
 	github.com/go-chi/chi v4.1.2+incompatible
-	github.com/go-chi/httplog v0.2.5
+	github.com/go-chi/httplog v0.3.0
 	github.com/golang-migrate/migrate/v4 v4.15.2
 	github.com/google/uuid v1.3.0
 	github.com/jmoiron/sqlx v1.3.5
