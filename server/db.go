@@ -254,7 +254,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		temporary = false
 	)
 
-	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
+	if cached := retrieveFromCache(c.caches, "issuer", issuerID, 0); cached != nil {
 		if issuer, ok := cached.(*Issuer); ok {
 			return issuer, nil
 		}
@@ -321,15 +321,16 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 // issuer.
 func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[]Issuer, error) {
 	// will not lose resolution int16->int
-	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
+	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType, issuerCohort); cached != nil {
 		if issuers, ok := cached.(*[]Issuer); ok {
 			return issuers, nil
 		}
 	}
 
 	var (
-		err       error
-		temporary = false
+		err               error
+		temporary         = false
+		fetchedIssuerType string
 	)
 
 	fetchedIssuers := []issuer{}
@@ -388,18 +389,19 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) (*[
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
 
+		fetchedIssuerType = convertedIssuer.IssuerType
 		issuers = append(issuers, *convertedIssuer)
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(issuerType, &issuers)
+		c.caches["issuercohort"].SetDefault(fetchedIssuerType, &issuers)
 	}
 
 	return &issuers, nil
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
+	if cached := retrieveFromCache(c.caches, "issuer", issuerType, 0); cached != nil {
 		if issuer, ok := cached.(*Issuer); ok {
 			return issuer, nil
 		}
@@ -449,7 +451,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 }
 
 func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
+	if cached := retrieveFromCache(c.caches, "issuers", issuerType, 0); cached != nil {
 		if issuers, ok := cached.([]Issuer); ok {
 			return issuers, nil
 		}
@@ -529,7 +531,7 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 // FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() (*[]Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
+	if cached := retrieveFromCache(c.caches, "issuers", "all", 0); cached != nil {
 		if issuers, ok := cached.(*[]Issuer); ok {
 			return issuers, nil
 		}
@@ -1079,7 +1081,7 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementCounter(fetchRedemptionCounter)
 
-	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
+	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id), 0); cached != nil {
 		if redemption, ok := cached.(*Redemption); ok {
 			return redemption, nil
 		}
@@ -1197,9 +1199,15 @@ func retrieveFromCache(
 	caches map[string]CacheInterface,
 	cacheName string,
 	key string,
+	cohort int16,
 ) interface{} {
 	if caches != nil {
 		if cached, found := caches[cacheName].Get(key); found {
+			return cached
+		}
+		// Ads issuer_type uniqueness relies on a cohort suffix. Check the cache
+		// for the key with the added suffix.
+		if cached, found := caches[cacheName].Get(fmt.Sprintf("%s_%d", key, cohort)); found {
 			return cached
 		}
 	}
