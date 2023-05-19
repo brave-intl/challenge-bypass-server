@@ -57,8 +57,8 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuer"].SetDefault(issuerID.String(), &issuerToCache)
 
-	cached := retrieveFromCache(caches, "issuer", issuerID.String())
-	cacheMiss := retrieveFromCache(caches, "issuer", "test")
+	cached := retrieveFromCache(caches, "issuer", issuerID.String(), 0)
+	cacheMiss := retrieveFromCache(caches, "issuer", "test", 0)
 
 	assert.Equal(t, cached.(*Issuer), &issuerToCache)
 	assert.Nil(t, cacheMiss)
@@ -77,8 +77,8 @@ func TestIssuersCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuers"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
 
-	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType)
-	cacheMiss := retrieveFromCache(caches, "issuers", "test")
+	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType, 0)
+	cacheMiss := retrieveFromCache(caches, "issuers", "test", 0)
 
 	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
@@ -103,8 +103,8 @@ func TestRedemCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), &redemption)
 
-	cached := retrieveFromCache(caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
-	cacheMiss := retrieveFromCache(caches, "redemptions", "test")
+	cached := retrieveFromCache(caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), 0)
+	cacheMiss := retrieveFromCache(caches, "redemptions", "test", 0)
 
 	assert.Equal(t, cached.(*Redemption), &redemption)
 	assert.Nil(t, cacheMiss)
@@ -123,8 +123,8 @@ func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
 
-	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType)
-	cacheMiss := retrieveFromCache(caches, "issuercohort", "test")
+	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType, 0)
+	cacheMiss := retrieveFromCache(caches, "issuercohort", "test", 0)
 
 	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
