@@ -7,3 +7,4 @@ vendor/
 Makefile
 .env
 *.sql
+signing-keys.txt
