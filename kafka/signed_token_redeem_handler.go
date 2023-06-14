@@ -18,9 +18,10 @@ import (
 
 /*
 SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
- tokens provided. If it encounters a permanent error, it emits a permanent result for that
- item. If the error is temporary, an error is returned to indicate that progress cannot be
- made.
+
+	tokens provided. If it encounters a permanent error, it emits a permanent result for that
+	item. If the error is temporary, an error is returned to indicate that progress cannot be
+	made.
 */
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
@@ -155,47 +156,53 @@ func SignedTokenRedeemHandler(
 				continue
 			}
 
-			// get latest signing key from issuer
-			var signingKey *crypto.SigningKey
-			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
-			}
+			for _, issuerKey := range issuer.Keys {
+				// Don't use keys outside their start/end dates
+				if !issuerKey.StartAt.IsZero() && issuerKey.StartAt.After(time.Now()) {
+					continue
+				}
+				if !issuerKey.EndAt.IsZero() && issuerKey.EndAt.Before(time.Now()) {
+					continue
+				}
 
-			// Only attempt token verification with the issuer that was provided.
-			issuerPublicKey := signingKey.PublicKey()
-			marshaledPublicKey, err := issuerPublicKey.MarshalText()
-			// Unmarshaling failure is a data issue and is probably permanent.
-			if err != nil {
-				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				handlePermanentRedemptionError(
-					message,
-					err,
-					msg,
-					producer,
-					tokenRedeemRequestSet.Request_id,
-					int32(avroSchema.RedeemResultStatusError),
-					log,
-				)
-				return nil
-			}
+				signingKey := issuer.SigningKey
 
-			logger.Trace().
-				Msgf("request %s: issuer: %s, request: %s", tokenRedeemRequestSet.Request_id,
-					string(marshaledPublicKey), request.Public_key)
+				// Only attempt token verification with the issuer that was provided.
+				issuerPublicKey := signingKey.PublicKey()
+				marshaledPublicKey, err := issuerPublicKey.MarshalText()
+				// Unmarshaling failure is a data issue and is probably permanent.
+				if err != nil {
+					message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+					handlePermanentRedemptionError(
+						message,
+						err,
+						msg,
+						producer,
+						tokenRedeemRequestSet.Request_id,
+						int32(avroSchema.RedeemResultStatusError),
+						log,
+					)
+					return nil
+				}
 
-			if string(marshaledPublicKey) == request.Public_key {
-				if err := btd.VerifyTokenRedemption(
-					&tokenPreimage,
-					&verificationSignature,
-					request.Binding,
-					[]*crypto.SigningKey{signingKey},
-				); err != nil {
-					verified = false
-				} else {
-					verified = true
-					verifiedIssuer = &issuer
-					verifiedCohort = int32(issuer.IssuerCohort)
-					break
+				logger.Trace().
+					Msgf("request %s: issuer: %s, request: %s", tokenRedeemRequestSet.Request_id,
+						string(marshaledPublicKey), request.Public_key)
+
+				if string(marshaledPublicKey) == request.Public_key {
+					if err := btd.VerifyTokenRedemption(
+						&tokenPreimage,
+						&verificationSignature,
+						request.Binding,
+						[]*crypto.SigningKey{signingKey},
+					); err != nil {
+						verified = false
+					} else {
+						verified = true
+						verifiedIssuer = &issuer
+						verifiedCohort = int32(issuer.IssuerCohort)
+						break
+					}
 				}
 			}
 		}
