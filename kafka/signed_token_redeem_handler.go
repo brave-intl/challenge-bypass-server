@@ -205,6 +205,10 @@ func SignedTokenRedeemHandler(
 					}
 				}
 			}
+
+			if verified {
+				break
+			}
 		}
 
 		if !verified {
