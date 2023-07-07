@@ -132,8 +132,8 @@ github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d h1:Byv0BzEl
 github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d/go.mod h1:WaHUgvxTVq04UNunO+XhnAqY/wQc+bxr74GqbsZ/Jqw=
 github.com/aws/aws-sdk-go v1.15.11/go.mod h1:mFuSZ37Z9YOHbQEwBWztmVzqXrEkub65tZoCYDt7FT0=
 github.com/aws/aws-sdk-go v1.17.7/go.mod h1:KmX6BPdI08NWTb3/sm4ZGu5ShLoqVDhKgpiN924inxo=
-github.com/aws/aws-sdk-go v1.44.206 h1:xC7O40wdnKH4A95KdYt+smXl9hig1vu9b3mFxAxUoak=
-github.com/aws/aws-sdk-go v1.44.206/go.mod h1:aVsgQcEevwlmQ7qHE9I3h+dtQgpqhFB+i8Phjh7fkwI=
+github.com/aws/aws-sdk-go v1.44.297 h1:uL4EV0gQxotQVYegIoBqK079328MOJqgG95daFYSkAM=
+github.com/aws/aws-sdk-go v1.44.297/go.mod h1:aVsgQcEevwlmQ7qHE9I3h+dtQgpqhFB+i8Phjh7fkwI=
 github.com/aws/aws-sdk-go-v2 v1.8.0/go.mod h1:xEFuWz+3TYdlPRuo+CqATbeDWIWyaT5uAPwPaWtgse0=
 github.com/aws/aws-sdk-go-v2 v1.9.2/go.mod h1:cK/D0BBs0b/oWPIcX/Z/obahJK1TT7IPVjy53i/mX/4=
 github.com/aws/aws-sdk-go-v2 v1.17.5/go.mod h1:uzbQtefpm44goOPmdKyAlXSNcwlRgF3ePWVW6EtJvvw=
@@ -187,8 +187,6 @@ github.com/bmizerany/assert v0.0.0-20160611221934-b7ed37b82869/go.mod h1:Ekp36dR
 github.com/boombuler/barcode v1.0.0/go.mod h1:paBWMcWSl3LHKBqUq+rly7CNSldXjb2rDl3JlRe0mD8=
 github.com/brave-intl/bat-go/libs v0.0.0-20230222140804-b1c2d2678012 h1:R4e5npPnge7DCPdUtY0AFVKJCnImY+pGavsCpbdziCo=
 github.com/brave-intl/bat-go/libs v0.0.0-20230222140804-b1c2d2678012/go.mod h1:+9NFzDg5MITJNQVMjoBukvjxiEtyUo8BJZdUzhH4rYA=
-github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190717223301-f88d942ddfaf h1:ZAsT/fM7Kxipf3wtoY7xa2bpFmAxzYPhVJ3hUcSdTRI=
-github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20190717223301-f88d942ddfaf/go.mod h1:I9sAUIQc7AvvUU0Ustl5WMTdqmlNjXsX6dRLnDNxXiE=
 github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873 h1:qd8tWtiB4xjRxoMuvqytAKLDvqttX7SU0bSX6LfYlLw=
 github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873/go.mod h1:I9sAUIQc7AvvUU0Ustl5WMTdqmlNjXsX6dRLnDNxXiE=
 github.com/bshuster-repo/logrus-logstash-hook v0.4.1/go.mod h1:zsTqEiSzDgAa/8GZR7E1qaXrhYNDKBYy5/dWPTIflbk=
