@@ -19,10 +19,9 @@ import (
 
 /*
 SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
-
-	tokens provided. If it encounters a permanent error, it emits a permanent result for that
-	item. If the error is temporary, an error is returned to indicate that progress cannot be
-	made.
+tokens provided. If it encounters a permanent error, it emits a permanent result for that
+item. If the error is temporary, an error is returned to indicate that progress cannot be
+made.
 */
 
 type SignedIssuerToken struct {
@@ -32,8 +31,8 @@ type SignedIssuerToken struct {
 
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
-	producer *kafka.Writer,
-	server *cbpServer.Server,
+	producer Writer,
+	server cbpServer.Srv,
 	log *zerolog.Logger,
 ) error {
 	data := msg.Value
@@ -197,6 +196,7 @@ func SignedTokenRedeemHandler(
 			return nil
 		}
 
+		fmt.Println(request.Public_key)
 		if signedToken, ok := signedTokens[request.Public_key]; ok {
 			logger.
 				Trace().
@@ -368,7 +368,7 @@ func SignedTokenRedeemHandler(
 		message := fmt.Sprintf(
 			"request %s: failed to emit results to topic %s",
 			resultSet.Request_id,
-			producer.Topic,
+			producer.Topic(),
 		)
 		log.Error().Err(err).Msgf(message)
 		return err
@@ -397,7 +397,7 @@ func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
 func avroRedeemErrorResultFromError(
 	message string,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer Writer,
 	requestID string,
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
@@ -435,7 +435,7 @@ func handlePermanentRedemptionError(
 	message string,
 	cause error,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer Writer,
 	requestID string,
 	redeemResultStatus int32,
 	logger *zerolog.Logger,

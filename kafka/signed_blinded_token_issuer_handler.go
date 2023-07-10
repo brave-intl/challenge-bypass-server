@@ -31,8 +31,8 @@ SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided b
 */
 func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
-	producer *kafka.Writer,
-	server *cbpServer.Server,
+	producer Writer,
+	server cbpServer.Srv,
 	log *zerolog.Logger,
 ) error {
 	const (
@@ -107,6 +107,7 @@ OUTER:
 		logger.Info().Msgf("processing request: %+v", request)
 		if request.Blinded_tokens == nil {
 			logger.Error().Err(errors.New("blinded tokens is empty")).Msg("")
+			fmt.Println("empty blinded tokens")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -120,6 +121,7 @@ OUTER:
 		logger.Info().Msgf("checking request cohort: %+v", request)
 		if request.Issuer_cohort > math.MaxInt16 || request.Issuer_cohort < math.MinInt16 {
 			logger.Error().Msg("invalid cohort")
+			fmt.Println("invalid cohort")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -139,6 +141,7 @@ OUTER:
 					return err
 				}
 			}
+			fmt.Println("issuerInvalid")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -174,6 +177,7 @@ OUTER:
 			if err != nil {
 				logger.Error().Err(fmt.Errorf("failed to unmarshal blinded tokens: %w", err)).
 					Msg("signed blinded token issuer handler")
+				fmt.Println("failed to unmarshal blinded tokens")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -242,6 +246,7 @@ OUTER:
 					// @TODO: If one token fails they will all fail. Assess this behavior
 					logger.Error().Err(fmt.Errorf("error could not approve new tokens: %w", err)).
 						Msg("signed blinded token issuer handler")
+					fmt.Println("count not approve new tokesn")
 					blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 						Signed_tokens:     nil,
 						Issuer_public_key: "",
@@ -372,6 +377,7 @@ OUTER:
 				logger.Error().
 					Err(fmt.Errorf("error could not approve new tokens: %w", err)).
 					Msg("signed blinded token issuer handler")
+				fmt.Println("could not approave new tokens")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -515,7 +521,7 @@ OUTER:
 		message := fmt.Sprintf(
 			"request %s: failed to emit to topic %s with result: %v",
 			resultSet.Request_id,
-			producer.Topic,
+			producer.Topic(),
 			resultSet,
 		)
 		log.Error().Err(err).Msgf(message)
@@ -537,7 +543,7 @@ func avroIssuerErrorResultFromError(
 	issuerResultStatus int32,
 	requestID string,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer Writer,
 	logger *zerolog.Logger,
 ) *ProcessingResult {
 	signingResult := avroSchema.SigningResultV2{
@@ -582,7 +588,7 @@ func handlePermanentIssuanceError(
 	issuerResultStatus int32,
 	requestID string,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer Writer,
 	logger *zerolog.Logger,
 ) {
 	logger.Error().Err(cause).Msgf("encountered permanent issuance failure: %v", message)

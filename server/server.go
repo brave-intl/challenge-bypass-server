@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/brave-intl/bat-go/libs/handlers"
 	"github.com/brave-intl/bat-go/libs/middleware"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/go-chi/chi"
 	chiware "github.com/go-chi/chi/middleware"
 	"github.com/go-chi/httplog"
@@ -46,6 +48,24 @@ func init() {
 	prometheus.MustRegister(createIssuerDBDuration)
 	prometheus.MustRegister(createRedemptionDBDuration)
 	prometheus.MustRegister(fetchRedemptionDBDuration)
+}
+
+type Srv interface {
+	InitDBConfig() error
+	ListenAndServe(context.Context, *logrus.Logger) error
+	LoadDBConfig(DBConfig)
+	InitDB()
+	FetchAllIssuers() (*[]Issuer, error)
+	RotateIssuersV3() error
+	RedeemToken(*Issuer, *crypto.TokenPreimage, string, int64) error
+	SetupCronTasks()
+	InitDynamo()
+	PersistRedemption(RedemptionV2) error
+	CheckRedeemedTokenEquivalence(*Issuer, *crypto.TokenPreimage, string, int64) (*RedemptionV2, Equivalence, error)
+	GetLatestIssuer(string, int16) (*Issuer, *handlers.AppError)
+	GetLatestIssuerKafka(string, int16) (*Issuer, error)
+	GetIssuers(string) ([]Issuer, error)
+	BlindedTokenIssuerHandlerV2(http.ResponseWriter, *http.Request) *handlers.AppError
 }
 
 // Server - base server type

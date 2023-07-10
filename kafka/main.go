@@ -22,15 +22,15 @@ var brokers []string
 // Processor is a function that is used to process Kafka messages
 type Processor func(
 	kafka.Message,
-	*kafka.Writer,
-	*server.Server,
+	Writer,
+	server.Srv,
 	*zerolog.Logger,
 ) error
 
 // ProcessingResult contains a message and the topic to which the message should be
 // emitted
 type ProcessingResult struct {
-	ResultProducer *kafka.Writer
+	ResultProducer Writer
 	Message        []byte
 	RequestID      string
 }
@@ -38,7 +38,7 @@ type ProcessingResult struct {
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
 	Topic          string
-	ResultProducer *kafka.Writer
+	ResultProducer Writer
 	Processor      Processor
 	Group          string
 }
@@ -50,7 +50,7 @@ type MessageContext struct {
 }
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
-func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error {
+func StartConsumers(providedServer server.Srv, logger *zerolog.Logger) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
 	adsResultRedeemV1Topic := os.Getenv("REDEEM_PRODUCER_TOPIC")
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
@@ -63,7 +63,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	topicMappings := []TopicMapping{
 		{
 			Topic: adsRequestRedeemV1Topic,
-			ResultProducer: kafka.NewWriter(kafka.WriterConfig{
+			ResultProducer: NewWriter(kafka.WriterConfig{
 				Brokers: brokers,
 				Topic:   adsResultRedeemV1Topic,
 				Dialer:  getDialer(logger),
@@ -73,7 +73,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		},
 		{
 			Topic: adsRequestSignV1Topic,
-			ResultProducer: kafka.NewWriter(kafka.WriterConfig{
+			ResultProducer: NewWriter(kafka.WriterConfig{
 				Brokers: brokers,
 				Topic:   adsResultSignV1Topic,
 				Dialer:  getDialer(logger),
@@ -109,7 +109,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 // committing so that the next reader gets the same message to try again.
 func readAndCommitBatchPipelineResults(
 	ctx context.Context,
-	reader *kafka.Reader,
+	reader Reader,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) error {
@@ -140,8 +140,8 @@ func readAndCommitBatchPipelineResults(
 func processMessagesIntoBatchPipeline(
 	ctx context.Context,
 	topicMappings []TopicMapping,
-	providedServer *server.Server,
-	reader *kafka.Reader,
+	providedServer server.Srv,
+	reader Reader,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) {
@@ -208,7 +208,7 @@ func processMessagesIntoBatchPipeline(
 func processMessageIntoErrorResultChannel(
 	msg kafka.Message,
 	topicMapping TopicMapping,
-	providedServer *server.Server,
+	providedServer server.Srv,
 	errChan chan error,
 	logger *zerolog.Logger,
 ) {
@@ -221,11 +221,11 @@ func processMessageIntoErrorResultChannel(
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
+func newConsumer(topics []string, groupID string, logger *zerolog.Logger) Reader {
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
 	dialer := getDialer(logger)
-	reader := kafka.NewReader(kafka.ReaderConfig{
+	reader := NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
 		GroupTopics:    topics,
@@ -242,8 +242,8 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 }
 
 // Emit sends a message over the Kafka interface.
-func Emit(producer *kafka.Writer, message []byte, logger *zerolog.Logger) error {
-	logger.Info().Msgf("Beginning data emission for topic %s", producer.Topic)
+func Emit(producer Writer, message []byte, logger *zerolog.Logger) error {
+	logger.Info().Msgf("Beginning data emission for topic %s", producer.Topic())
 
 	messageKey := uuid.New()
 	marshaledMessageKey, err := messageKey.MarshalBinary()
