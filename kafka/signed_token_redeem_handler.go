@@ -18,9 +18,10 @@ import (
 
 /*
 SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
- tokens provided. If it encounters a permanent error, it emits a permanent result for that
- item. If the error is temporary, an error is returned to indicate that progress cannot be
- made.
+
+	tokens provided. If it encounters a permanent error, it emits a permanent result for that
+	item. If the error is temporary, an error is returned to indicate that progress cannot be
+	made.
 */
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
@@ -81,6 +82,48 @@ func SignedTokenRedeemHandler(
 			log,
 		)
 		return nil
+	}
+
+	// Create a lookup for issuers & signing keys based on public key
+	issuerLookup := map[string]*cbpServer.Issuer{}
+	signingKeyLookup := map[string]*crypto.SigningKey{}
+	for _, issuer := range *issuers {
+		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+			continue
+		}
+
+		for _, issuerKey := range issuer.Keys {
+			// Don't use keys outside their start/end dates
+			if !issuerKey.StartAt.IsZero() && issuerKey.StartAt.After(time.Now()) {
+				continue
+			}
+			if !issuerKey.EndAt.IsZero() && issuerKey.EndAt.Before(time.Now()) {
+				continue
+			}
+
+			signingKey := issuer.SigningKey
+
+			// Only attempt token verification with the issuer that was provided.
+			issuerPublicKey := signingKey.PublicKey()
+			marshaledPublicKey, err := issuerPublicKey.MarshalText()
+			// Unmarshaling failure is a data issue and is probably permanent.
+			if err != nil {
+				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				handlePermanentRedemptionError(
+					message,
+					err,
+					msg,
+					producer,
+					tokenRedeemRequestSet.Request_id,
+					int32(avroSchema.RedeemResultStatusError),
+					log,
+				)
+				return nil
+			}
+
+			issuerLookup[string(marshaledPublicKey)] = &issuer
+			signingKeyLookup[string(marshaledPublicKey)] = signingKey
+		}
 	}
 
 	// Iterate over requests (only one at this point but the schema can support more
@@ -150,53 +193,23 @@ func SignedTokenRedeemHandler(
 			)
 			return nil
 		}
-		for _, issuer := range *issuers {
-			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
-				continue
-			}
 
-			// get latest signing key from issuer
-			var signingKey *crypto.SigningKey
-			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
-			}
+		if issuer, signingKey := issuerLookup[request.Public_key], signingKeyLookup[request.Public_key]; issuer != nil && signingKey != nil {
+			logger.
+				Trace().
+				Str("requestID", tokenRedeemRequestSet.Request_id).
+				Str("publicKey", request.Public_key).
+				Msg("attempting token redemption verification")
 
-			// Only attempt token verification with the issuer that was provided.
-			issuerPublicKey := signingKey.PublicKey()
-			marshaledPublicKey, err := issuerPublicKey.MarshalText()
-			// Unmarshaling failure is a data issue and is probably permanent.
-			if err != nil {
-				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				handlePermanentRedemptionError(
-					message,
-					err,
-					msg,
-					producer,
-					tokenRedeemRequestSet.Request_id,
-					int32(avroSchema.RedeemResultStatusError),
-					log,
-				)
-				return nil
-			}
-
-			logger.Trace().
-				Msgf("request %s: issuer: %s, request: %s", tokenRedeemRequestSet.Request_id,
-					string(marshaledPublicKey), request.Public_key)
-
-			if string(marshaledPublicKey) == request.Public_key {
-				if err := btd.VerifyTokenRedemption(
-					&tokenPreimage,
-					&verificationSignature,
-					request.Binding,
-					[]*crypto.SigningKey{signingKey},
-				); err != nil {
-					verified = false
-				} else {
-					verified = true
-					verifiedIssuer = &issuer
-					verifiedCohort = int32(issuer.IssuerCohort)
-					break
-				}
+			if err := btd.VerifyTokenRedemption(
+				&tokenPreimage,
+				&verificationSignature,
+				request.Binding,
+				[]*crypto.SigningKey{signingKey},
+			); err == nil {
+				verified = true
+				verifiedIssuer = issuer
+				verifiedCohort = int32(issuer.IssuerCohort)
 			}
 		}
 
