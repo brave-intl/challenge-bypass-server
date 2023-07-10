@@ -13,7 +13,7 @@ import (
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
-	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go"
 )
 
 /*
@@ -23,6 +23,12 @@ SignedTokenRedeemHandler emits payment tokens that correspond to the signed conf
 	item. If the error is temporary, an error is returned to indicate that progress cannot be
 	made.
 */
+
+type SignedIssuerToken struct {
+	issuer     cbpServer.Issuer
+	signingKey *crypto.SigningKey
+}
+
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
@@ -85,8 +91,7 @@ func SignedTokenRedeemHandler(
 	}
 
 	// Create a lookup for issuers & signing keys based on public key
-	issuerLookup := map[string]*cbpServer.Issuer{}
-	signingKeyLookup := map[string]*crypto.SigningKey{}
+	signedTokens := make(map[string]SignedIssuerToken)
 	for _, issuer := range *issuers {
 		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 			continue
@@ -102,12 +107,15 @@ func SignedTokenRedeemHandler(
 			}
 
 			signingKey := issuer.SigningKey
+			if signingKey == nil {
+				continue
+			}
 
 			// Only attempt token verification with the issuer that was provided.
 			issuerPublicKey := signingKey.PublicKey()
-			marshaledPublicKey, err := issuerPublicKey.MarshalText()
-			// Unmarshaling failure is a data issue and is probably permanent.
-			if err != nil {
+			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
+			// Unmarshalling failure is a data issue and is probably permanent.
+			if mErr != nil {
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
 				handlePermanentRedemptionError(
 					message,
@@ -121,8 +129,10 @@ func SignedTokenRedeemHandler(
 				return nil
 			}
 
-			issuerLookup[string(marshaledPublicKey)] = &issuer
-			signingKeyLookup[string(marshaledPublicKey)] = signingKey
+			signedTokens[string(marshaledPublicKey)] = SignedIssuerToken{
+				issuer:     issuer,
+				signingKey: signingKey,
+			}
 		}
 	}
 
@@ -194,21 +204,22 @@ func SignedTokenRedeemHandler(
 			return nil
 		}
 
-		if issuer, signingKey := issuerLookup[request.Public_key], signingKeyLookup[request.Public_key]; issuer != nil && signingKey != nil {
+		if signedToken, ok := signedTokens[request.Public_key]; ok {
 			logger.
 				Trace().
 				Str("requestID", tokenRedeemRequestSet.Request_id).
 				Str("publicKey", request.Public_key).
 				Msg("attempting token redemption verification")
 
+			issuer := signedToken.issuer
 			if err := btd.VerifyTokenRedemption(
 				&tokenPreimage,
 				&verificationSignature,
 				request.Binding,
-				[]*crypto.SigningKey{signingKey},
+				[]*crypto.SigningKey{signedToken.signingKey},
 			); err == nil {
 				verified = true
-				verifiedIssuer = issuer
+				verifiedIssuer = &issuer
 				verifiedCohort = int32(issuer.IssuerCohort)
 			}
 		}
@@ -228,7 +239,7 @@ func SignedTokenRedeemHandler(
 		} else {
 			logger.Info().Msg(fmt.Sprintf("request %s: validated", tokenRedeemRequestSet.Request_id))
 		}
-		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
+		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 		if err != nil {
 			var processingError *utils.ProcessingError
 			if errors.As(err, &processingError) {
@@ -276,7 +287,7 @@ func SignedTokenRedeemHandler(
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
 			if strings.Contains(err.Error(), "Duplicate") {
-				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
+				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 					var processingError *utils.ProcessingError
