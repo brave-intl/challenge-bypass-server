@@ -94,10 +94,10 @@ func SignedTokenRedeemHandler(
 
 		for _, issuerKey := range issuer.Keys {
 			// Don't use keys outside their start/end dates
-			if !issuerKey.StartAt.IsZero() && issuerKey.StartAt.After(time.Now()) {
+			if issuerKey.StartAt != nil && !issuerKey.StartAt.IsZero() && issuerKey.StartAt.After(time.Now()) {
 				continue
 			}
-			if !issuerKey.EndAt.IsZero() && issuerKey.EndAt.Before(time.Now()) {
+			if issuerKey.EndAt != nil && !issuerKey.EndAt.IsZero() && issuerKey.EndAt.Before(time.Now()) {
 				continue
 			}
 
