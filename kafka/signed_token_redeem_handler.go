@@ -382,15 +382,18 @@ func SignedTokenRedeemHandler(
 }
 
 func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
-	// Nil times are valid
-	if start == nil && end == nil {
-		return false
+	if start != nil && end != nil {
+		now := time.Now()
+
+		startIsNotZeroAndAfterNow := !start.IsZero() && start.After(now)
+		endIsNotZeroAndBeforeNow := !end.IsZero() && end.Before(now)
+
+		return startIsNotZeroAndAfterNow || endIsNotZeroAndBeforeNow
 	}
 
-	now := time.Now()
-	startInvalid := start != nil && !start.IsZero() && start.After(now)
-	endInvalid := end != nil && !end.IsZero() && end.Before(now)
-	return startInvalid || endInvalid
+	// Both times being nil is valid
+	bothTimesAreNil := start == nil && end == nil
+	return !bothTimesAreNil
 }
 
 // avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the
