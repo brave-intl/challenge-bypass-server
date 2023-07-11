@@ -99,10 +99,10 @@ func SignedTokenRedeemHandler(
 
 		for _, issuerKey := range issuer.Keys {
 			// Don't use keys outside their start/end dates
-			if issuerKey.StartAt != nil && !issuerKey.StartAt.IsZero() && issuerKey.StartAt.After(time.Now()) {
+			if issuerTimeIsNotValid(issuerKey.StartAt) {
 				continue
 			}
-			if issuerKey.EndAt != nil && !issuerKey.EndAt.IsZero() && issuerKey.EndAt.Before(time.Now()) {
+			if issuerTimeIsNotValid(issuerKey.EndAt) {
 				continue
 			}
 
@@ -382,6 +382,15 @@ func SignedTokenRedeemHandler(
 	}
 
 	return nil
+}
+
+func issuerTimeIsNotValid(t *time.Time) bool {
+	// Nil times are valid
+	if t == nil {
+		return false
+	}
+
+	return !t.IsZero() && t.After(time.Now())
 }
 
 // avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the
