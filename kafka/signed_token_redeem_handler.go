@@ -390,7 +390,7 @@ func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
 	now := time.Now()
 	startInvalid := start != nil && !start.IsZero() && start.After(now)
 	endInvalid := end != nil && !end.IsZero() && end.Before(now)
-	return startInvalid && endInvalid
+	return startInvalid || endInvalid
 }
 
 // avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the
