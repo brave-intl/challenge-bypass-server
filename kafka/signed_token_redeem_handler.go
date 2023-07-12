@@ -103,12 +103,7 @@ func SignedTokenRedeemHandler(
 				continue
 			}
 
-			signingKey := issuer.SigningKey
-			if signingKey == nil {
-				continue
-			}
-
-			// Only attempt token verification with the issuer that was provided.
+			signingKey := issuerKey.SigningKey
 			issuerPublicKey := signingKey.PublicKey()
 			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
 			// Unmarshalling failure is a data issue and is probably permanent.
