@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"net/http"
 	"os"
 	"time"
@@ -224,22 +225,27 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 			Code:    500,
 		}
 	}
-	respIssuers := make([]issuerResponse, len(issuers))
-	for idx, iss := range issuers {
-		expiresAt := ""
-		if !iss.ExpiresAt.IsZero() {
-			expiresAt = iss.ExpiresAt.Format(time.RFC3339)
-		}
 
-		var publicKey *crypto.PublicKey
-		for _, k := range iss.Keys {
-			publicKey = k.SigningKey.PublicKey()
-		}
-
-		respIssuers[idx] = issuerResponse{iss.ID.String(), iss.IssuerType, publicKey, expiresAt, iss.IssuerCohort}
+	marshalledIssuers, err := utils.MarshalIssuersAndSigningKeys(issuers)
+	if err != nil {
+		c.Logger.Error("error retrieving issuer values")
+		panic(err)
 	}
 
-	err := json.NewEncoder(w).Encode(respIssuers)
+	var respIssuers []issuerResponse
+	for _, value := range marshalledIssuers {
+		iss := value.Issuer
+		issuerKeySigningKey := value.SigningKey
+		respIssuers = append(respIssuers, issuerResponse{
+			iss.ID.String(),
+			iss.IssuerType,
+			issuerKeySigningKey.PublicKey(),
+			iss.ExpiresAt.Format(time.RFC3339),
+			iss.IssuerCohort,
+		})
+	}
+
+	err = json.NewEncoder(w).Encode(respIssuers)
 	if err != nil {
 		c.Logger.Error("Error encoding issuer")
 		panic(err)
