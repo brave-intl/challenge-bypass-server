@@ -63,7 +63,7 @@ func (suite *ServerTestSuite) SetupTest() {
 	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 
 	for _, table := range tables {
-		_, err := suite.srv.db.Exec("delete from ?", table)
+		_, err := suite.srv.db.Exec(fmt.Sprintf("delete from %s", table))
 		suite.Require().NoError(err, "Failed to get clean table")
 	}
 }
