@@ -69,7 +69,7 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer
 		}
 	}
 
-	return &(*issuer)[0], nil
+	return &issuer[0], nil
 }
 
 // GetLatestIssuerKafka - get the issuer and any processing error
@@ -79,7 +79,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 		return nil, err
 	}
 
-	return &(*issuer)[0], nil
+	return &issuer[0], nil
 }
 
 // GetIssuers - get all issuers by issuer type
@@ -224,19 +224,19 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 			Code:    500,
 		}
 	}
-	respIssuers := []issuerResponse{}
-	for _, issuer := range *issuers {
+	respIssuers := make([]issuerResponse, len(issuers))
+	for idx, iss := range issuers {
 		expiresAt := ""
-		if !issuer.ExpiresAt.IsZero() {
-			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+		if !iss.ExpiresAt.IsZero() {
+			expiresAt = iss.ExpiresAt.Format(time.RFC3339)
 		}
 
 		var publicKey *crypto.PublicKey
-		for _, k := range issuer.Keys {
+		for _, k := range iss.Keys {
 			publicKey = k.SigningKey.PublicKey()
 		}
 
-		respIssuers = append(respIssuers, issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
+		respIssuers[idx] = issuerResponse{iss.ID.String(), iss.IssuerType, publicKey, expiresAt, iss.IssuerCohort}
 	}
 
 	err := json.NewEncoder(w).Encode(respIssuers)

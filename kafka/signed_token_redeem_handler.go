@@ -92,7 +92,7 @@ func SignedTokenRedeemHandler(
 
 	// Create a lookup for issuers & signing keys based on public key
 	signedTokens := make(map[string]SignedIssuerToken)
-	for _, issuer := range *issuers {
+	for _, issuer := range issuers {
 		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
 			continue
 		}
