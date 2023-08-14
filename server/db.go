@@ -409,13 +409,14 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []issuer) ([]Issuer, error) {
 
 		var keys []issuerKeys
 		lteVersionTwo := fetchedIssuer.Version <= 2
-		// TODO: Does touching this break all the tests
+		// TODO: There are tests relying on the lte V2 check to do a full table scan?
 		err := c.db.Select(
 			&keys,
 			`SELECT *
 			FROM v3_issuer_keys 
-			WHERE issuer_id=$1 AND ($2 OR end_at > now())
-			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
+			WHERE issuer_id=$1
+			  AND ($2 OR (end_at > now() OR end_at is null))
+			ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`,
 			convertedIssuer.ID, lteVersionTwo,
 		)
 		if err != nil {
