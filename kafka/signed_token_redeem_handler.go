@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/utils"
 	"strings"
+	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 )
@@ -90,17 +91,41 @@ func SignedTokenRedeemHandler(
 	}
 
 	// Create a lookup for issuers & signing keys based on public key
-	signedTokens, err := utils.MarshalIssuersAndSigningKeys(issuers)
-	if err != nil {
-		handlePermanentRedemptionError(
-			fmt.Sprintf("request %s: %e", tokenRedeemRequestSet.Request_id, err),
-			err,
-			msg,
-			producer,
-			tokenRedeemRequestSet.Request_id,
-			int32(avroSchema.RedeemResultStatusError),
-			log,
-		)
+	signedTokens := make(map[string]SignedIssuerToken)
+	for _, issuer := range issuers {
+		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+			continue
+		}
+
+		for _, issuerKey := range issuer.Keys {
+			// Don't use keys outside their start/end dates
+			if issuerTimeIsNotValid(issuerKey.StartAt, issuerKey.EndAt) {
+				continue
+			}
+
+			signingKey := issuerKey.SigningKey
+			issuerPublicKey := signingKey.PublicKey()
+			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
+			// Unmarshalling failure is a data issue and is probably permanent.
+			if mErr != nil {
+				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				handlePermanentRedemptionError(
+					message,
+					err,
+					msg,
+					producer,
+					tokenRedeemRequestSet.Request_id,
+					int32(avroSchema.RedeemResultStatusError),
+					log,
+				)
+				return nil
+			}
+
+			signedTokens[string(marshaledPublicKey)] = SignedIssuerToken{
+				issuer:     issuer,
+				signingKey: signingKey,
+			}
+		}
 	}
 
 	// Iterate over requests (only one at this point but the schema can support more
@@ -178,12 +203,12 @@ func SignedTokenRedeemHandler(
 				Str("publicKey", request.Public_key).
 				Msg("attempting token redemption verification")
 
-			issuer := signedToken.Issuer
+			issuer := signedToken.issuer
 			if err := btd.VerifyTokenRedemption(
 				&tokenPreimage,
 				&verificationSignature,
 				request.Binding,
-				[]*crypto.SigningKey{signedToken.SigningKey},
+				[]*crypto.SigningKey{signedToken.signingKey},
 			); err == nil {
 				verified = true
 				verifiedIssuer = &issuer
@@ -349,6 +374,21 @@ func SignedTokenRedeemHandler(
 	}
 
 	return nil
+}
+
+func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
+	if start != nil && end != nil {
+		now := time.Now()
+
+		startIsNotZeroAndAfterNow := !start.IsZero() && start.After(now)
+		endIsNotZeroAndBeforeNow := !end.IsZero() && end.Before(now)
+
+		return startIsNotZeroAndAfterNow || endIsNotZeroAndBeforeNow
+	}
+
+	// Both times being nil is valid
+	bothTimesAreNil := start == nil && end == nil
+	return !bothTimesAreNil
 }
 
 // avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the

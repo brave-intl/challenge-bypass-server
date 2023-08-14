@@ -270,24 +270,24 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	time.Sleep(2 * time.Second)
 	myIssuer, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
 	fmt.Println(err)
-	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+	suite.Require().Equal(1, len(myIssuer.Keys)) // should be one left
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
 
 	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
-	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
+	suite.Require().Equal(3, len(myIssuer.Keys)) // should be 3 now
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
-	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now still
+	suite.Require().Equal(3, len(myIssuer.Keys)) // should be 3 now still
 
 	// wait a few intervals after creation and check number of signing keys left
 	time.Sleep(2 * time.Second)
 	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
-	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+	suite.Require().Equal(1, len(myIssuer.Keys)) // should be one left
 }
 
 func (suite *ServerTestSuite) TestCreateIssuerV3() {
