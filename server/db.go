@@ -401,7 +401,7 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 func (c *Server) fetchIssuerKeys(fetchedIssuers []issuer) ([]Issuer, error) {
 	var issuers []Issuer
 	for _, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer := c.convertDBIssuer(fetchedIssuer)
+		convertedIssuer := parseIssuer(fetchedIssuer)
 		// get the keys for the Issuer
 		if convertedIssuer.Keys == nil {
 			convertedIssuer.Keys = []IssuerKeys{}
@@ -436,7 +436,7 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []issuer) ([]Issuer, error) {
 			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
 		}
 
-		issuers = append(issuers, *convertedIssuer)
+		issuers = append(issuers, convertedIssuer)
 	}
 
 	return issuers, nil
@@ -474,9 +474,9 @@ func (c *Server) rotateIssuers() error {
 
 	for _, v := range fetchedIssuers {
 		// converted
-		issuer := c.convertDBIssuer(v)
+		issuer := parseIssuer(v)
 		// populate keys in db
-		if err := txPopulateIssuerKeys(c.Logger, tx, *issuer); err != nil {
+		if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
 			return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
 		}
 
@@ -933,13 +933,6 @@ func (c *Server) convertDBIssuerKeys(issuerKeyToConvert issuerKeys) (*IssuerKeys
 		return nil, err
 	}
 	return &parsedIssuerKeys, nil
-}
-
-// convertDBIssuer takes an issuer from the database and returns a reference to that issuer
-// Represented as an Issuer struct.
-func (c *Server) convertDBIssuer(issuerToConvert issuer) *Issuer {
-	parsedIssuer := parseIssuer(issuerToConvert)
-	return &parsedIssuer
 }
 
 func parseIssuerKeys(issuerKeysToParse issuerKeys) (IssuerKeys, error) {
