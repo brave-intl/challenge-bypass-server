@@ -353,12 +353,6 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	return convertedIssuer, nil
 }
 
-// FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
-// if it has to query the database.
-func (c *Server) FetchAllIssuers() ([]Issuer, error) {
-	return c.fetchIssuers("all")
-}
-
 func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
 		if issuers, ok := cached.([]Issuer); ok {
@@ -366,9 +360,58 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 		}
 	}
 
+	fetchedIssuers, err := c.fetchIssuersFromDB(issuerType)
+	if err != nil {
+		return nil, err
+	}
+
+	issuersWithKey, err := c.fetchIssuerKeys(fetchedIssuers)
+	if err != nil {
+		return nil, err
+	}
+
+	if c.caches != nil {
+		c.caches["issuers"].SetDefault(issuerType, issuersWithKey)
+	}
+
+	return issuersWithKey, nil
+}
+
+// FetchAllIssuers fetches all issuers from a cache or a database, saving them in the cache
+// if it has to query the database.
+func (c *Server) FetchAllIssuers() ([]Issuer, error) {
+	all := "all"
+	if cached := retrieveFromCache(c.caches, "issuers", all); cached != nil {
+		if issuers, ok := cached.([]Issuer); ok {
+			return issuers, nil
+		}
+	}
+
+	fetchedIssuers, err := c.fetchIssuersFromDB(all)
+	if err != nil {
+		return nil, err
+	}
+
+	validIssuers := make([]Issuer, len(fetchedIssuers))
+	for idx, fetchedIssuer := range fetchedIssuers {
+		convertedIssuer, cErr := c.convertIssuerAndAddKeys(fetchedIssuer, V2)
+		if cErr != nil {
+			return nil, err
+		}
+
+		validIssuers[idx] = *convertedIssuer
+	}
+
+	if c.caches != nil {
+		c.caches["issuers"].SetDefault(all, validIssuers)
+	}
+
+	return validIssuers, nil
+}
+
+func (c *Server) fetchIssuersFromDB(issuerType string) ([]issuer, error) {
 	var err error
 	var fetchedIssuers []issuer
-
 	if issuerType == "all" {
 		err = c.db.Select(
 			&fetchedIssuers,
@@ -391,21 +434,7 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, false)
 	}
 
-	issuersWithKey := make([]Issuer, len(fetchedIssuers))
-	for idx, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer, cErr := c.convertIssuerAndAddKeys(fetchedIssuer, V2)
-		if cErr != nil {
-			return nil, err
-		}
-
-		issuersWithKey[idx] = *convertedIssuer
-	}
-
-	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuersWithKey)
-	}
-
-	return issuersWithKey, nil
+	return fetchedIssuers, err
 }
 
 func (c *Server) fetchIssuerKeys(fetchedIssuers []issuer) ([]Issuer, error) {
