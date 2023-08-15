@@ -120,6 +120,11 @@ type RedemptionV2 struct {
 	Offset    int64     `json:"offset"`
 }
 
+const (
+	V1 string = "v1"
+	V2 string = "v2"
+)
+
 // CacheInterface cache functions
 type CacheInterface interface {
 	Get(k string) (interface{}, bool)
@@ -386,9 +391,14 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, false)
 	}
 
-	issuersWithKey, err := c.fetchIssuerKeys(fetchedIssuers)
-	if err != nil {
-		return nil, err
+	issuersWithKey := make([]Issuer, len(fetchedIssuers))
+	for idx, fetchedIssuer := range fetchedIssuers {
+		convertedIssuer, cErr := c.convertIssuerAndAddKeys(fetchedIssuer, V2)
+		if cErr != nil {
+			return nil, err
+		}
+
+		issuersWithKey[idx] = *convertedIssuer
 	}
 
 	if c.caches != nil {
@@ -401,45 +411,82 @@ func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 func (c *Server) fetchIssuerKeys(fetchedIssuers []issuer) ([]Issuer, error) {
 	var issuers []Issuer
 	for _, fetchedIssuer := range fetchedIssuers {
-		convertedIssuer := parseIssuer(fetchedIssuer)
-		// get the keys for the Issuer
-		if convertedIssuer.Keys == nil {
-			convertedIssuer.Keys = []IssuerKeys{}
-		}
-
-		var keys []issuerKeys
-		lteVersionTwo := fetchedIssuer.Version <= 2
-		// TODO: There are tests relying on the lte V2 check to do a full table scan?
-		err := c.db.Select(
-			&keys,
-			`SELECT *
-			FROM v3_issuer_keys 
-			WHERE issuer_id=$1
-			  AND ($2 OR (end_at > now() OR end_at is null))
-			ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`,
-			convertedIssuer.ID, lteVersionTwo,
-		)
+		convertedIssuer, err := c.convertIssuerAndAddKeys(fetchedIssuer, V1)
 		if err != nil {
-			isNotPostgresNotFoundErr := !isPostgresNotFoundError(err)
-			if !isNotPostgresNotFoundErr {
-				c.Logger.Error("Issuer key was not found in DB")
-			}
-			return nil, utils.ProcessingErrorFromError(err, isNotPostgresNotFoundErr)
+			return nil, err
 		}
 
-		for _, v := range keys {
-			k, cErr := c.convertDBIssuerKeys(v)
-			if cErr != nil {
-				c.Logger.Error("Failed to convert issuer keys from DB")
-				return nil, utils.ProcessingErrorFromError(cErr, false)
-			}
-			convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
-		}
-
-		issuers = append(issuers, convertedIssuer)
+		issuers = append(issuers, *convertedIssuer)
 	}
 
 	return issuers, nil
+}
+
+func (c *Server) convertIssuerAndAddKeys(fetchedIssuer issuer, version string) (*Issuer, error) {
+	convertedIssuer := parseIssuer(fetchedIssuer)
+	// get the keys for the Issuer
+	if convertedIssuer.Keys == nil {
+		convertedIssuer.Keys = []IssuerKeys{}
+	}
+
+	var keys []issuerKeys
+	var err error
+	if version == "v2" {
+		keys, err = c.issuerKeysSqlV2(convertedIssuer)
+	} else {
+		keys, err = c.issuerKeysSqlV1(convertedIssuer)
+	}
+
+	if err != nil {
+		isNotPostgresNotFoundErr := !isPostgresNotFoundError(err)
+		if !isNotPostgresNotFoundErr {
+			c.Logger.Error("Issuer key was not found in DB")
+		}
+		return nil, utils.ProcessingErrorFromError(err, isNotPostgresNotFoundErr)
+	}
+
+	for _, v := range keys {
+		k, cErr := c.convertDBIssuerKeys(v)
+		if cErr != nil {
+			c.Logger.Error("Failed to convert issuer keys from DB")
+			return nil, utils.ProcessingErrorFromError(cErr, false)
+		}
+		convertedIssuer.Keys = append(convertedIssuer.Keys, *k)
+	}
+
+	return &convertedIssuer, nil
+}
+
+func (c *Server) issuerKeysSqlV1(iss Issuer) ([]issuerKeys, error) {
+	var result []issuerKeys
+	lteVersionTwo := iss.Version <= 2
+	err := c.db.Select(
+		&result,
+		`SELECT *
+			FROM v3_issuer_keys 
+			WHERE issuer_id=$1
+			  AND ($2 OR end_at > now())
+			ORDER BY end_at ASC NULLS FIRST, start_at ASC`,
+		iss.ID, lteVersionTwo,
+	)
+
+	return result, err
+}
+
+func (c *Server) issuerKeysSqlV2(iss Issuer) ([]issuerKeys, error) {
+	var result []issuerKeys
+	err := c.db.Select(
+		&result,
+		`SELECT *
+			FROM v3_issuer_keys
+			WHERE issuer_id=$1
+			  AND (end_at >= now() OR end_at is null)
+			  AND (start_at <= now() OR start_at is null)
+			ORDER BY created_at ASC`,
+		iss.ID,
+	)
+
+	return result, err
 }
 
 // RotateIssuers is the function that rotates

@@ -82,16 +82,6 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 	return &issuer[0], nil
 }
 
-// GetIssuers - get all issuers by issuer type
-func (c *Server) GetIssuers(issuerType string) ([]Issuer, error) {
-	issuers, err := c.getIssuers(issuerType)
-	if err != nil {
-		c.Logger.Error(err)
-		return nil, err
-	}
-	return issuers, nil
-}
-
 func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
@@ -383,8 +373,8 @@ func makeIssuerResponse(iss *Issuer) issuerResponse {
 
 	// Last key in array is the valid one
 	var publicKey *crypto.PublicKey
-	for _, k := range iss.Keys {
-		publicKey = k.SigningKey.PublicKey()
+	if len(iss.Keys) > 0 {
+		publicKey = iss.Keys[len(iss.Keys)-1].SigningKey.PublicKey()
 	}
 
 	return issuerResponse{
