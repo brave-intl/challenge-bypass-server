@@ -432,9 +432,9 @@ func (c *Server) convertIssuerAndAddKeys(fetchedIssuer issuer, version string) (
 	var keys []issuerKeys
 	var err error
 	if version == "v2" {
-		keys, err = c.issuerKeysSqlV2(convertedIssuer)
+		keys, err = c.issuerKeysSQLV2(convertedIssuer)
 	} else {
-		keys, err = c.issuerKeysSqlV1(convertedIssuer)
+		keys, err = c.issuerKeysSQLV1(convertedIssuer)
 	}
 
 	if err != nil {
@@ -457,7 +457,7 @@ func (c *Server) convertIssuerAndAddKeys(fetchedIssuer issuer, version string) (
 	return &convertedIssuer, nil
 }
 
-func (c *Server) issuerKeysSqlV1(iss Issuer) ([]issuerKeys, error) {
+func (c *Server) issuerKeysSQLV1(iss Issuer) ([]issuerKeys, error) {
 	var result []issuerKeys
 	lteVersionTwo := iss.Version <= 2
 	err := c.db.Select(
@@ -473,7 +473,7 @@ func (c *Server) issuerKeysSqlV1(iss Issuer) ([]issuerKeys, error) {
 	return result, err
 }
 
-func (c *Server) issuerKeysSqlV2(iss Issuer) ([]issuerKeys, error) {
+func (c *Server) issuerKeysSQLV2(iss Issuer) ([]issuerKeys, error) {
 	var result []issuerKeys
 	err := c.db.Select(
 		&result,
