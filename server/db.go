@@ -54,30 +54,42 @@ type IssuerKeys struct {
 }
 
 func (key *IssuerKeys) CryptoSigningKey() *crypto.SigningKey {
-	var cryptoSigningKey *crypto.SigningKey
+	cryptoSigningKey := crypto.SigningKey{}
 	err := cryptoSigningKey.UnmarshalText(key.SigningKey)
 	if err != nil {
-		panic(utils.ProcessingErrorFromError(err, false))
+		return nil
 	}
 
-	return cryptoSigningKey
+	return &cryptoSigningKey
 }
 
 // Issuer of tokens
 type Issuer struct {
-	ID           *uuid.UUID   `json:"id" db:"issuer_id"`
-	IssuerType   string       `json:"issuer_type" db:"issuer_type"`
-	IssuerCohort int16        `json:"issuer_cohort" db:"issuer_cohort"`
-	MaxTokens    int          `json:"max_tokens" db:"max_tokens"`
-	CreatedAt    pq.NullTime  `json:"created_at" db:"created_at"`
-	ExpiresAt    pq.NullTime  `json:"expires_at" db:"expires_at"`
-	RotatedAt    pq.NullTime  `json:"rotated_at" db:"last_rotated_at"`
-	Version      int          `json:"version" db:"version"`
-	ValidFrom    *time.Time   `json:"valid_from" db:"valid_from"`
-	Buffer       int          `json:"buffer" db:"buffer"`
-	Overlap      int          `json:"overlap" db:"overlap"`
-	Duration     *string      `json:"duration" db:"duration"`
-	Keys         []IssuerKeys `json:"keys" db:"v3_issuer_keys"`
+	ID                   *uuid.UUID   `json:"id" db:"issuer_id"`
+	IssuerType           string       `json:"issuer_type" db:"issuer_type"`
+	IssuerCohort         int16        `json:"issuer_cohort" db:"issuer_cohort"`
+	SigningKey           []byte       `db:"signing_key"`
+	MaxTokens            int          `json:"max_tokens" db:"max_tokens"`
+	CreatedAt            pq.NullTime  `json:"created_at" db:"created_at"`
+	ExpiresAt            pq.NullTime  `json:"expires_at" db:"expires_at"`
+	RotatedAt            pq.NullTime  `json:"rotated_at" db:"last_rotated_at"`
+	Version              int          `json:"version" db:"version"`
+	ValidFrom            *time.Time   `json:"valid_from" db:"valid_from"`
+	Buffer               int          `json:"buffer" db:"buffer"`
+	DaysOut              int          `json:"days_out" db:"days_out"`
+	Overlap              int          `json:"overlap" db:"overlap"`
+	Duration             *string      `json:"duration" db:"duration"`
+	RedemptionRepository string       `json:"-" db:"redemption_repository"`
+	Keys                 []IssuerKeys `json:"keys" db:"v3_issuer_keys"`
+}
+
+func (iss *Issuer) ExpiresAtTime() time.Time {
+	var t time.Time
+	if !iss.ExpiresAt.Valid {
+		return t
+	}
+
+	return iss.ExpiresAt.Time
 }
 
 // Redemption is a token Redeemed
@@ -327,48 +339,28 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	return convertedIssuer, nil
 }
 
-// FetchIssuersByType fetches issuers from a cache or a database based on their type, saving them in the cache
-// if it has to query the database.
-func (c *Server) FetchIssuersByType(issuerType string) ([]Issuer, error) {
+func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
 		if issuers, ok := cached.([]Issuer); ok {
 			return issuers, nil
 		}
 	}
 
-	var err error
 	var fetchedIssuers []Issuer
-	if issuerType == "all" {
-		err = c.db.Select(
-			&fetchedIssuers,
-			`SELECT * FROM v3_issuers 
-    		INNER JOIN v3_issuer_keys on v3_issuers.issuer_id = v3_issuer_keys.issuer_id
-			WHERE (v3_issuer_keys.end_at > now() or v3_issuer_keys.end_at is null)
-			AND (v3_issuer_keys.start_at <= now() or v3_issuer_keys.start_at is null)
-			ORDER BY v3_issuers.expires_at DESC NULLS LAST, v3_issuers.created_at DESC, v3_issuer_keys.created_at ASC`)
-	} else {
-		err = c.db.Select(
-			&fetchedIssuers,
-			`SELECT * FROM v3_issuers WHERE issuer_type=$1 ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
-			issuerType,
-		)
-	}
+	err := c.db.Select(
+		&fetchedIssuers,
+		`SELECT * FROM v3_issuers WHERE issuer_type=$1 ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
+		issuerType,
+	)
 
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		return nil, utils.ProcessingErrorFromError(err, !isPostgresNotFoundError(err))
 	}
 
-	if len(fetchedIssuers) < 1 {
-		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, false)
-	}
-
-	issuersWithKey := fetchedIssuers
-	if issuerType != "all" {
-		issuersWithKey, err = c.fetchIssuerKeys(fetchedIssuers)
-		if err != nil {
-			return nil, err
-		}
+	issuersWithKey, err := c.fetchIssuerKeys(fetchedIssuers)
+	if err != nil {
+		return nil, err
 	}
 
 	if c.caches != nil {
@@ -376,6 +368,58 @@ func (c *Server) FetchIssuersByType(issuerType string) ([]Issuer, error) {
 	}
 
 	return issuersWithKey, nil
+}
+
+// FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
+// if it has to query the database.
+func (c *Server) FetchAllIssuers() ([]Issuer, error) {
+	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
+		if issuers, ok := cached.([]Issuer); ok {
+			return issuers, nil
+		}
+	}
+
+	var err error
+	var fetchedIssuers []Issuer
+	err = c.db.Select(
+		&fetchedIssuers,
+		`SELECT * FROM v3_issuers ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
+	)
+
+	if err != nil {
+		c.Logger.Error("Failed to extract issuers from DB")
+		return nil, utils.ProcessingErrorFromError(err, !isPostgresNotFoundError(err))
+	}
+
+	for _, fetchedIssuer := range fetchedIssuers {
+		var keys []IssuerKeys
+		sErr := c.db.Select(
+			&keys,
+			`SELECT *
+			FROM v3_issuer_keys 
+			WHERE issuer_id=$1
+			  AND (end_at > now() OR end_at IS NULL) 
+			  AND (start_at <= now() OR start_at IS NULL)
+			ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`,
+			fetchedIssuer.ID,
+		)
+
+		if sErr != nil {
+			isNotPostgresNotFoundError := !isPostgresNotFoundError(sErr)
+			if isNotPostgresNotFoundError {
+				c.Logger.Error("Issuer key was not found in DB")
+			}
+			return nil, utils.ProcessingErrorFromError(sErr, isNotPostgresNotFoundError)
+		}
+
+		fetchedIssuer.Keys = append(fetchedIssuer.Keys, keys...)
+	}
+
+	if c.caches != nil {
+		c.caches["issuers"].SetDefault("all", fetchedIssuers)
+	}
+
+	return fetchedIssuers, nil
 }
 
 func (c *Server) fetchIssuerKeys(fetchedIssuers []Issuer) ([]Issuer, error) {
@@ -782,7 +826,7 @@ func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens
 		IssuerCohort: issuerCohort,
 		Version:      2,
 		MaxTokens:    maxTokens,
-		ExpiresAt:    pq.NullTime{Time: *expiresAt},
+		ExpiresAt:    pq.NullTime{Time: *expiresAt, Valid: expiresAt != nil},
 	})
 }
 
@@ -798,7 +842,7 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int16, maxTokens i
 		IssuerCohort: issuerCohort,
 		Version:      1,
 		MaxTokens:    maxTokens,
-		ExpiresAt:    pq.NullTime{Time: *expiresAt},
+		ExpiresAt:    pq.NullTime{Time: *expiresAt, Valid: expiresAt != nil},
 	})
 }
 

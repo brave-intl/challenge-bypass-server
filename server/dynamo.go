@@ -101,7 +101,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *Issuer, preimage *crypto.TokenPre
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAt.Time.Unix(),
+		TTL:       issuer.ExpiresAtTime().Unix(),
 		Offset:    offset,
 	}
 
@@ -174,7 +174,7 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAt.Time.Unix(),
+		TTL:       issuer.ExpiresAtTime().Unix(),
 	}
 
 	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)

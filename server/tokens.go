@@ -203,7 +203,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		if issuer.ExpiresAt.Time.IsZero() && issuer.ExpiresAt.Time.Before(time.Now()) {
+		if issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 			return &handlers.AppError{
 				Message: "Issuer has expired",
 				Code:    http.StatusBadRequest,
@@ -308,7 +308,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		var verifiedIssuer = &Issuer{}
 		var verifiedCohort = int16(0)
 		for _, issuer := range issuers {
-			if !issuer.ExpiresAt.Time.IsZero() && issuer.ExpiresAt.Time.Before(time.Now()) {
+			if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 				continue
 			}
 

@@ -72,7 +72,7 @@ func SignedTokenRedeemHandler(
 		)
 		return nil
 	}
-	issuers, err := server.FetchIssuersByType("all")
+	issuers, err := server.FetchAllIssuers()
 	if err != nil {
 		if processingError, ok := err.(*utils.ProcessingError); ok && processingError.Temporary {
 			return processingError
@@ -93,7 +93,7 @@ func SignedTokenRedeemHandler(
 	// Create a lookup for issuers & signing keys based on public key
 	signedTokens := make(map[string]SignedIssuerToken)
 	for _, issuer := range issuers {
-		if !issuer.ExpiresAt.Time.IsZero() && issuer.ExpiresAt.Time.Before(time.Now()) {
+		if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 			continue
 		}
 
