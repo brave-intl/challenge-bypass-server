@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/lib/pq"
 	"io"
 	"net/http"
@@ -252,7 +253,7 @@ type v3Redemption struct {
 func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	var buffer = 3
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
@@ -334,7 +335,7 @@ func (suite *ServerTestSuite) TestGetIssuerV2() {
 	defer server.Close()
 
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
@@ -370,7 +371,7 @@ func (suite *ServerTestSuite) TestGetIssuerV2() {
 }
 
 func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   test.RandomString(),
 		IssuerCohort: 1,
@@ -605,7 +606,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	var buffer = 10
 	var redemptions = []v3Redemption{}
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
 
@@ -17,7 +18,6 @@ import (
 	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Why?
-	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
@@ -39,57 +39,6 @@ type DBConfig struct {
 	DefaultDaysBeforeExpiry int           `json:"DefaultDaysBeforeExpiry"`
 	DefaultIssuerValidDays  int           `json:"DefaultIssuerValidDays"`
 	DynamodbEndpoint        string        `json:"DynamodbEndpoint"`
-}
-
-// IssuerKeys - an issuer that uses time based keys
-type IssuerKeys struct {
-	ID         *uuid.UUID `json:"id" db:"key_id"`
-	SigningKey []byte     `json:"-" db:"signing_key"`
-	PublicKey  *string    `json:"public_key" db:"public_key"`
-	Cohort     int16      `json:"cohort" db:"cohort"`
-	IssuerID   *uuid.UUID `json:"issuer_id" db:"issuer_id"`
-	CreatedAt  *time.Time `json:"created_at" db:"created_at"`
-	StartAt    *time.Time `json:"start_at" db:"start_at"`
-	EndAt      *time.Time `json:"end_at" db:"end_at"`
-}
-
-func (key *IssuerKeys) CryptoSigningKey() *crypto.SigningKey {
-	cryptoSigningKey := crypto.SigningKey{}
-	err := cryptoSigningKey.UnmarshalText(key.SigningKey)
-	if err != nil {
-		return nil
-	}
-
-	return &cryptoSigningKey
-}
-
-// Issuer of tokens
-type Issuer struct {
-	ID                   *uuid.UUID   `json:"id" db:"issuer_id"`
-	IssuerType           string       `json:"issuer_type" db:"issuer_type"`
-	IssuerCohort         int16        `json:"issuer_cohort" db:"issuer_cohort"`
-	SigningKey           []byte       `db:"signing_key"`
-	MaxTokens            int          `json:"max_tokens" db:"max_tokens"`
-	CreatedAt            pq.NullTime  `json:"created_at" db:"created_at"`
-	ExpiresAt            pq.NullTime  `json:"expires_at" db:"expires_at"`
-	RotatedAt            pq.NullTime  `json:"rotated_at" db:"last_rotated_at"`
-	Version              int          `json:"version" db:"version"`
-	ValidFrom            *time.Time   `json:"valid_from" db:"valid_from"`
-	Buffer               int          `json:"buffer" db:"buffer"`
-	DaysOut              int          `json:"days_out" db:"days_out"`
-	Overlap              int          `json:"overlap" db:"overlap"`
-	Duration             *string      `json:"duration" db:"duration"`
-	RedemptionRepository string       `json:"-" db:"redemption_repository"`
-	Keys                 []IssuerKeys `json:"keys" db:"v3_issuer_keys"`
-}
-
-func (iss *Issuer) ExpiresAtTime() time.Time {
-	var t time.Time
-	if !iss.ExpiresAt.Valid {
-		return t
-	}
-
-	return iss.ExpiresAt.Time
 }
 
 // Redemption is a token Redeemed
@@ -237,16 +186,16 @@ func incrementCounter(c prometheus.Counter) {
 	c.Add(1)
 }
 
-func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
+func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	defer incrementCounter(fetchIssuerCounter)
 
 	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
-		if issuer, ok := cached.(*Issuer); ok {
+		if issuer, ok := cached.(*model.Issuer); ok {
 			return issuer, nil
 		}
 	}
 
-	var fetchedIssuer Issuer
+	var fetchedIssuer model.Issuer
 	err := c.db.Select(&fetchedIssuer, `
 	    SELECT * FROM v3_issuers
 	    WHERE issuer_id=$1
@@ -256,7 +205,7 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 		return nil, utils.ProcessingErrorFromError(errIssuerNotFound, !isPostgresNotFoundError(err))
 	}
 
-	fetchedKeys, err := c.fetchIssuerKeys([]Issuer{fetchedIssuer})
+	fetchedKeys, err := c.fetchIssuerKeys([]model.Issuer{fetchedIssuer})
 	if err != nil {
 		return nil, err
 	}
@@ -273,15 +222,15 @@ func (c *Server) fetchIssuer(issuerID string) (*Issuer, error) {
 // the Ads implementation had non-unique issuer types. This is no longer the case and this
 // function should be refactored or removed. For now, it will return an array of a single
 // issuer.
-func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]Issuer, error) {
+func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]model.Issuer, error) {
 	// will not lose resolution int16->int
 	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
-		if issuers, ok := cached.([]Issuer); ok {
+		if issuers, ok := cached.([]model.Issuer); ok {
 			return issuers, nil
 		}
 	}
 
-	var fetchedIssuers []Issuer
+	var fetchedIssuers []model.Issuer
 	err := c.db.Select(
 		&fetchedIssuers,
 		`SELECT i.*
@@ -309,14 +258,14 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]
 	return issuersWithKey, nil
 }
 
-func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Issuer, error) {
+func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
-		if issuer, ok := cached.(*Issuer); ok {
+		if issuer, ok := cached.(*model.Issuer); ok {
 			return issuer, nil
 		}
 	}
 
-	var issuerV3 Issuer
+	var issuerV3 model.Issuer
 	err := c.db.GetContext(ctx, &issuerV3,
 		`SELECT *
 		FROM v3_issuers
@@ -326,7 +275,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 		return nil, err
 	}
 
-	fetchedKeys, err := c.fetchIssuerKeys([]Issuer{issuerV3})
+	fetchedKeys, err := c.fetchIssuerKeys([]model.Issuer{issuerV3})
 	if err != nil {
 		return nil, err
 	}
@@ -341,15 +290,15 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 
 // FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
 // if it has to query the database.
-func (c *Server) FetchAllIssuers() ([]Issuer, error) {
+func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
-		if issuers, ok := cached.([]Issuer); ok {
+		if issuers, ok := cached.([]model.Issuer); ok {
 			return issuers, nil
 		}
 	}
 
 	var err error
-	var fetchedIssuers []Issuer
+	var fetchedIssuers []model.Issuer
 	err = c.db.Select(
 		&fetchedIssuers,
 		`SELECT * FROM v3_issuers ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
@@ -361,7 +310,7 @@ func (c *Server) FetchAllIssuers() ([]Issuer, error) {
 	}
 
 	for _, fetchedIssuer := range fetchedIssuers {
-		var keys []IssuerKeys
+		var keys []model.IssuerKeys
 		sErr := c.db.Select(
 			&keys,
 			`SELECT *
@@ -391,10 +340,10 @@ func (c *Server) FetchAllIssuers() ([]Issuer, error) {
 	return fetchedIssuers, nil
 }
 
-func (c *Server) fetchIssuerKeys(fetchedIssuers []Issuer) ([]Issuer, error) {
-	var issuers []Issuer
+func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer, error) {
+	var issuers []model.Issuer
 	for _, fetchedIssuer := range fetchedIssuers {
-		var keys []IssuerKeys
+		var keys []model.IssuerKeys
 		var err error
 
 		lteVersionTwo := fetchedIssuer.Version <= 2
@@ -440,7 +389,7 @@ func (c *Server) rotateIssuers() error {
 		err = tx.Commit()
 	}()
 
-	var fetchedIssuers []Issuer
+	var fetchedIssuers []model.Issuer
 	err = tx.Select(
 		&fetchedIssuers,
 		`SELECT * FROM v3_issuers
@@ -490,7 +439,7 @@ func (c *Server) rotateIssuersV3() error {
 		err = tx.Commit()
 	}()
 
-	var fetchedIssuers []Issuer
+	var fetchedIssuers []model.Issuer
 	// we need to get all the v3 issuers that are
 	// 1. not expired
 	// 2. now is after valid_from
@@ -519,7 +468,7 @@ func (c *Server) rotateIssuersV3() error {
 
 	// for each issuer fetched
 	for _, issuer := range fetchedIssuers {
-		var fetchIssuerKeys []IssuerKeys
+		var fetchIssuerKeys []model.IssuerKeys
 		// get all the future keys for this issuer
 		err = tx.Select(
 			&fetchIssuerKeys,
@@ -576,7 +525,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createIssuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer Issuer) (err error) {
+func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	defer incrementCounter(createIssuerCounter)
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
@@ -636,7 +585,7 @@ func (c *Server) createV3Issuer(issuer Issuer) (err error) {
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
-func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) error {
+func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issuer) error {
 	var (
 		duration *timeutils.ISODuration
 		err      error
@@ -671,7 +620,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 	i := 0
 	// time to create the keys associated with the issuer
 	if issuer.Keys == nil || len(issuer.Keys) == 0 {
-		issuer.Keys = []IssuerKeys{}
+		issuer.Keys = []model.IssuerKeys{}
 	} else {
 		// if the issuer has keys already, start needs to be the last item in slice
 		tmp := *issuer.Keys[len(issuer.Keys)-1].EndAt
@@ -684,7 +633,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 			}).Debug("figured out the lacking keys")
 	}
 
-	var keys []IssuerKeys
+	var keys []model.IssuerKeys
 	for ; i < issuer.Buffer+issuer.Overlap; i++ {
 		end := new(time.Time)
 		if duration != nil {
@@ -735,7 +684,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer Issuer) err
 		tmpStart := *start
 		tmpEnd := *end
 
-		var k = IssuerKeys{
+		var k = model.IssuerKeys{
 			SigningKey: signingKeyTxt,
 			PublicKey:  ptr.FromString(string(pubKeyTxt)),
 			Cohort:     issuer.IssuerCohort,
@@ -790,7 +739,7 @@ func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens
 	}
 
 	// convert to a v3 issuer
-	return c.createV3Issuer(Issuer{
+	return c.createV3Issuer(model.Issuer{
 		IssuerType:   issuerType,
 		IssuerCohort: issuerCohort,
 		Version:      2,
@@ -806,7 +755,7 @@ func (c *Server) createIssuer(issuerType string, issuerCohort int16, maxTokens i
 	}
 
 	// convert to a v3 issuer
-	return c.createV3Issuer(Issuer{
+	return c.createV3Issuer(model.Issuer{
 		IssuerType:   issuerType,
 		IssuerCohort: issuerCohort,
 		Version:      1,
@@ -821,7 +770,7 @@ type Queryable interface {
 }
 
 // RedeemToken redeems a token given an issuer and and preimage
-func (c *Server) RedeemToken(issuerForRedemption *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
+func (c *Server) RedeemToken(issuerForRedemption *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	defer incrementCounter(redeemTokenCounter)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)

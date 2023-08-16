@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"net/url"
 	"os"
@@ -305,7 +306,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		var verified = false
-		var verifiedIssuer = &Issuer{}
+		var verifiedIssuer = &model.Issuer{}
 		var verifiedCohort = int16(0)
 		for _, issuer := range issuers {
 			if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {

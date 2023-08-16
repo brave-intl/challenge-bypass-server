@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"os"
 	"time"
@@ -49,7 +50,7 @@ type issuerFetchRequestV2 struct {
 }
 
 // GetLatestIssuer - get the latest issuer by type/cohort
-func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
+func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if errors.Is(err, errIssuerCohortNotFound) {
@@ -74,7 +75,7 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer
 }
 
 // GetLatestIssuerKafka - get the issuer and any processing error
-func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*Issuer, error) {
+func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
@@ -83,7 +84,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 	return &issuer[0], nil
 }
 
-func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]Issuer, *handlers.AppError) {
+func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuerByType(ctx, issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {
@@ -102,7 +103,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]Issuer, *
 			Code:    500,
 		}
 	}
-	return []Issuer{*issuer}, nil
+	return []model.Issuer{*issuer}, nil
 }
 
 func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
@@ -222,7 +223,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		req.ExpiresAt = new(time.Time)
 	}
 
-	if err := c.createV3Issuer(Issuer{
+	if err := c.createV3Issuer(model.Issuer{
 		Version:      3,
 		IssuerType:   req.Name,
 		IssuerCohort: req.Cohort,
@@ -366,7 +367,7 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 	return nil
 }
 
-func makeIssuerResponse(iss *Issuer) issuerResponse {
+func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 	expiresAt := ""
 	if !iss.ExpiresAtTime().IsZero() {
 		expiresAt = iss.ExpiresAtTime().Format(time.RFC3339)

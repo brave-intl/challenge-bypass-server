@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/lib/pq"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ var (
 		DynamodbEndpoint:        "",
 	}
 
-	issuerToCache = Issuer{
+	issuerToCache = model.Issuer{
 		ID:           &issuerID,
 		IssuerType:   "0.0025BAT_0",
 		IssuerCohort: 1,
@@ -39,7 +40,7 @@ var (
 		Buffer:       1,
 		Overlap:      1,
 		Duration:     &duration,
-		Keys:         []IssuerKeys{},
+		Keys:         []model.IssuerKeys{},
 	}
 )
 
@@ -59,11 +60,11 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 	cached := retrieveFromCache(caches, "issuer", issuerID.String())
 	cacheMiss := retrieveFromCache(caches, "issuer", "test")
 
-	assert.Equal(t, cached.(*Issuer), &issuerToCache)
+	assert.Equal(t, cached.(*model.Issuer), &issuerToCache)
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &issuerToCache)
 	assert.Panics(t, func() {
-		_, ok := cacheMiss.(*Issuer)
+		_, ok := cacheMiss.(*model.Issuer)
 		if ok != true {
 			// Satisfy linter
 			panic("Bad assertion")
@@ -74,16 +75,16 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 // TestIssuersCacheRetrieval tests that getting values from the cache works
 func TestIssuersCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	caches["issuers"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
+	caches["issuers"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
 
 	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuers", "test")
 
-	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
+	assert.Equal(t, cached.([]model.Issuer), []model.Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, []Issuer{issuerToCache})
+	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
 	assert.Panics(t, func() {
-		_, ok := cacheMiss.([]Issuer)
+		_, ok := cacheMiss.([]model.Issuer)
 		if ok != true {
 			// Satisfy linter
 			panic("Bad assertion")
@@ -120,16 +121,16 @@ func TestRedemCacheRetrieval(t *testing.T) {
 // TestIssuerCohortCacheRetrieval tests that getting values from the cache works
 func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []Issuer{issuerToCache})
+	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
 
 	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType)
 	cacheMiss := retrieveFromCache(caches, "issuercohort", "test")
 
-	assert.Equal(t, cached.([]Issuer), []Issuer{issuerToCache})
+	assert.Equal(t, cached.([]model.Issuer), []model.Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, []Issuer{issuerToCache})
+	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
 	assert.Panics(t, func() {
-		_, ok := cacheMiss.([]Issuer)
+		_, ok := cacheMiss.([]model.Issuer)
 		if ok != true {
 			// Satisfy linter
 			panic("Bad assertion")

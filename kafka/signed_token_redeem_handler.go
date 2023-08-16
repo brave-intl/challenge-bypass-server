@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ SignedTokenRedeemHandler emits payment tokens that correspond to the signed conf
 */
 
 type SignedIssuerToken struct {
-	issuer     cbpServer.Issuer
+	issuer     model.Issuer
 	signingKey *crypto.SigningKey
 }
 
@@ -133,7 +134,7 @@ func SignedTokenRedeemHandler(
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
 			verified       = false
-			verifiedIssuer = &cbpServer.Issuer{}
+			verifiedIssuer = &model.Issuer{}
 			verifiedCohort int32
 		)
 		if request.Public_key == "" {
