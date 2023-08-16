@@ -72,7 +72,7 @@ func SignedTokenRedeemHandler(
 		)
 		return nil
 	}
-	issuers, err := server.FetchAllIssuers()
+	issuers, err := server.FetchIssuersByType("all")
 	if err != nil {
 		if processingError, ok := err.(*utils.ProcessingError); ok && processingError.Temporary {
 			return processingError
@@ -93,7 +93,7 @@ func SignedTokenRedeemHandler(
 	// Create a lookup for issuers & signing keys based on public key
 	signedTokens := make(map[string]SignedIssuerToken)
 	for _, issuer := range issuers {
-		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+		if !issuer.ExpiresAt.Time.IsZero() && issuer.ExpiresAt.Time.Before(time.Now()) {
 			continue
 		}
 
@@ -103,7 +103,7 @@ func SignedTokenRedeemHandler(
 				continue
 			}
 
-			signingKey := issuerKey.SigningKey
+			signingKey := issuerKey.CryptoSigningKey()
 			issuerPublicKey := signingKey.PublicKey()
 			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
 			// Unmarshalling failure is a data issue and is probably permanent.

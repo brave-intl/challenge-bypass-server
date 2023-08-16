@@ -83,7 +83,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 }
 
 func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+	issuer, err := c.FetchIssuersByType(issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {
 			return nil, &handlers.AppError{
@@ -177,7 +177,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	defer closers.Panic(r.Context(), r.Body)
 
-	issuers, appErr := c.FetchAllIssuers()
+	issuers, appErr := c.FetchIssuersByType("all")
 	if appErr != nil {
 		return &handlers.AppError{
 			Cause:   appErr,
@@ -226,7 +226,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		IssuerType:   req.Name,
 		IssuerCohort: req.Cohort,
 		MaxTokens:    req.MaxTokens,
-		ExpiresAt:    *req.ExpiresAt,
+		ExpiresAt:    pq.NullTime{Time: *req.ExpiresAt},
 		Buffer:       req.Buffer,
 		Overlap:      req.Overlap,
 		ValidFrom:    req.ValidFrom,
@@ -367,14 +367,14 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 
 func makeIssuerResponse(iss *Issuer) issuerResponse {
 	expiresAt := ""
-	if !iss.ExpiresAt.IsZero() {
-		expiresAt = iss.ExpiresAt.Format(time.RFC3339)
+	if iss.ExpiresAt.Valid && !iss.ExpiresAt.Time.IsZero() {
+		expiresAt = iss.ExpiresAt.Time.Format(time.RFC3339)
 	}
 
 	// Last key in array is the valid one
 	var publicKey *crypto.PublicKey
 	if len(iss.Keys) > 0 {
-		publicKey = iss.Keys[len(iss.Keys)-1].SigningKey.PublicKey()
+		publicKey = iss.Keys[len(iss.Keys)-1].CryptoSigningKey().PublicKey()
 	}
 
 	return issuerResponse{

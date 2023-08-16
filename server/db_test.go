@@ -2,10 +2,10 @@ package server
 
 import (
 	"fmt"
+	"github.com/lib/pq"
 	"testing"
 	"time"
 
-	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
@@ -27,14 +27,13 @@ var (
 	}
 
 	issuerToCache = Issuer{
-		SigningKey:   &crypto.SigningKey{},
 		ID:           &issuerID,
 		IssuerType:   "0.0025BAT_0",
 		IssuerCohort: 1,
 		MaxTokens:    1,
-		CreatedAt:    time.Now(),
-		ExpiresAt:    time.Now(),
-		RotatedAt:    time.Now(),
+		CreatedAt:    pq.NullTime{Time: time.Now()},
+		ExpiresAt:    pq.NullTime{Time: time.Now()},
+		RotatedAt:    pq.NullTime{Time: time.Now()},
 		Version:      1,
 		ValidFrom:    &now,
 		Buffer:       1,
