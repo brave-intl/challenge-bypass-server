@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -82,8 +83,8 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*I
 	return &issuer[0], nil
 }
 
-func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuers(issuerType)
+func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]Issuer, *handlers.AppError) {
+	issuer, err := c.fetchIssuerByType(ctx, issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {
 			return nil, &handlers.AppError{
@@ -101,7 +102,7 @@ func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
 			Code:    500,
 		}
 	}
-	return issuer, nil
+	return []Issuer{*issuer}, nil
 }
 
 func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {

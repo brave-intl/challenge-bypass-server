@@ -339,37 +339,6 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*Iss
 	return convertedIssuer, nil
 }
 
-func (c *Server) fetchIssuers(issuerType string) ([]Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuers", issuerType); cached != nil {
-		if issuers, ok := cached.([]Issuer); ok {
-			return issuers, nil
-		}
-	}
-
-	var fetchedIssuers []Issuer
-	err := c.db.Select(
-		&fetchedIssuers,
-		`SELECT * FROM v3_issuers WHERE issuer_type=$1 ORDER BY expires_at DESC NULLS LAST, created_at DESC`,
-		issuerType,
-	)
-
-	if err != nil {
-		c.Logger.Error("Failed to extract issuers from DB")
-		return nil, utils.ProcessingErrorFromError(err, !isPostgresNotFoundError(err))
-	}
-
-	issuersWithKey, err := c.fetchIssuerKeys(fetchedIssuers)
-	if err != nil {
-		return nil, err
-	}
-
-	if c.caches != nil {
-		c.caches["issuers"].SetDefault(issuerType, issuersWithKey)
-	}
-
-	return issuersWithKey, nil
-}
-
 // FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() ([]Issuer, error) {

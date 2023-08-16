@@ -284,7 +284,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	var response blindedTokenRedeemResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuers, appErr := c.getIssuers(issuerType)
+		issuers, appErr := c.getIssuers(r.Context(), issuerType)
 		if appErr != nil {
 			return appErr
 		}
