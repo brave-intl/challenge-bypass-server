@@ -31,10 +31,8 @@ make docker-test
  #### Modify file to include
  ```
   "runtimes": {
-    "runtimes": {
-      "linux": {
-        "path": "linux"
-      }
+    "linux": {
+      "path": "linux"
     }
   }
  ```
