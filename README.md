@@ -21,12 +21,12 @@ This project uses [golangci-lint](https://golangci-lint.run/) for linting, this 
 To run locally use `make lint` which runs linting using docker however if you want to run it locally using a binary release (which can be faster) follow the [installation instructions for your platform](https://golangci-lint.run/usage/install/) and then run `golangci-lint run -v ./...`
 
 ## Testing
-Run the below command in order to test changes, if you have an M1 / M2 MAc follow the steps below to setup docker to be able to run the tests 
+Run the below command in order to test changes, if you have an M1 / M2 Mac (or ARM based processor) follow the steps below to setup docker to be able to run the tests 
 ```
 make docker-test
 ```
 
-### Have an M1 mac?
+### Have an M1 / M2 (ARM) Mac?
 1.) In Docker Desktop, go to: `Settings -> Docker Engine` <br />
  #### Modify file to include
  ```
