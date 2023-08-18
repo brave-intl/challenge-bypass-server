@@ -12,11 +12,11 @@ type Reader interface {
 	Stats() kafka.ReaderStats
 }
 
-type KafkaReader struct {
+type MessageReader struct {
 	*kafka.Reader
 }
 
 func NewReader(c kafka.ReaderConfig) Reader {
 	r := kafka.NewReader(c)
-	return &KafkaReader{r}
+	return &MessageReader{r}
 }

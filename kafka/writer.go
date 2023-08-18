@@ -11,15 +11,15 @@ type Writer interface {
 	Topic() string
 }
 
-type KafkaWriter struct {
+type MessageWriter struct {
 	*kafka.Writer
 }
 
-func (w *KafkaWriter) Topic() string {
+func (w *MessageWriter) Topic() string {
 	return w.Writer.Topic
 }
 
 func NewWriter(c kafka.WriterConfig) Writer {
 	w := kafka.NewWriter(c)
-	return &KafkaWriter{w}
+	return &MessageWriter{w}
 }

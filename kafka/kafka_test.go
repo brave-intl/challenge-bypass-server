@@ -37,6 +37,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 
 		blindedToken := token.Blind()
 		blindedTokenBytes, err := blindedToken.MarshalText()
+		require.NoError(suite.T(), err)
 		blindedTokenStr := string(blindedTokenBytes)
 
 		tokenLookup[blindedTokenStr] = tokenRef{token, blindedToken}
@@ -95,14 +96,13 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 			mock.Anything,
 		).
 		Run(func(args mock.Arguments) {
-			messages := args.Get(1).([]kafka.Message)
+			messages, ok := args.Get(1).([]kafka.Message)
+			require.True(suite.T(), ok)
 			require.Equal(suite.T(), 1, len(messages))
 
 			message := messages[0].Value
 			res, err := avroSchema.DeserializeSigningResultV2Set(bytes.NewReader(message))
 			require.NoError(suite.T(), err)
-
-			unblindedTokens := []*crypto.UnblindedToken{}
 
 			for _, result := range res.Data {
 				signedToken := &crypto.SignedToken{}
@@ -139,7 +139,6 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 				)
 				require.NoError(suite.T(), err)
 				require.GreaterOrEqual(suite.T(), 1, len(unblindedToken))
-				unblindedTokens = append(unblindedTokens, unblindedToken[0])
 
 				bindingStr := "The quick brown fox jumps over the lazy dog"
 
@@ -207,7 +206,8 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 					mock.Anything,
 					mock.Anything).
 					Run(func(args mock.Arguments) {
-						messages := args.Get(1).([]kafka.Message)
+						messages, ok := args.Get(1).([]kafka.Message)
+						require.True(suite.T(), ok)
 						require.Equal(suite.T(), 1, len(messages))
 
 						message := messages[0].Value
