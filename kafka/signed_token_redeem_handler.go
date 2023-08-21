@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"strings"
 	"time"
 
@@ -25,7 +26,7 @@ SignedTokenRedeemHandler emits payment tokens that correspond to the signed conf
 */
 
 type SignedIssuerToken struct {
-	issuer     cbpServer.Issuer
+	issuer     model.Issuer
 	signingKey *crypto.SigningKey
 }
 
@@ -92,8 +93,8 @@ func SignedTokenRedeemHandler(
 
 	// Create a lookup for issuers & signing keys based on public key
 	signedTokens := make(map[string]SignedIssuerToken)
-	for _, issuer := range *issuers {
-		if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+	for _, issuer := range issuers {
+		if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 			continue
 		}
 
@@ -103,7 +104,7 @@ func SignedTokenRedeemHandler(
 				continue
 			}
 
-			signingKey := issuerKey.SigningKey
+			signingKey := issuerKey.CryptoSigningKey()
 			issuerPublicKey := signingKey.PublicKey()
 			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
 			// Unmarshalling failure is a data issue and is probably permanent.
@@ -133,7 +134,7 @@ func SignedTokenRedeemHandler(
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
 			verified       = false
-			verifiedIssuer = &cbpServer.Issuer{}
+			verifiedIssuer = &model.Issuer{}
 			verifiedCohort int32
 		)
 		if request.Public_key == "" {
