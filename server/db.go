@@ -309,7 +309,8 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 		return nil, utils.ProcessingErrorFromError(err, !isPostgresNotFoundError(err))
 	}
 
-	for _, fetchedIssuer := range fetchedIssuers {
+	results := make([]model.Issuer, len(fetchedIssuers))
+	for idx, currIssuer := range fetchedIssuers {
 		var keys []model.IssuerKeys
 		sErr := c.db.Select(
 			&keys,
@@ -319,7 +320,7 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 			  AND (end_at > now() OR end_at IS NULL) 
 			  AND (start_at <= now() OR start_at IS NULL)
 			ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`,
-			fetchedIssuer.ID,
+			currIssuer.ID,
 		)
 
 		if sErr != nil {
@@ -330,14 +331,15 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 			return nil, utils.ProcessingErrorFromError(sErr, isNotPostgresNotFoundError)
 		}
 
-		fetchedIssuer.Keys = append(fetchedIssuer.Keys, keys...)
+		currIssuer.Keys = append(currIssuer.Keys, keys...)
+		results[idx] = currIssuer
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault("all", fetchedIssuers)
+		c.caches["issuers"].SetDefault("all", results)
 	}
 
-	return fetchedIssuers, nil
+	return results, nil
 }
 
 func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer, error) {
