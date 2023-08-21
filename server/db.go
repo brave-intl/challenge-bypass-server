@@ -526,6 +526,11 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 	return rows, nil
 }
 
+// CreateV3Issuer exposes the private method without having to refactor
+func (c *Server) CreateV3Issuer(issuer Issuer) error {
+	return c.createV3Issuer(issuer)
+}
+
 // createIssuer - creation of a v3 issuer
 func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	defer incrementCounter(createIssuerCounter)

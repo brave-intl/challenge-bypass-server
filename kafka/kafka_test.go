@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
+	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -50,7 +51,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 			avroSchema.SigningRequest{
 				Associated_data: []byte("{}"),
 				Blinded_tokens:  blindedTokens,
-				Issuer_type:     "view",
+				Issuer_type:     "0.001BAT_0",
 				Issuer_cohort:   0,
 			},
 		},
@@ -70,19 +71,30 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 	}
 
 	mockWriter := new(MockKafkaWriter)
-	mockSrv := new(server.MockServer)
+
+	srv := &server.Server{
+		Logger: logrus.New(),
+	}
+	dbConfig := server.DBConfig{
+		ConnectionURI:    "postgres://btokens:password@postgres:5432/postgres?sslmode=disable",
+		DynamodbEndpoint: "http://localhost:8080",
+	}
+	srv.LoadDBConfig(dbConfig)
+	srv.InitDB()
+	srv.InitDynamo()
+
 	mockLogger := zerolog.Nop()
-
 	mockIssuer := suite.makeIssuer()
+	mockIssuer.Keys = nil
 
-	mockSrv.
-		On(
-			"GetLatestIssuerKafka",
-			signingRequest.Data[0].Issuer_type,
-			int16(signingRequest.Data[0].Issuer_cohort),
-		).
-		Return(mockIssuer, nil).
-		Once()
+	err = srv.CreateV3Issuer(*mockIssuer)
+	require.NoError(suite.T(), err)
+
+	mockIssuers, err := srv.FetchAllIssuers()
+	require.NoError(suite.T(), err)
+	require.True(suite.T(), len(*mockIssuers) == 1)
+
+	mockIssuer = &(*mockIssuers)[0]
 
 	mockWriter.
 		On("Topic").
@@ -106,6 +118,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 
 			for _, result := range res.Data {
 				signedToken := &crypto.SignedToken{}
+				require.True(suite.T(), len(result.Signed_tokens) >= 1)
 				err = signedToken.UnmarshalText([]byte(result.Signed_tokens[0]))
 				require.NoError(suite.T(), err)
 
@@ -182,23 +195,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 				}
 
 				mockWriter := new(MockKafkaWriter)
-				mockSrv := new(server.MockServer)
 				mockLogger := zerolog.Nop()
-
-				mockSrv.On("FetchAllIssuers").
-					Return(&[]server.Issuer{*mockIssuer}, nil).
-					Once()
-
-				mockRedemption := &server.RedemptionV2{}
-				mockSrv.On(
-					"CheckRedeemedTokenEquivalence",
-					mock.Anything,
-					mock.Anything,
-					mock.Anything).
-					Return(mockRedemption, server.NoEquivalence, nil).
-					Once()
-
-				mockSrv.On("PersistRedemption", mock.Anything).Return(nil).Once()
 
 				mockWriter.On("Topic").Return("redeem-request").Once()
 				mockWriter.On(
@@ -220,7 +217,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 				err = SignedTokenRedeemHandler(
 					message,
 					mockWriter,
-					mockSrv,
+					srv,
 					&mockLogger,
 				)
 
@@ -233,87 +230,19 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 	err = SignedBlindedTokenIssuerHandler(
 		message,
 		mockWriter,
-		mockSrv,
+		srv,
 		&mockLogger,
 	)
 
 	require.NoError(suite.T(), err)
 }
-
-/*
-func (suite *KafkaTestSuite) TestSignedTokenRedeemHandler() {
-
-	mockIssuer := suite.makeIssuer()
-	redeemRequest := avroSchema.RedeemRequestSet{
-		Request_id: "de72b94e-a624-40f9-ba9f-c9d32156548e",
-		Data: []avroSchema.RedeemRequest{
-			avroSchema.RedeemRequest{
-				Associated_data: []byte("{\"confirmation\":{\"id\":\"de72b94e-a624-40f9-ba9f-c9d32156548e\",\"creativeInstanceId\":\"7e310987-0a02-46a4-86dc-262230dedb39\",\"createdAt\":\"2023-08-17T16:39:32.778Z\",\"modifiedAt\":\"2023-08-17T16:39:32.778Z\",\"type\":\"dismiss\",\"price\":0,\"clientPrice\":0,\"blindedPaymentToken\":\"XDoYrV1JWSLMexI+fEGj0qL6Bt5LuAWYIC8YCDMQCAw=\",\"payload\":{},\"country\":\"IN\",\"platform\":\"windows\",\"buildChannel\":\"beta\",\"flagged\":false,\"tags\":{\"fraud\":[],\"CV\":\"116.0.0.0\",\"via\":0,\"version\":\"v3\",\"host\":\"anonymous.ads.bravesoftware.com\",\"rate-limited\":0,\"datacenter\":0,\"vpn\":0,\"inGeoTarget\":1,\"onTime\":1,\"rotatingHashCounter\":1},\"os\":\"windows\",\"browserProvidedDetails\":{\"catalog\":[{\"id\":\"80d2ba79e827a2f068abb59b267c84e2c1f40012\"}],\"createdAtTimestamp\":\"2023-08-17T16:00:00.000Z\",\"platform\":\"windows\",\"publicKey\":\"wgMhKwj/Vs832efOg+RlqJvLy3Ta3UDbz1wV+Z+dzEU=\",\"rotating_hash\":\"AOULvIoDfV6oL+y1UownA89drOK6nvG4DUiCNDQM5BE=\",\"segment\":\"untargeted\",\"systemTimestamp\":\"2023-08-17T16:00:00.000Z\",\"versionNumber\":\"116.0.5845.96\"},\"credential\":{\"signature\":\"IaACtriyTr/lSv6h8ZG3+OHnxzMp9lq7NRYRoiva9v52UyE58CAey2r7zmd/Iz4YK4Ye6MHtpFaMR8UC4Jv7Pg==\",\"t\":\"j+9IGQm4C7Ub/o9k617RcKO+UfT6OqQP8oCACWzik3rtRTebXC2zT0PVjCeMBnuz7rm8Qk/JxvP4DVH7M6QleQ==\",\"payload\":\"{\\\"blindedPaymentTokens\\\":[\\\"XDoYrV1JWSLMexI+fEGj0qL6Bt5LuAWYIC8YCDMQCAw=\\\"],\\\"buildChannel\\\":\\\"beta\\\",\\\"catalog\\\":[{\\\"id\\\":\\\"80d2ba79e827a2f068abb59b267c84e2c1f40012\\\"}],\\\"createdAtTimestamp\\\":\\\"2023-08-17T16:00:00.000Z\\\",\\\"creativeInstanceId\\\":\\\"7e310987-0a02-46a4-86dc-262230dedb39\\\",\\\"platform\\\":\\\"windows\\\",\\\"publicKey\\\":\\\"wgMhKwj/Vs832efOg+RlqJvLy3Ta3UDbz1wV+Z+dzEU=\\\",\\\"rotating_hash\\\":\\\"AOULvIoDfV6oL+y1UownA89drOK6nvG4DUiCNDQM5BE=\\\",\\\"segment\\\":\\\"untargeted\\\",\\\"studies\\\":[{\\\"group\\\":\\\"DefaultAdNotificationsPerHour=10/MaximumAdNotificationsPerDay=100/MaximumInlineContentAdsPerHour=6/MaximumInlineContentAdsPerDay=20/AdServingVersion=2\\\",\\\"name\\\":\\\"BraveAds.AdServingStudy\\\"}],\\\"systemTimestamp\\\":\\\"2023-08-17T16:00:00.000Z\\\",\\\"transactionId\\\":\\\"de72b94e-a624-40f9-ba9f-c9d32156548e\\\",\\\"type\\\":\\\"dismiss\\\",\\\"versionNumber\\\":\\\"116.0.5845.96\\\"}\"},\"confirmationRedeemState\":\"pending\"},\"redemption_type\":\"confirmation\"}"),
-				Public_key:      "wgMhKwj/Vs832efOg+RlqJvLy3Ta3UDbz1wV+Z+dzEU=",
-				Token_preimage:  "j+9IGQm4C7Ub/o9k617RcKO+UfT6OqQP8oCACWzik3rtRTebXC2zT0PVjCeMBnuz7rm8Qk/JxvP4DVH7M6QleQ==",
-				Binding:         "{\"blindedPaymentTokens\":[\"XDoYrV1JWSLMexI+fEGj0qL6Bt5LuAWYIC8YCDMQCAw=\"],\"buildChannel\":\"beta\",\"catalog\":[{\"id\":\"80d2ba79e827a2f068abb59b267c84e2c1f40012\"}],\"createdAtTimestamp\":\"2023-08-17T16:00:00.000Z\",\"creativeInstanceId\":\"7e310987-0a02-46a4-86dc-262230dedb39\",\"platform\":\"windows\",\"publicKey\":\"wgMhKwj/Vs832efOg+RlqJvLy3Ta3UDbz1wV+Z+dzEU=\",\"rotating_hash\":\"AOULvIoDfV6oL+y1UownA89drOK6nvG4DUiCNDQM5BE=\",\"segment\":\"untargeted\",\"studies\":[{\"group\":\"DefaultAdNotificationsPerHour=10/MaximumAdNotificationsPerDay=100/MaximumInlineContentAdsPerHour=6/MaximumInlineContentAdsPerDay=20/AdServingVersion=2\",\"name\":\"BraveAds.AdServingStudy\"}],\"systemTimestamp\":\"2023-08-17T16:00:00.000Z\",\"transactionId\":\"de72b94e-a624-40f9-ba9f-c9d32156548e\",\"type\":\"dismiss\",\"versionNumber\":\"116.0.5845.96\"}",
-				Signature:       "IaACtriyTr/lSv6h8ZG3+OHnxzMp9lq7NRYRoiva9v52UyE58CAey2r7zmd/Iz4YK4Ye6MHtpFaMR8UC4Jv7Pg==",
-			},
-		},
-	}
-
-	var buf bytes.Buffer
-	writer := bufio.NewWriter(&buf)
-	err := redeemRequest.Serialize(writer)
-	require.NoError(suite.T(), err)
-
-	err = writer.Flush()
-	require.NoError(suite.T(), err)
-
-	message := kafka.Message{
-		Topic: "redeem-request",
-		Value: buf.Bytes(),
-	}
-
-	mockWriter := new(MockKafkaWriter)
-	mockSrv := new(server.MockServer)
-	mockLogger := zerolog.Nop()
-
-	mockSrv.On("FetchAllIssuers").
-		Return(&[]server.Issuer{*mockIssuer}, nil).
-		Once()
-
-	mockWriter.On("Topic").Return("redeem-request").Once()
-	mockWriter.On(
-		"WriteMessages",
-		mock.Anything,
-		mock.Anything).
-		Run(func(args mock.Arguments) {
-			messages := args.Get(1).([]kafka.Message)
-			require.Equal(suite.T(), 1, len(messages))
-
-			message := messages[0].Value
-			res, err := avroSchema.DeserializeRedeemResult(bytes.NewReader(message))
-			require.NoError(suite.T(), err)
-
-			fmt.Printf("%+v\n", res)
-			require.True(suite.T(), false)
-		}).
-		Return(nil).
-		Once()
-
-	err = SignedTokenRedeemHandler(
-		message,
-		mockWriter,
-		mockSrv,
-		&mockLogger,
-	)
-
-	require.NoError(suite.T(), err)
-}
-*/
 
 func TestKafkaTestSuite(t *testing.T) {
 	suite.Run(t, new(KafkaTestSuite))
 }
 
 func (suite *KafkaTestSuite) makeIssuer() *server.Issuer {
-	duration := "30"
+	duration := "PT1M"
 	now := time.Now()
 
 	issuerID, err := uuid.Parse("a59dedd6-2029-11ee-ba60-00155d0da3ed")
