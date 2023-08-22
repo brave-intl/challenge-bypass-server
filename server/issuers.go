@@ -1,10 +1,8 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"os"
 	"time"
@@ -50,7 +48,7 @@ type issuerFetchRequestV2 struct {
 }
 
 // GetLatestIssuer - get the latest issuer by type/cohort
-func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.Issuer, *handlers.AppError) {
+func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*Issuer, *handlers.AppError) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		if errors.Is(err, errIssuerCohortNotFound) {
@@ -71,21 +69,31 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 		}
 	}
 
-	return &issuer[0], nil
+	return &(*issuer)[0], nil
 }
 
 // GetLatestIssuerKafka - get the issuer and any processing error
-func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error) {
+func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*Issuer, error) {
 	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
 	if err != nil {
 		return nil, err
 	}
 
-	return &issuer[0], nil
+	return &(*issuer)[0], nil
 }
 
-func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuerByType(ctx, issuerType)
+// GetIssuers - get all issuers by issuer type
+func (c *Server) GetIssuers(issuerType string) ([]Issuer, error) {
+	issuers, err := c.getIssuers(issuerType)
+	if err != nil {
+		c.Logger.Error(err)
+		return nil, err
+	}
+	return issuers, nil
+}
+
+func (c *Server) getIssuers(issuerType string) ([]Issuer, *handlers.AppError) {
+	issuer, err := c.fetchIssuers(issuerType)
 	if err != nil {
 		if errors.Is(err, errIssuerNotFound) {
 			return nil, &handlers.AppError{
@@ -103,7 +111,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Iss
 			Code:    500,
 		}
 	}
-	return []model.Issuer{*issuer}, nil
+	return issuer, nil
 }
 
 func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
@@ -114,8 +122,17 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *han
 		if appErr != nil {
 			return appErr
 		}
+		expiresAt := ""
+		if !issuer.ExpiresAt.IsZero() {
+			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+		}
 
-		err := json.NewEncoder(w).Encode(makeIssuerResponse(issuer))
+		var publicKey *crypto.PublicKey
+		for _, k := range issuer.Keys {
+			publicKey = k.SigningKey.PublicKey()
+		}
+
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
 		if err != nil {
 			c.Logger.Error("Error encoding the issuer response")
 			panic(err)
@@ -141,7 +158,18 @@ func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handle
 		return appErr
 	}
 
-	err := json.NewEncoder(w).Encode(makeIssuerResponse(issuer))
+	expiresAt := ""
+	if !issuer.ExpiresAt.IsZero() {
+		expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+	}
+
+	// get the signing public key
+	var publicKey *crypto.PublicKey
+	for _, k := range issuer.Keys {
+		publicKey = k.SigningKey.PublicKey()
+	}
+
+	err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
 	if err != nil {
 		c.Logger.Error("Error encoding the issuer response")
 		panic(err)
@@ -164,9 +192,18 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 		if appErr != nil {
 			return appErr
 		}
+		expiresAt := ""
+		if !issuer.ExpiresAt.IsZero() {
+			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+		}
 
 		// get the signing public key
-		err := json.NewEncoder(w).Encode(makeIssuerResponse(issuer))
+		var publicKey *crypto.PublicKey
+		for _, k := range issuer.Keys {
+			publicKey = k.SigningKey.PublicKey()
+		}
+
+		err := json.NewEncoder(w).Encode(issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
 		if err != nil {
 			c.Logger.Error("Error encoding the issuer response")
 			panic(err)
@@ -187,10 +224,19 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 			Code:    500,
 		}
 	}
+	respIssuers := []issuerResponse{}
+	for _, issuer := range *issuers {
+		expiresAt := ""
+		if !issuer.ExpiresAt.IsZero() {
+			expiresAt = issuer.ExpiresAt.Format(time.RFC3339)
+		}
 
-	respIssuers := make([]issuerResponse, len(issuers))
-	for idx, currIssuer := range issuers {
-		respIssuers[idx] = makeIssuerResponse(&currIssuer)
+		var publicKey *crypto.PublicKey
+		for _, k := range issuer.Keys {
+			publicKey = k.SigningKey.PublicKey()
+		}
+
+		respIssuers = append(respIssuers, issuerResponse{issuer.ID.String(), issuer.IssuerType, publicKey, expiresAt, issuer.IssuerCohort})
 	}
 
 	err := json.NewEncoder(w).Encode(respIssuers)
@@ -223,12 +269,12 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		req.ExpiresAt = new(time.Time)
 	}
 
-	if err := c.createV3Issuer(model.Issuer{
+	if err := c.createV3Issuer(Issuer{
 		Version:      3,
 		IssuerType:   req.Name,
 		IssuerCohort: req.Cohort,
 		MaxTokens:    req.MaxTokens,
-		ExpiresAt:    pq.NullTime{Time: *req.ExpiresAt, Valid: req.ExpiresAt != nil},
+		ExpiresAt:    *req.ExpiresAt,
 		Buffer:       req.Buffer,
 		Overlap:      req.Overlap,
 		ValidFrom:    req.ValidFrom,
@@ -365,27 +411,6 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 
 	w.WriteHeader(http.StatusOK)
 	return nil
-}
-
-func makeIssuerResponse(iss *model.Issuer) issuerResponse {
-	expiresAt := ""
-	if !iss.ExpiresAtTime().IsZero() {
-		expiresAt = iss.ExpiresAtTime().Format(time.RFC3339)
-	}
-
-	// Last key in array is the valid one
-	var publicKey *crypto.PublicKey
-	if len(iss.Keys) > 0 {
-		publicKey = iss.Keys[len(iss.Keys)-1].CryptoSigningKey().PublicKey()
-	}
-
-	return issuerResponse{
-		iss.ID.String(),
-		iss.IssuerType,
-		publicKey,
-		expiresAt,
-		iss.IssuerCohort,
-	}
 }
 
 func (c *Server) issuerRouterV1() chi.Router {

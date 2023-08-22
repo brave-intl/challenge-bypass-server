@@ -2,7 +2,6 @@ package server
 
 import (
 	"errors"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
 
@@ -87,7 +86,7 @@ func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
 	return &redemption, nil
 }
 
-func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
+func (c *Server) redeemTokenWithDynamo(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
@@ -102,7 +101,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       issuer.ExpiresAt.Unix(),
 		Offset:    offset,
 	}
 
@@ -159,7 +158,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // CheckRedeemedTokenEquivalence returns whether just the ID of a given RedemptionV2 token
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
-func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
+func (c *Server) CheckRedeemedTokenEquivalence(issuer *Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
 	var temporary = false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
@@ -175,7 +174,7 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       issuer.ExpiresAt.Unix(),
 	}
 
 	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)
