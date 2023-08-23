@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"strings"
 	"time"
 
@@ -13,15 +14,22 @@ import (
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
-	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go"
 )
 
 /*
 SignedTokenRedeemHandler emits payment tokens that correspond to the signed confirmation
- tokens provided. If it encounters a permanent error, it emits a permanent result for that
- item. If the error is temporary, an error is returned to indicate that progress cannot be
- made.
+
+	tokens provided. If it encounters a permanent error, it emits a permanent result for that
+	item. If the error is temporary, an error is returned to indicate that progress cannot be
+	made.
 */
+
+type SignedIssuerToken struct {
+	issuer     model.Issuer
+	signingKey *crypto.SigningKey
+}
+
 func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
@@ -83,12 +91,50 @@ func SignedTokenRedeemHandler(
 		return nil
 	}
 
+	// Create a lookup for issuers & signing keys based on public key
+	signedTokens := make(map[string]SignedIssuerToken)
+	for _, issuer := range issuers {
+		if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
+			continue
+		}
+
+		for _, issuerKey := range issuer.Keys {
+			// Don't use keys outside their start/end dates
+			if issuerTimeIsNotValid(issuerKey.StartAt, issuerKey.EndAt) {
+				continue
+			}
+
+			signingKey := issuerKey.CryptoSigningKey()
+			issuerPublicKey := signingKey.PublicKey()
+			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
+			// Unmarshalling failure is a data issue and is probably permanent.
+			if mErr != nil {
+				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				handlePermanentRedemptionError(
+					message,
+					err,
+					msg,
+					producer,
+					tokenRedeemRequestSet.Request_id,
+					int32(avroSchema.RedeemResultStatusError),
+					log,
+				)
+				return nil
+			}
+
+			signedTokens[string(marshaledPublicKey)] = SignedIssuerToken{
+				issuer:     issuer,
+				signingKey: signingKey,
+			}
+		}
+	}
+
 	// Iterate over requests (only one at this point but the schema can support more
 	// in the future if needed)
 	for _, request := range tokenRedeemRequestSet.Data {
 		var (
 			verified       = false
-			verifiedIssuer = &cbpServer.Issuer{}
+			verifiedIssuer = &model.Issuer{}
 			verifiedCohort int32
 		)
 		if request.Public_key == "" {
@@ -150,53 +196,24 @@ func SignedTokenRedeemHandler(
 			)
 			return nil
 		}
-		for _, issuer := range *issuers {
-			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
-				continue
-			}
 
-			// get latest signing key from issuer
-			var signingKey *crypto.SigningKey
-			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
-			}
+		if signedToken, ok := signedTokens[request.Public_key]; ok {
+			logger.
+				Trace().
+				Str("requestID", tokenRedeemRequestSet.Request_id).
+				Str("publicKey", request.Public_key).
+				Msg("attempting token redemption verification")
 
-			// Only attempt token verification with the issuer that was provided.
-			issuerPublicKey := signingKey.PublicKey()
-			marshaledPublicKey, err := issuerPublicKey.MarshalText()
-			// Unmarshaling failure is a data issue and is probably permanent.
-			if err != nil {
-				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				handlePermanentRedemptionError(
-					message,
-					err,
-					msg,
-					producer,
-					tokenRedeemRequestSet.Request_id,
-					int32(avroSchema.RedeemResultStatusError),
-					log,
-				)
-				return nil
-			}
-
-			logger.Trace().
-				Msgf("request %s: issuer: %s, request: %s", tokenRedeemRequestSet.Request_id,
-					string(marshaledPublicKey), request.Public_key)
-
-			if string(marshaledPublicKey) == request.Public_key {
-				if err := btd.VerifyTokenRedemption(
-					&tokenPreimage,
-					&verificationSignature,
-					request.Binding,
-					[]*crypto.SigningKey{signingKey},
-				); err != nil {
-					verified = false
-				} else {
-					verified = true
-					verifiedIssuer = &issuer
-					verifiedCohort = int32(issuer.IssuerCohort)
-					break
-				}
+			issuer := signedToken.issuer
+			if err := btd.VerifyTokenRedemption(
+				&tokenPreimage,
+				&verificationSignature,
+				request.Binding,
+				[]*crypto.SigningKey{signedToken.signingKey},
+			); err == nil {
+				verified = true
+				verifiedIssuer = &issuer
+				verifiedCohort = int32(issuer.IssuerCohort)
 			}
 		}
 
@@ -215,7 +232,7 @@ func SignedTokenRedeemHandler(
 		} else {
 			logger.Info().Msg(fmt.Sprintf("request %s: validated", tokenRedeemRequestSet.Request_id))
 		}
-		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
+		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 		if err != nil {
 			var processingError *utils.ProcessingError
 			if errors.As(err, &processingError) {
@@ -263,7 +280,7 @@ func SignedTokenRedeemHandler(
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
 			if strings.Contains(err.Error(), "Duplicate") {
-				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, string(request.Binding), msg.Offset)
+				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
 					var processingError *utils.ProcessingError
@@ -358,6 +375,21 @@ func SignedTokenRedeemHandler(
 	}
 
 	return nil
+}
+
+func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
+	if start != nil && end != nil {
+		now := time.Now()
+
+		startIsNotZeroAndAfterNow := !start.IsZero() && start.After(now)
+		endIsNotZeroAndBeforeNow := !end.IsZero() && end.Before(now)
+
+		return startIsNotZeroAndAfterNow || endIsNotZeroAndBeforeNow
+	}
+
+	// Both times being nil is valid
+	bothTimesAreNil := start == nil && end == nil
+	return !bothTimesAreNil
 }
 
 // avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the

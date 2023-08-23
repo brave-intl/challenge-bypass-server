@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/lib/pq"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -63,7 +65,7 @@ func (suite *ServerTestSuite) SetupTest() {
 	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 
 	for _, table := range tables {
-		_, err := suite.srv.db.Exec("delete from " + table)
+		_, err := suite.srv.db.Exec(fmt.Sprintf("delete from %s", table))
 		suite.Require().NoError(err, "Failed to get clean table")
 	}
 }
@@ -173,7 +175,7 @@ func (suite *ServerTestSuite) TestIssueRedeemV2() {
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 
 	// get public key from issuer keys
-	var signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+	var signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 	publicKey = signingKey.PublicKey()
 
 	r, err = suite.srv.db.Query(`UPDATE v3_issuers SET expires_at=$1 WHERE issuer_id=$2`, time.Now().AddDate(0, 0, +1), issuer.ID)
@@ -251,12 +253,12 @@ type v3Redemption struct {
 func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	var buffer = 3
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
 		MaxTokens:    buffer,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    pq.NullTime{Time: time.Now().Add(24 * time.Hour), Valid: true},
 		Buffer:       buffer,
 		Overlap:      0,
 		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
@@ -270,24 +272,24 @@ func (suite *ServerTestSuite) TestRotateTimeAwareIssuer() {
 	time.Sleep(2 * time.Second)
 	myIssuer, err := suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
 	fmt.Println(err)
-	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+	suite.Require().Equal(1, len(myIssuer.Keys)) // should be one left
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
 
 	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
-	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now
+	suite.Require().Equal(3, len(myIssuer.Keys)) // should be 3 now
 
 	// rotate issuers should pick up that there are some new intervals to make up buffer and populate
 	err = suite.srv.rotateIssuersV3()
 	suite.Require().NoError(err)
-	suite.Require().Equal(len(myIssuer.Keys), 3) // should be 3 now still
+	suite.Require().Equal(3, len(myIssuer.Keys)) // should be 3 now still
 
 	// wait a few intervals after creation and check number of signing keys left
 	time.Sleep(2 * time.Second)
 	myIssuer, _ = suite.srv.GetLatestIssuer(issuer.IssuerType, issuer.IssuerCohort)
-	suite.Require().Equal(len(myIssuer.Keys), 1) // should be one left
+	suite.Require().Equal(1, len(myIssuer.Keys)) // should be one left
 }
 
 func (suite *ServerTestSuite) TestCreateIssuerV3() {
@@ -333,12 +335,12 @@ func (suite *ServerTestSuite) TestGetIssuerV2() {
 	defer server.Close()
 
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
 		MaxTokens:    1,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    pq.NullTime{Time: time.Now().Add(24 * time.Hour), Valid: true},
 		Buffer:       1,
 		Overlap:      1,
 		Duration:     ptr.FromString("PT10S"),
@@ -369,12 +371,12 @@ func (suite *ServerTestSuite) TestGetIssuerV2() {
 }
 
 func (suite *ServerTestSuite) TestDeleteIssuerKeysV3() {
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   test.RandomString(),
 		IssuerCohort: 1,
 		MaxTokens:    5,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    pq.NullTime{Time: time.Now().Add(24 * time.Hour), Valid: true},
 		Buffer:       4,
 		Overlap:      0,
 		Duration:     ptr.FromString("PT1S"),
@@ -445,7 +447,7 @@ func (suite *ServerTestSuite) createIssuer(serverURL string, issuerType string, 
 func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	getAllIssuersURL := fmt.Sprintf("%s/v1/issuer/", serverURL)
 	resp, err := suite.request("GET", getAllIssuersURL, nil)
-	suite.Require().NoError(err, "Getting alll Issuers must succeed")
+	suite.Require().NoError(err, "Getting all Issuers must succeed")
 	suite.Assert().Equal(http.StatusOK, resp.StatusCode)
 
 	body, err := io.ReadAll(resp.Body)
@@ -455,10 +457,10 @@ func (suite *ServerTestSuite) getAllIssuers(serverURL string) []issuerResponse {
 	err = json.Unmarshal(body, &issuerResp)
 	suite.Require().NoError(err, "Issuer fetch body unmarshal must succeed")
 
-	suite.Require().NotEqual(issuerResp[0].ID, "", "ID was missing")
-	suite.Require().NotEqual(issuerResp[0].Name, "", "Name was missing")
-	suite.Require().NotEqual(issuerResp[0].PublicKey, "", "Public Key was missing")
-	suite.Require().NotEqual(issuerResp[0].Cohort, "", "Cohort was missing")
+	suite.Require().NotEqual("", issuerResp[0].ID, "ID was missing")
+	suite.Require().NotEqual("", issuerResp[0].Name, "Name was missing")
+	suite.Require().NotEqual("", issuerResp[0].PublicKey, "Public Key was missing")
+	suite.Require().NotEqual("", issuerResp[0].Cohort, "Cohort was missing")
 
 	return issuerResp
 }
@@ -604,12 +606,12 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 	var buffer = 10
 	var redemptions = []v3Redemption{}
 	var issuerType = test.RandomString()
-	issuer := Issuer{
+	issuer := model.Issuer{
 		Version:      3,
 		IssuerType:   issuerType,
 		IssuerCohort: 1,
 		MaxTokens:    buffer,
-		ExpiresAt:    time.Now().Add(24 * time.Hour),
+		ExpiresAt:    pq.NullTime{Time: time.Now().Add(24 * time.Hour), Valid: true},
 		Buffer:       buffer,
 		Overlap:      0,
 		Duration:     ptr.FromString("PT1S"), // an issuer exists every 3 seconds
@@ -646,7 +648,7 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 			validTo    *time.Time
 		)
 
-		signingKey = issuerKey.Keys[len(issuerKey.Keys)-count].SigningKey
+		signingKey = issuerKey.Keys[len(issuerKey.Keys)-count].CryptoSigningKey()
 		validFrom = issuerKey.Keys[len(issuerKey.Keys)-count].StartAt
 		validTo = issuerKey.Keys[len(issuerKey.Keys)-count].EndAt
 

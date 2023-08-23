@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"net/url"
 	"os"
@@ -97,7 +98,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
 		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
 			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
@@ -148,7 +149,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
 		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
 			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
@@ -203,7 +204,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 			}
 		}
 
-		if issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+		if issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 			return &handlers.AppError{
 				Message: "Issuer has expired",
 				Code:    http.StatusBadRequest,
@@ -234,7 +235,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 			}
 
 			if k.StartAt.Before(time.Now()) && k.EndAt.After(time.Now()) {
-				pubKeyTxt, _ := k.SigningKey.PublicKey().MarshalText()
+				pubKeyTxt, _ := k.CryptoSigningKey().PublicKey().MarshalText()
 				c.Logger.WithFields(logrus.Fields{
 					"now":      time.Now(),
 					"start_at": k.StartAt,
@@ -242,7 +243,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 					"key":      string(pubKeyTxt),
 					"i":        fmt.Sprintf("%d", i),
 				}).Error("found appropriate key")
-				signingKey = k.SigningKey
+				signingKey = k.CryptoSigningKey()
 				break
 			}
 		}
@@ -284,7 +285,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	var response blindedTokenRedeemResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuers, appErr := c.getIssuers(issuerType)
+		issuers, appErr := c.getIssuers(r.Context(), issuerType)
 		if appErr != nil {
 			return appErr
 		}
@@ -305,17 +306,17 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		var verified = false
-		var verifiedIssuer = &Issuer{}
+		var verifiedIssuer = &model.Issuer{}
 		var verifiedCohort = int16(0)
 		for _, issuer := range issuers {
-			if !issuer.ExpiresAt.IsZero() && issuer.ExpiresAt.Before(time.Now()) {
+			if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
 				continue
 			}
 
 			// get latest signing key from issuer
 			var signingKey *crypto.SigningKey
 			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 			} else {
 				// need to have atleast one signing key
 				c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
@@ -397,7 +398,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
 		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].SigningKey
+			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
 			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
