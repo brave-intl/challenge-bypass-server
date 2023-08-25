@@ -195,6 +195,7 @@ OUTER:
 			for i := 0; i < len(blindedTokens); i += numT {
 				count++
 				if count > len(issuer.Keys) {
+					fmt.Println("//----[ROTATING]----//")
 					// perform a rotation in an attempt to get that last key
 					if err := server.RotateIssuersV3(); err != nil {
 						// temporary error returned, rotation failed, try again next time

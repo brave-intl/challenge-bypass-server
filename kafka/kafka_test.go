@@ -3,14 +3,18 @@ package kafka
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 	"github.com/sirupsen/logrus"
@@ -90,11 +94,19 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 	err = srv.CreateV3Issuer(*mockIssuer)
 	require.NoError(suite.T(), err)
 
+	s, e := json.MarshalIndent(mockIssuer, "", "\t")
+	require.NoError(suite.T(), e)
+	fmt.Println(string(s))
+
 	mockIssuers, err := srv.FetchAllIssuers()
 	require.NoError(suite.T(), err)
-	require.True(suite.T(), len(*mockIssuers) == 1)
+	require.True(suite.T(), len(mockIssuers) == 1)
 
-	mockIssuer = &(*mockIssuers)[0]
+	mockIssuer = &mockIssuers[0]
+
+	s, e = json.MarshalIndent(mockIssuer, "", "\t")
+	require.NoError(suite.T(), e)
+	fmt.Println(string(s))
 
 	mockWriter.
 		On("Topic").
@@ -125,13 +137,22 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 				ref, ok := tokenLookup[result.Blinded_tokens[0]]
 				require.True(suite.T(), ok)
 
-				var signingKey *crypto.SigningKey
+				s, e := json.MarshalIndent(mockIssuer, "", "\t")
+				require.NoError(suite.T(), e)
+				fmt.Println(string(s))
+
+				var signingKeyBytes []byte
 				for _, issuerKey := range mockIssuer.Keys {
 					if *issuerKey.PublicKey == result.Issuer_public_key {
-						signingKey = issuerKey.SigningKey
+						signingKeyBytes = issuerKey.SigningKey
 					}
 				}
-				require.NotNil(suite.T(), signingKey)
+				require.NotNil(suite.T(), signingKeyBytes)
+				require.True(suite.T(), len(signingKeyBytes) > 0)
+
+				signingKey := &crypto.SigningKey{}
+				err = signingKey.UnmarshalText(signingKeyBytes)
+				require.NoError(suite.T(), err)
 
 				publicKey := &crypto.PublicKey{}
 				err = publicKey.UnmarshalText([]byte(result.Issuer_public_key))
@@ -241,28 +262,28 @@ func TestKafkaTestSuite(t *testing.T) {
 	suite.Run(t, new(KafkaTestSuite))
 }
 
-func (suite *KafkaTestSuite) makeIssuer() *server.Issuer {
-	duration := "PT1M"
+func (suite *KafkaTestSuite) makeIssuer() *model.Issuer {
+	duration := "P1M"
 	now := time.Now()
 
 	issuerID, err := uuid.Parse("a59dedd6-2029-11ee-ba60-00155d0da3ed")
 	require.NoError(suite.T(), err)
 
-	issuer := server.Issuer{
+	issuer := model.Issuer{
 		SigningKey:   nil,
 		ID:           &issuerID,
 		IssuerType:   "0.001BAT_0",
 		IssuerCohort: 0,
 		MaxTokens:    40,
-		CreatedAt:    now,
-		ExpiresAt:    now.Add(time.Duration(37) * (time.Hour * 24)),
-		RotatedAt:    now.Add(time.Duration(30) * (time.Hour * 24)),
+		CreatedAt:    pq.NullTime{now, true},
+		ExpiresAt:    pq.NullTime{now.Add(time.Duration(37) * (time.Hour * 24)), true},
+		RotatedAt:    pq.NullTime{now.Add(time.Duration(30) * (time.Hour * 24)), true},
 		Version:      3,
 		ValidFrom:    &now,
 		Buffer:       1,
 		Overlap:      7,
 		Duration:     &duration,
-		Keys:         []server.IssuerKeys{},
+		Keys:         []model.IssuerKeys{},
 	}
 
 	for i := 0; i < issuer.Buffer+issuer.Overlap; i++ {
@@ -272,7 +293,7 @@ func (suite *KafkaTestSuite) makeIssuer() *server.Issuer {
 	return &issuer
 }
 
-func (suite *KafkaTestSuite) makeIssuerKey(issuer server.Issuer) server.IssuerKeys {
+func (suite *KafkaTestSuite) makeIssuerKey(issuer model.Issuer) model.IssuerKeys {
 	now := time.Now()
 
 	signingKey, err := crypto.RandomSigningKey()
@@ -287,15 +308,11 @@ func (suite *KafkaTestSuite) makeIssuerKey(issuer server.Issuer) server.IssuerKe
 	keyID, err := uuid.Parse("e16bebae-202b-11ee-bf8a-00155d0da3ed")
 	require.NoError(suite.T(), err)
 
-	issuerSigningKey := &crypto.SigningKey{}
-	err = issuerSigningKey.UnmarshalText(signingKeyText)
-	require.NoError(suite.T(), err)
-
 	startAt := now.Add(time.Duration(1) * -1 * time.Hour)
 	endAt := now.Add(time.Duration(1) * 1 * time.Hour)
 
-	issuerKey := server.IssuerKeys{
-		SigningKey: issuerSigningKey,
+	issuerKey := model.IssuerKeys{
+		SigningKey: signingKeyText,
 		ID:         &keyID,
 		PublicKey:  ptr.FromString(string(pubkeyText)),
 		Cohort:     issuer.IssuerCohort,

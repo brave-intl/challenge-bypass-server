@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
@@ -331,6 +332,7 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 			return nil, utils.ProcessingErrorFromError(sErr, isNotPostgresNotFoundError)
 		}
 
+		fmt.Printf("%+v\n", keys)
 		currIssuer.Keys = append(currIssuer.Keys, keys...)
 		results[idx] = currIssuer
 	}
@@ -527,7 +529,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // CreateV3Issuer exposes the private method without having to refactor
-func (c *Server) CreateV3Issuer(issuer Issuer) error {
+func (c *Server) CreateV3Issuer(issuer model.Issuer) error {
 	return c.createV3Issuer(issuer)
 }
 
@@ -585,9 +587,11 @@ func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	}
 
 	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
+		fmt.Println("//----[FAIL]----//", err)
 		return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 	}
 	queryTimer.ObserveDuration()
+	fmt.Println("//----[SUCCESS]----//")
 	return nil
 }
 
@@ -707,6 +711,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 		start = &tmp
 	}
 
+	fmt.Println(len(keys))
 	if len(keys) == 0 {
 		// nothing to insert, return
 		return nil

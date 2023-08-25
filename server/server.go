@@ -14,6 +14,7 @@ import (
 	"github.com/brave-intl/bat-go/libs/handlers"
 	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/go-chi/chi"
 	chiware "github.com/go-chi/chi/middleware"
 	"github.com/go-chi/httplog"
@@ -55,16 +56,16 @@ type Srv interface {
 	ListenAndServe(context.Context, *logrus.Logger) error
 	LoadDBConfig(DBConfig)
 	InitDB()
-	FetchAllIssuers() (*[]Issuer, error)
+	FetchAllIssuers() ([]model.Issuer, error)
 	RotateIssuersV3() error
-	RedeemToken(*Issuer, *crypto.TokenPreimage, string, int64) error
+	RedeemToken(*model.Issuer, *crypto.TokenPreimage, string, int64) error
 	SetupCronTasks()
 	InitDynamo()
 	PersistRedemption(RedemptionV2) error
-	CheckRedeemedTokenEquivalence(*Issuer, *crypto.TokenPreimage, string, int64) (*RedemptionV2, Equivalence, error)
-	GetLatestIssuer(string, int16) (*Issuer, *handlers.AppError)
-	GetLatestIssuerKafka(string, int16) (*Issuer, error)
-	GetIssuers(string) ([]Issuer, error)
+	CheckRedeemedTokenEquivalence(*model.Issuer, *crypto.TokenPreimage, string, int64) (*RedemptionV2, Equivalence, error)
+	GetLatestIssuer(string, int16) (*model.Issuer, *handlers.AppError)
+	GetLatestIssuerKafka(string, int16) (*model.Issuer, error)
+	getIssuers(context.Context, string) ([]model.Issuer, *handlers.AppError)
 	BlindedTokenIssuerHandlerV2(http.ResponseWriter, *http.Request) *handlers.AppError
 }
 
