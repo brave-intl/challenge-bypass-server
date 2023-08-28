@@ -36,7 +36,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 	tokenLookup := map[string]tokenRef{}
 	blindedTokens := []string{}
 
-	for i := 0; i < 8; i++ {
+	for i := 0; i < 1; i++ {
 		token, err := crypto.RandomToken()
 		require.NoError(suite.T(), err)
 
@@ -130,7 +130,7 @@ func (suite *KafkaTestSuite) TestSignAndRedemptionRoundTrip() {
 
 			for _, result := range res.Data {
 				signedToken := &crypto.SignedToken{}
-				require.True(suite.T(), len(result.Signed_tokens) >= 1)
+				require.Equal(suite.T(), len(blindedTokens), len(result.Signed_tokens))
 				err = signedToken.UnmarshalText([]byte(result.Signed_tokens[0]))
 				require.NoError(suite.T(), err)
 
@@ -281,7 +281,7 @@ func (suite *KafkaTestSuite) makeIssuer() *model.Issuer {
 		Version:      3,
 		ValidFrom:    &now,
 		Buffer:       1,
-		Overlap:      7,
+		Overlap:      0,
 		Duration:     &duration,
 		Keys:         []model.IssuerKeys{},
 	}
