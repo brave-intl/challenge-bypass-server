@@ -587,7 +587,6 @@ func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	}
 
 	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
-		fmt.Println("//----[FAIL]----//", err)
 		return fmt.Errorf("failed to close rows on v3 issuer creation: %w", err)
 	}
 	queryTimer.ObserveDuration()
