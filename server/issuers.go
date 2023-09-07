@@ -25,6 +25,7 @@ type issuerResponse struct {
 	PublicKey *crypto.PublicKey `json:"public_key"`
 	ExpiresAt string            `json:"expires_at,omitempty"`
 	Cohort    int16             `json:"cohort"`
+	CreatedAt string            `json:"createdAt,omitempty"`
 }
 
 type issuerCreateRequest struct {
@@ -375,8 +376,11 @@ func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 
 	// Last key in array is the valid one
 	var publicKey *crypto.PublicKey
+	createdAt := ""
 	if len(iss.Keys) > 0 {
-		publicKey = iss.Keys[len(iss.Keys)-1].CryptoSigningKey().PublicKey()
+		relevantKey := iss.Keys[len(iss.Keys)-1]
+		publicKey = relevantKey.CryptoSigningKey().PublicKey()
+		createdAt = relevantKey.CreatedAt.Format(time.RFC3339)
 	}
 
 	return issuerResponse{
@@ -385,6 +389,7 @@ func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 		publicKey,
 		expiresAt,
 		iss.IssuerCohort,
+		createdAt,
 	}
 }
 
