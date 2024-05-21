@@ -4,6 +4,7 @@ package kafka
 import (
 	"context"
 	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 
@@ -13,7 +14,8 @@ import (
 )
 
 type testMessageReader struct {
-	fetch func() (kafka.Message, error)
+	fetch  func() (kafka.Message, error)
+	commit func(msgs []kafka.Message) error
 }
 
 func (r *testMessageReader) FetchMessage(ctx context.Context) (kafka.Message, error) {
@@ -22,6 +24,10 @@ func (r *testMessageReader) FetchMessage(ctx context.Context) (kafka.Message, er
 
 func (r *testMessageReader) Stats() kafka.ReaderStats {
 	return kafka.ReaderStats{}
+}
+
+func (r *testMessageReader) CommitMessages(ctx context.Context, msgs ...kafka.Message) error {
+	return r.commit(msgs)
 }
 
 func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
@@ -38,9 +44,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 			if messageCounter == 1 {
 				return kafka.Message{Topic: "absent"}, nil
 			}
-			// processMessagesIntoBatchPipeline never returns, so leak its
-			// goroutine via blocking here forever.
-			select {}
+			return kafka.Message{}, io.EOF
 		}
 		go processMessagesIntoBatchPipeline(context.Background(),
 			nil, r, batchPipeline, &nopLog)
@@ -52,6 +56,9 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 		// Absent topic signals permanent error and the message should be
 		// committed, so msg.err must be nil.
 		assert.Nil(t, msg.err)
+
+		_, ok := <-batchPipeline
+		assert.False(t, ok)
 	})
 
 	t.Run("OrderPreserved", func(t *testing.T) {
@@ -73,7 +80,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 				// Processor below.
 				return kafka.Message{Topic: "topicA", Partition: i}, nil
 			}
-			select {} // block forever
+			return kafka.Message{}, io.EOF
 		}
 		atomicCounter := int32(N)
 		topicMappings := []TopicMapping{{
@@ -108,5 +115,226 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 				assert.Nil(t, msg.err)
 			}
 		}
+		_, ok := <-batchPipeline
+		assert.False(t, ok)
 	})
+
+	t.Run("ContextCancelStops", func(t *testing.T) {
+		t.Parallel()
+
+		// generate two messages and cancel context when returning the second.
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		batchPipeline := make(chan *MessageContext)
+
+		r := &testMessageReader{}
+		messageCounter := 0
+		r.fetch = func() (kafka.Message, error) {
+			i := messageCounter
+			messageCounter++
+			if i > 1 {
+				panic("called more than once")
+			}
+			if i == 1 {
+				cancel()
+			}
+			return kafka.Message{Topic: "topicA", Partition: i}, nil
+		}
+
+		topicMappings := []TopicMapping{{
+			Topic: "topicA",
+			Processor: func(ctx context.Context, msg kafka.Message, logger *zerolog.Logger) error {
+				if msg.Partition > 0 {
+					panic("should only be called once")
+				}
+				return nil
+			},
+		}}
+
+		processFinished := make(chan struct{})
+		go func() {
+			processMessagesIntoBatchPipeline(ctx,
+				topicMappings, r, batchPipeline, &nopLog)
+			close(processFinished)
+		}()
+
+		msg := <-batchPipeline
+		assert.NotNil(t, msg)
+		<-msg.done
+
+		<-processFinished
+
+		// After processMessagesIntoBatchPipeline
+		assert.Error(t, ctx.Err())
+		_, ok := <-batchPipeline
+		assert.False(t, ok)
+	})
+}
+
+func TestReadAndCommitBatchPipelineResults(t *testing.T) {
+	nopLog := zerolog.Nop()
+
+	t.Run("WaitsForMessageDoneAfterReceiving", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+
+		r := &testMessageReader{}
+
+		r.commit = func(msgs []kafka.Message) error {
+			assert.Equal(t, 1, len(msgs))
+			assert.Equal(t, "testA", msgs[0].Topic)
+			return nil
+		}
+
+		batchPipeline := make(chan *MessageContext)
+
+		readErr := make(chan error)
+		go func() {
+			readErr <- readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		}()
+
+		makeMsg := func() *MessageContext {
+			return &MessageContext{
+				msg:  kafka.Message{Topic: "testA"},
+				done: make(chan struct{}),
+			}
+		}
+
+		msg := makeMsg()
+		batchPipeline <- msg
+
+		// Do not close, but write an empty struct to trigger deadlock if the
+		// read happens in the wrong order. For this to work all channels must
+		// be unbuffered.
+		var empty struct{}
+		msg.done <- empty
+
+		msg = makeMsg()
+		batchPipeline <- msg
+		msg.done <- empty
+
+		msg = makeMsg()
+		batchPipeline <- msg
+		msg.done <- empty
+
+		close(batchPipeline)
+
+		err := <-readErr
+		assert.ErrorIs(t, err, io.EOF)
+	})
+
+	t.Run("MessageWithErrorStopsReading", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+
+		r := &testMessageReader{}
+		r.commit = func(msgs []kafka.Message) error {
+			panic("should not be called")
+		}
+
+		batchPipeline := make(chan *MessageContext, 1)
+
+		msg := &MessageContext{
+			done: make(chan struct{}),
+			err:  errors.New("New error"),
+		}
+		close(msg.done)
+		batchPipeline <- msg
+
+		err := readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		assert.ErrorIs(t, err, msg.err)
+
+		close(batchPipeline)
+		err = readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		assert.ErrorIs(t, err, io.EOF)
+	})
+
+	t.Run("CommitErrorStopsReading", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := context.Background()
+
+		r := &testMessageReader{}
+
+		emitErr := errors.New("emit error")
+
+		r.commit = func(msgs []kafka.Message) error {
+			assert.Equal(t, 1, len(msgs))
+			assert.Equal(t, "testA", msgs[0].Topic)
+			return emitErr
+		}
+
+		batchPipeline := make(chan *MessageContext, 1)
+
+		msg := &MessageContext{
+			msg:  kafka.Message{Topic: "testA"},
+			done: make(chan struct{}),
+		}
+		close(msg.done)
+		batchPipeline <- msg
+
+		err := readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		assert.ErrorIs(t, err, emitErr)
+	})
+
+	// check context cancel exits blocking read of batchPipeline arg.
+	t.Run("ContextCancelStops", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		r := &testMessageReader{}
+
+		r.commit = func(msgs []kafka.Message) error {
+			panic("should not be called")
+		}
+
+		batchPipeline := make(chan *MessageContext)
+		readErr := make(chan error)
+		go func() {
+			readErr <- readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		}()
+
+		cancel()
+		err := <-readErr
+		assert.Equal(t, ctx.Err(), err)
+	})
+
+	// check context cancel exits blocking read of MessageContext.done
+	t.Run("ContextCancelStops2", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(context.Background())
+
+		r := &testMessageReader{}
+
+		r.commit = func(msgs []kafka.Message) error {
+			panic("should not be called")
+		}
+
+		batchPipeline := make(chan *MessageContext)
+		readErr := make(chan error)
+		go func() {
+			readErr <- readAndCommitBatchPipelineResults(ctx, r, batchPipeline, &nopLog)
+		}()
+
+		msg := &MessageContext{
+			msg:  kafka.Message{Topic: "testA"},
+			done: make(chan struct{}),
+		}
+		batchPipeline <- msg
+
+		// As batchPipeline has zero capacity, we can be here only after
+		// readAndCommitBatchPipelineResults received from the channel.
+		// Cancelling context at this point should stop the blocking read from
+		// msg.done.
+		cancel()
+
+		err := <-readErr
+		assert.Equal(t, ctx.Err(), err)
+	})
+
 }

@@ -7,7 +7,6 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"strconv"
-	"time"
 
 	"github.com/brave-intl/bat-go/libs/logging"
 	"github.com/brave-intl/challenge-bypass-server/kafka"
@@ -88,7 +87,7 @@ func main() {
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		go startKafka(srv, zeroLogger)
+		go runKafka(srv, zeroLogger)
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
@@ -103,14 +102,17 @@ func main() {
 	}
 }
 
-func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
-	zeroLogger.Trace().Msg("Initializing Kafka consumers")
-	err := kafka.StartConsumers(&srv, zeroLogger)
+func runKafka(srv server.Server, zeroLogger *zerolog.Logger) {
+	ctx := context.Background()
+	zeroLogger.Trace().Msg("Running Kafka consumers")
+	err := kafka.RunConsumers(ctx, &srv, zeroLogger)
 
+	// For now if RunConsumer terminates due to temporary errors exit the
+	// process and let the container runtime to restart it.
 	if err != nil {
-		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
-		// If err is something then start consumer again
-		time.Sleep(10 * time.Second)
-		startKafka(srv, zeroLogger)
+		zeroLogger.Error().Err(err).Msg("Failed to run Kafka reader/writer")
+	} else {
+		zeroLogger.Error().Msg("kafka.RunConsumers() returned with no errors")
 	}
+	os.Exit(10)
 }
