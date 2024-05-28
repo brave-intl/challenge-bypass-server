@@ -8,15 +8,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brave-intl/challenge-bypass-server/model"
-
-	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
-	"github.com/brave-intl/challenge-bypass-server/btd"
-	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
-	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
+
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+
+	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
+	"github.com/brave-intl/challenge-bypass-server/btd"
+	"github.com/brave-intl/challenge-bypass-server/model"
+	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 )
 
 /*
@@ -94,10 +95,12 @@ func SignedTokenRedeemHandler(
 		)
 	}
 
-	// Create a lookup for issuers & signing keys based on public key
+	// Create a lookup for issuers & signing keys based on public key.
 	signedTokens := make(map[string]SignedIssuerToken)
+	now := time.Now()
+
 	for _, issuer := range issuers {
-		if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
+		if issuer.HasExpired(now) {
 			continue
 		}
 

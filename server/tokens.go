@@ -4,20 +4,21 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
-	"github.com/brave-intl/bat-go/libs/handlers"
-	"github.com/brave-intl/bat-go/libs/middleware"
-	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/go-chi/chi"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
+
+	"github.com/brave-intl/bat-go/libs/handlers"
+	"github.com/brave-intl/bat-go/libs/middleware"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+
+	"github.com/brave-intl/challenge-bypass-server/btd"
+	"github.com/brave-intl/challenge-bypass-server/model"
 )
 
 const (
@@ -45,6 +46,10 @@ type blindedTokenRedeemRequest struct {
 	Payload       string                        `json:"payload"`
 	TokenPreimage *crypto.TokenPreimage         `json:"t"`
 	Signature     *crypto.VerificationSignature `json:"signature"`
+}
+
+func (r *blindedTokenRedeemRequest) isEmpty() bool {
+	return r.TokenPreimage == nil || r.Signature == nil
 }
 
 type blindedTokenRedeemResponse struct {
@@ -174,112 +179,119 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Request) *handlers.AppError {
-	var response blindedTokenRedeemResponse
-	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
-		issuer, err := c.fetchIssuerByType(r.Context(), issuerType)
-		if err != nil {
-			switch {
-			case errors.Is(err, sql.ErrNoRows):
-				return &handlers.AppError{
-					Message: "Issuer not found",
-					Code:    404,
-				}
-			default:
-				c.Logger.WithError(err).Error("error fetching issuer")
-				return &handlers.AppError{
-					Cause:   errors.New("internal server error"),
-					Message: "Internal server error could not retrieve issuer",
-					Code:    500,
-				}
+	ctx := r.Context()
+
+	issuerType := chi.URLParamFromCtx(ctx, "type")
+	if issuerType == "" {
+		return handlers.RenderContent(ctx, blindedTokenRedeemResponse{}, w, http.StatusOK)
+	}
+
+	issuer, err := c.fetchIssuerByType(ctx, issuerType)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return &handlers.AppError{
+				Message: "Issuer not found",
+				Code:    http.StatusNotFound,
+			}
+		default:
+			c.Logger.WithError(err).Error("error fetching issuer")
+
+			return &handlers.AppError{
+				Cause:   errors.New("internal server error"),
+				Message: "Internal server error could not retrieve issuer",
+				Code:    http.StatusInternalServerError,
 			}
 		}
+	}
 
-		c.Logger.WithField("issuer", issuer).
-			Debug("retrieved issuer")
+	if issuer.Version != 3 {
+		return &handlers.AppError{
+			Message: "Issuer must be version 3",
+			Code:    http.StatusBadRequest,
+		}
+	}
 
-		if issuer.Version != 3 {
+	now := time.Now()
+
+	if issuer.HasExpired(now) {
+		return &handlers.AppError{
+			Message: "Issuer has expired",
+			Code:    http.StatusBadRequest,
+		}
+	}
+
+	var request blindedTokenRedeemRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
+		c.Logger.Debug("Could not parse the request body")
+		return handlers.WrapError(err, "Could not parse the request body", http.StatusBadRequest)
+	}
+
+	if request.isEmpty() {
+		return &handlers.AppError{
+			Message: "Empty request",
+			Code:    http.StatusBadRequest,
+		}
+	}
+
+	skeys, err := issuer.FindSigningKeys(now)
+	if err != nil {
+		switch {
+		case errors.Is(err, model.ErrInvalidIssuerType):
 			return &handlers.AppError{
 				Message: "Issuer must be version 3",
 				Code:    http.StatusBadRequest,
 			}
-		}
 
-		if issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
+		case errors.Is(err, model.ErrInvalidIV3Key):
 			return &handlers.AppError{
-				Message: "Issuer has expired",
+				Message: "Issuer has invalid keys for v3",
+				Code:    http.StatusBadRequest,
+			}
+
+		default:
+			return &handlers.AppError{
+				Message: "Something went wrong",
 				Code:    http.StatusBadRequest,
 			}
 		}
-
-		var request blindedTokenRedeemRequest
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
-			c.Logger.Debug("Could not parse the request body")
-			return handlers.WrapError(err, "Could not parse the request body", 400)
-		}
-
-		if request.TokenPreimage == nil || request.Signature == nil {
-			c.Logger.Debug("Empty request")
-			return &handlers.AppError{
-				Message: "Empty request",
-				Code:    http.StatusBadRequest,
-			}
-		}
-
-		var signingKey *crypto.SigningKey
-		for i, k := range issuer.Keys {
-			if k.StartAt == nil || k.EndAt == nil {
-				return &handlers.AppError{
-					Message: "Issuer has invalid keys for v3",
-					Code:    http.StatusBadRequest,
-				}
-			}
-
-			if k.StartAt.Before(time.Now()) && k.EndAt.After(time.Now()) {
-				pubKeyTxt, _ := k.CryptoSigningKey().PublicKey().MarshalText()
-				c.Logger.WithFields(logrus.Fields{
-					"now":      time.Now(),
-					"start_at": k.StartAt,
-					"end_at":   k.EndAt,
-					"key":      string(pubKeyTxt),
-					"i":        fmt.Sprintf("%d", i),
-				}).Error("found appropriate key")
-				signingKey = k.CryptoSigningKey()
-				break
-			}
-		}
-		if signingKey == nil {
-			return &handlers.AppError{
-				Message: "Issuer has no key that corresponds to start < now < end",
-				Code:    http.StatusBadRequest,
-			}
-		}
-
-		if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload,
-			[]*crypto.SigningKey{signingKey}); err != nil {
-			return &handlers.AppError{
-				Message: "Could not verify that token redemption is valid",
-				Code:    http.StatusBadRequest,
-			}
-		}
-
-		if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload, 0); err != nil {
-			c.Logger.Error("error redeeming token")
-			if errors.Is(err, errDuplicateRedemption) {
-				return &handlers.AppError{
-					Message: err.Error(),
-					Code:    http.StatusConflict,
-				}
-			}
-			return &handlers.AppError{
-				Cause:   err,
-				Message: "Could not mark token redemption",
-				Code:    http.StatusInternalServerError,
-			}
-		}
-		response = blindedTokenRedeemResponse{issuer.IssuerCohort}
 	}
 
-	return handlers.RenderContent(r.Context(), response, w, http.StatusOK)
+	if len(skeys) == 0 {
+		c.Logger.WithFields(logrus.Fields{"now": now}).Error("failed to find appropriate key")
+
+		return &handlers.AppError{
+			Message: "Issuer has no key that corresponds to start < now < end",
+			Code:    http.StatusBadRequest,
+		}
+	}
+
+	if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload, skeys); err != nil {
+		return &handlers.AppError{
+			Message: "Could not verify that token redemption is valid",
+			Code:    http.StatusBadRequest,
+		}
+	}
+
+	if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload, 0); err != nil {
+		c.Logger.Error("error redeeming token")
+		if errors.Is(err, errDuplicateRedemption) {
+			return &handlers.AppError{
+				Message: err.Error(),
+				Code:    http.StatusConflict,
+			}
+		}
+
+		return &handlers.AppError{
+			Cause:   err,
+			Message: "Could not mark token redemption",
+			Code:    http.StatusInternalServerError,
+		}
+	}
+
+	result := blindedTokenRedeemResponse{issuer.IssuerCohort}
+
+	return handlers.RenderContent(ctx, result, w, http.StatusOK)
 }
 
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
@@ -305,11 +317,15 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		var verified = false
-		var verifiedIssuer = &model.Issuer{}
-		var verifiedCohort = int16(0)
+		var (
+			verified       bool
+			verifiedIssuer = &model.Issuer{}
+			verifiedCohort = int16(0)
+			now            = time.Now()
+		)
+
 		for _, issuer := range issuers {
-			if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
+			if issuer.HasExpired(now) {
 				continue
 			}
 
