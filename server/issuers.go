@@ -4,19 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/go-chi/chi"
+	"github.com/lib/pq"
+	"github.com/pressly/lg"
+	"github.com/sirupsen/logrus"
 
 	"github.com/brave-intl/bat-go/libs/closers"
 	"github.com/brave-intl/bat-go/libs/handlers"
 	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	"github.com/go-chi/chi"
-	"github.com/lib/pq"
-	"github.com/pressly/lg"
-	"github.com/sirupsen/logrus"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 )
 
 type issuerResponse struct {
@@ -369,8 +371,8 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 
 func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 	expiresAt := ""
-	if !iss.ExpiresAtTime().IsZero() {
-		expiresAt = iss.ExpiresAtTime().Format(time.RFC3339)
+	if expt := iss.ExpiresAtTime(); !expt.IsZero() {
+		expiresAt = expt.Format(time.RFC3339)
 	}
 
 	// Last key in array is the valid one

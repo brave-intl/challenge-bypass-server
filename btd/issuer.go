@@ -113,32 +113,39 @@ func ApproveTokens(blindedTokens []*crypto.BlindedToken, key *crypto.SigningKey)
 }
 
 // VerifyTokenRedemption checks a redemption request against the observed request data
-// and MAC according a set of keys. keys keeps a set of private keys that
-// are ever used to sign the token so we can rotate private key easily
-// Returns nil on success and an error on failure.
+// and MAC according a set of keys.
+// Keys keeps a set of private keys that are ever used to sign the token so we can rotate private key easily.
 func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
 	var valid bool
 	var err error
-	for _, key := range keys {
+
+	for i := range keys {
 		verifyTokenRedemptionCounter.Add(1)
-		// server derives the unblinded token using its key and the clients token preimage
-		unblindedToken := key.RederiveUnblindedToken(preimage)
 
-		// server derives the shared key from the unblinded token
-		timer := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
+		// Derive the unblinded token using a server's key and the client's preimage.
+		unblindedToken := keys[i].RederiveUnblindedToken(preimage)
+
+		timerUT := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
+
+		// Derive the shared key from the unblinded token.
 		sharedKey := unblindedToken.DeriveVerificationKey()
-		timer.ObserveDuration()
+		_ = timerUT.ObserveDuration()
 
-		// server signs the same message using the shared key and compares the client signature to its own
-		timer = prometheus.NewTimer(verifyTokenSignatureDuration)
+		timerVrf := prometheus.NewTimer(verifyTokenSignatureDuration)
+
+		// Sign the same message using the shared key and compare the client's signature with the server's.
 		valid, err = sharedKey.Verify(signature, payload)
 		if err != nil {
+			_ = timerVrf.ObserveDuration()
+
 			return err
 		}
+
+		_ = timerVrf.ObserveDuration()
+
 		if valid {
 			break
 		}
-		timer.ObserveDuration()
 	}
 
 	if !valid {
