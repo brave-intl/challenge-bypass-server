@@ -18,7 +18,7 @@ COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchalle
 RUN go build -ldflags '-linkmode external -extldflags "-static"' -tags 'osusergo netgo static_build' -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
-FROM ubuntu
+FROM ubuntu:22.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y ca-certificates awscli && rm -rf /var/cache/apk/*
 RUN update-ca-certificates

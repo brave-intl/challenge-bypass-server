@@ -2,19 +2,22 @@ package kafka
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"strings"
 	"time"
 
-	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
-	"github.com/brave-intl/challenge-bypass-server/btd"
-	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
-	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
+
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
+
+	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
+	"github.com/brave-intl/challenge-bypass-server/btd"
+	"github.com/brave-intl/challenge-bypass-server/model"
+	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 )
 
 /*
@@ -31,6 +34,7 @@ type SignedIssuerToken struct {
 }
 
 func SignedTokenRedeemHandler(
+	ctx context.Context,
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
@@ -41,7 +45,8 @@ func SignedTokenRedeemHandler(
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
-		handlePermanentRedemptionError(
+		return handlePermanentRedemptionError(
+			ctx,
 			message,
 			err,
 			msg,
@@ -50,7 +55,6 @@ func SignedTokenRedeemHandler(
 			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
-		return nil
 	}
 
 	logger := log.With().Str("request_id", tokenRedeemRequestSet.Request_id).Logger()
@@ -62,7 +66,8 @@ func SignedTokenRedeemHandler(
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
 		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
-		handlePermanentRedemptionError(
+		return handlePermanentRedemptionError(
+			ctx,
 			message,
 			errors.New("multiple messages"),
 			msg,
@@ -71,7 +76,6 @@ func SignedTokenRedeemHandler(
 			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
-		return nil
 	}
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
@@ -79,7 +83,8 @@ func SignedTokenRedeemHandler(
 			return processingError
 		}
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
-		handlePermanentRedemptionError(
+		return handlePermanentRedemptionError(
+			ctx,
 			message,
 			err,
 			msg,
@@ -88,13 +93,14 @@ func SignedTokenRedeemHandler(
 			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
-		return nil
 	}
 
-	// Create a lookup for issuers & signing keys based on public key
+	// Create a lookup for issuers & signing keys based on public key.
 	signedTokens := make(map[string]SignedIssuerToken)
+	now := time.Now()
+
 	for _, issuer := range issuers {
-		if !issuer.ExpiresAtTime().IsZero() && issuer.ExpiresAtTime().Before(time.Now()) {
+		if issuer.HasExpired(now) {
 			continue
 		}
 
@@ -110,7 +116,8 @@ func SignedTokenRedeemHandler(
 			// Unmarshalling failure is a data issue and is probably permanent.
 			if mErr != nil {
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
-				handlePermanentRedemptionError(
+				return handlePermanentRedemptionError(
+					ctx,
 					message,
 					err,
 					msg,
@@ -119,7 +126,6 @@ func SignedTokenRedeemHandler(
 					int32(avroSchema.RedeemResultStatusError),
 					log,
 				)
-				return nil
 			}
 
 			signedTokens[string(marshaledPublicKey)] = SignedIssuerToken{
@@ -169,7 +175,8 @@ func SignedTokenRedeemHandler(
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
-			handlePermanentRedemptionError(
+			return handlePermanentRedemptionError(
+				ctx,
 				message,
 				err,
 				msg,
@@ -178,14 +185,14 @@ func SignedTokenRedeemHandler(
 				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
-			return nil
 		}
 		verificationSignature := crypto.VerificationSignature{}
 		err = verificationSignature.UnmarshalText([]byte(request.Signature))
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
-			handlePermanentRedemptionError(
+			return handlePermanentRedemptionError(
+				ctx,
 				message,
 				err,
 				msg,
@@ -194,7 +201,6 @@ func SignedTokenRedeemHandler(
 				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
-			return nil
 		}
 
 		if signedToken, ok := signedTokens[request.Public_key]; ok {
@@ -241,7 +247,8 @@ func SignedTokenRedeemHandler(
 				}
 			}
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
-			handlePermanentRedemptionError(
+			return handlePermanentRedemptionError(
+				ctx,
 				message,
 				err,
 				msg,
@@ -250,7 +257,6 @@ func SignedTokenRedeemHandler(
 				int32(avroSchema.RedeemResultStatusError),
 				log,
 			)
-			return nil
 		}
 
 		// Continue if there is a duplicate
@@ -289,7 +295,8 @@ func SignedTokenRedeemHandler(
 							return err
 						}
 					}
-					handlePermanentRedemptionError(
+					return handlePermanentRedemptionError(
+						ctx,
 						message,
 						err,
 						msg,
@@ -298,7 +305,6 @@ func SignedTokenRedeemHandler(
 						int32(avroSchema.RedeemResultStatusError),
 						log,
 					)
-					return nil
 				}
 				logger.Error().Err(fmt.Errorf("request %s: duplicate redemption: %w",
 					tokenRedeemRequestSet.Request_id, err)).
@@ -351,7 +357,8 @@ func SignedTokenRedeemHandler(
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
-		handlePermanentRedemptionError(
+		return handlePermanentRedemptionError(
+			ctx,
 			message,
 			err,
 			msg,
@@ -360,10 +367,9 @@ func SignedTokenRedeemHandler(
 			int32(avroSchema.RedeemResultStatusError),
 			log,
 		)
-		return nil
 	}
 
-	err = Emit(producer, resultSetBuffer.Bytes(), log)
+	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
 		message := fmt.Sprintf(
 			"request %s: failed to emit results to topic %s",
@@ -392,16 +398,15 @@ func issuerTimeIsNotValid(start *time.Time, end *time.Time) bool {
 	return !bothTimesAreNil
 }
 
-// avroRedeemErrorResultFromError returns a ProcessingResult that is constructed from the
-// provided values.
+// avroRedeemErrorResultFromError returns a message to emit that is constructed
+// from the provided values.
 func avroRedeemErrorResultFromError(
 	message string,
 	msg kafka.Message,
-	producer *kafka.Writer,
 	requestID string,
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
-) *ProcessingResult {
+) []byte {
 	redeemResult := avroSchema.RedeemResult{
 		Issuer_name:     "",
 		Issuer_cohort:   0,
@@ -416,22 +421,15 @@ func avroRedeemErrorResultFromError(
 	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
-		return &ProcessingResult{
-			Message:        []byte(message),
-			ResultProducer: producer,
-			RequestID:      requestID,
-		}
+		return []byte(message)
 	}
-	return &ProcessingResult{
-		Message:        resultSetBuffer.Bytes(),
-		ResultProducer: producer,
-		RequestID:      requestID,
-	}
+	return resultSetBuffer.Bytes()
 }
 
 // handleRedemptionError is a convenience function that executes a call pattern shared
 // when handling all errors in the redeem flow
 func handlePermanentRedemptionError(
+	ctx context.Context,
 	message string,
 	cause error,
 	msg kafka.Message,
@@ -439,17 +437,20 @@ func handlePermanentRedemptionError(
 	requestID string,
 	redeemResultStatus int32,
 	logger *zerolog.Logger,
-) {
+) error {
 	logger.Error().Err(cause).Msgf("encountered permanent redemption failure: %v", message)
-	processingResult := avroRedeemErrorResultFromError(
+	toEmit := avroRedeemErrorResultFromError(
 		message,
 		msg,
-		producer,
 		requestID,
 		int32(avroSchema.RedeemResultStatusError),
 		logger,
 	)
-	if err := Emit(producer, processingResult.Message, logger); err != nil {
+	if err := Emit(ctx, producer, toEmit, logger); err != nil {
 		logger.Error().Err(err).Msg("failed to emit")
 	}
+	// TODO: consider returning err here as failing to emit error should not
+	// commit messages the same way as failing to emit a success does not
+	// commit.
+	return nil
 }
