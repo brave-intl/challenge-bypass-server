@@ -5,7 +5,7 @@ go 1.18
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
 	github.com/aws/aws-sdk-go v1.44.206
-	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
+	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.32.9
 	github.com/brave-intl/bat-go/libs v0.0.0-20230222140804-b1c2d2678012
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
 	github.com/getsentry/raven-go v0.2.0
@@ -29,7 +29,7 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d // indirect
-	github.com/aws/smithy-go v1.13.5 // indirect
+	github.com/aws/smithy-go v1.20.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/certifi/gocertifi v0.0.0-20210507211836-431795d63e8d // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
