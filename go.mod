@@ -4,7 +4,7 @@ go 1.18
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
-	github.com/aws/aws-sdk-go v1.44.206
+	github.com/aws/aws-sdk-go v1.54.15
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
 	github.com/brave-intl/bat-go/libs v0.0.0-20230222140804-b1c2d2678012
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
