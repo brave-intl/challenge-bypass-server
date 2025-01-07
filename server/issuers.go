@@ -53,7 +53,14 @@ type issuerFetchRequestV2 struct {
 
 // GetLatestIssuer - get the latest issuer by type/cohort
 func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.Issuer, *handlers.AppError) {
-	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+	issuer, err := c.fetchIssuersByCohort(
+		issuerType,
+		issuerCohort,
+		`SELECT i.*
+		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
+		WHERE i.issuer_type=$1 AND k.cohort=$2
+		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`,
+	)
 	if err != nil {
 		if errors.Is(err, errIssuerCohortNotFound) {
 			c.Logger.Error("Issuer with given type and cohort not found")
@@ -78,7 +85,14 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 
 // GetLatestIssuerKafka - get the issuer and any processing error
 func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error) {
-	issuer, err := c.fetchIssuersByCohort(issuerType, issuerCohort)
+	issuer, err := c.fetchIssuersByCohort(
+		issuerType,
+		issuerCohort,
+		`SELECT i.*
+		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
+		WHERE i.issuer_type like $1 || '%' AND k.cohort=$2
+		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`,
+	)
 	if err != nil {
 		return nil, err
 	}

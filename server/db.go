@@ -222,7 +222,11 @@ func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 // the Ads implementation had non-unique issuer types. This is no longer the case and this
 // function should be refactored or removed. For now, it will return an array of a single
 // issuer.
-func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]model.Issuer, error) {
+func (c *Server) fetchIssuersByCohort(
+	issuerType string,
+	issuerCohort int16,
+	queryTemplate string,
+) ([]model.Issuer, error) {
 	// will not lose resolution int16->int
 	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
 		if issuers, ok := cached.([]model.Issuer); ok {
@@ -231,12 +235,7 @@ func (c *Server) fetchIssuersByCohort(issuerType string, issuerCohort int16) ([]
 	}
 
 	var fetchedIssuers []model.Issuer
-	err := c.db.Select(
-		&fetchedIssuers,
-		`SELECT i.*
-		FROM v3_issuers i join v3_issuer_keys k on (i.issuer_id=k.issuer_id)
-		WHERE i.issuer_type like $1 || '%' AND k.cohort=$2
-		ORDER BY i.expires_at DESC NULLS FIRST, i.created_at DESC`, issuerType, issuerCohort)
+	err := c.db.Select(&fetchedIssuers, queryTemplate, issuerType, issuerCohort)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		return nil, utils.ProcessingErrorFromError(err, isPostgresNotFoundError(err))
