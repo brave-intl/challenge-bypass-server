@@ -87,7 +87,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		topics = append(topics, topicMapping.Topic)
 	}
 
-	reader := newConsumer(topics, adsConsumerGroupV1, logger)
+	reader := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
 
 	batchPipeline := make(chan *MessageContext, 400)
 	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger)
@@ -196,10 +196,10 @@ func runMessageProcessor(
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
+func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
 	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
-	dialer := getDialer(logger)
+	dialer := getDialer(ctx, logger)
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
