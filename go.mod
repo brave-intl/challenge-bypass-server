@@ -2,8 +2,6 @@ module github.com/brave-intl/challenge-bypass-server
 
 go 1.24
 
-toolchain go1.24.2
-
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
 	github.com/aws/aws-sdk-go v1.44.206
