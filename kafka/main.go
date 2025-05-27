@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go/aws"
 	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
