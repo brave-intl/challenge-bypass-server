@@ -371,12 +371,11 @@ func SignedTokenRedeemHandler(
 
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
-		message := fmt.Sprintf(
+		log.Error().Err(err).Msgf(
 			"request %s: failed to emit results to topic %s",
 			resultSet.Request_id,
 			producer.Topic,
 		)
-		log.Error().Err(err).Msgf(message)
 		return err
 	}
 

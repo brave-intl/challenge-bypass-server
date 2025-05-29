@@ -104,8 +104,9 @@ func main() {
 }
 
 func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
+	ctx := context.Background()
 	zeroLogger.Trace().Msg("Initializing Kafka consumers")
-	err := kafka.StartConsumers(&srv, zeroLogger)
+	err := kafka.StartConsumers(ctx, &srv, zeroLogger)
 
 	if err != nil {
 		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
