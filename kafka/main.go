@@ -51,7 +51,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
 	if len(brokers) < 1 {
-		brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	}
 	redeemWriter := kafka.NewWriter(kafka.WriterConfig{
 		Brokers: brokers,
@@ -195,7 +195,7 @@ func runMessageProcessor(
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
 func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
-	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
 	dialer := getDialer(logger)
 	reader := kafka.NewReader(kafka.ReaderConfig{
