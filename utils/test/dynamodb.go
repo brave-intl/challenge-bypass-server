@@ -7,15 +7,40 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 )
 
 // SetupDynamodbTables this function sets up tables for use in dynamodb tests.
 func SetupDynamodbTables(db *dynamodb.DynamoDB) error {
-	_, _ = db.DeleteTable(&dynamodb.DeleteTableInput{
+	describeInput := &dynamodb.DescribeTableInput{
 		TableName: ptr.FromString("redemptions"),
-	})
+	}
+
+	_, err := db.DescribeTable(describeInput)
+
+	if err == nil {
+		_, err = db.DeleteTable(&dynamodb.DeleteTableInput{
+			TableName: ptr.FromString("redemptions"),
+		})
+		if err != nil {
+			fmt.Printf("Error deleting table: %v", err)
+		} else {
+			fmt.Println("Waiting for table to be deleted...")
+			db.WaitUntilTableNotExists(describeInput)
+		}
+	} else {
+		if aerr, ok := err.(awserr.Error); ok {
+			if aerr.Code() == dynamodb.ErrCodeResourceNotFoundException {
+				fmt.Println("Table does not exist, skipping deletion")
+			} else {
+				fmt.Printf("Error checking table existence: %v", err)
+			}
+		} else {
+			fmt.Printf("Unexpected error checking table existence: %v", err)
+		}
+	}
 
 	input := &dynamodb.CreateTableInput{
 		TableName:   ptr.FromString("redemptions"),
@@ -34,7 +59,7 @@ func SetupDynamodbTables(db *dynamodb.DynamoDB) error {
 		},
 	}
 
-	_, err := db.CreateTable(input)
+	_, err = db.CreateTable(input)
 	if err != nil {
 		return fmt.Errorf("error creating dynamodb table")
 	}

@@ -514,13 +514,12 @@ OUTER:
 	logger.Info().Msgf("about to emit: %+v", resultSet)
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
-		message := fmt.Sprintf(
+		log.Error().Err(err).Msgf(
 			"request %s: failed to emit to topic %s with result: %v",
 			resultSet.Request_id,
 			producer.Topic,
 			resultSet,
 		)
-		log.Error().Err(err).Msgf(message)
 		return err
 	}
 	logger.Info().Msgf("emitted: %+v", resultSet)
