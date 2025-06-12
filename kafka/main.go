@@ -59,7 +59,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 
 	redeemDialer, err := getDialer(ctx, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get redeem dialer: %w", err)
 	}
 	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
@@ -69,7 +69,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 
 	signDialer, err := getDialer(ctx, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get sign dialer: %w", err)
 	}
 	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
@@ -99,7 +99,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 
 	reader, err := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to get shared consumer dialer: %w", err)
 	}
 
 	batchPipeline := make(chan *MessageContext, 400)
