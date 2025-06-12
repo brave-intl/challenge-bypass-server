@@ -181,22 +181,22 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	return ctx, r
 }
 
-func logMiddlewareOmittingPath(
-	path string,
-	middleware func(http.Handler) http.Handler,
-) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == path {
-				// Skip the logging middleware for the specified path
-				next.ServeHTTP(w, r)
-				return
-			}
-			// Apply the middleware for other paths
-			middleware(next).ServeHTTP(w, r)
-		})
-	}
-}
+//func logMiddlewareOmittingPath(
+//	path string,
+//	middleware func(http.Handler) http.Handler,
+//) func(http.Handler) http.Handler {
+//	return func(next http.Handler) http.Handler {
+//		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+//			if r.URL.Path == path {
+//				// Skip the logging middleware for the specified path
+//				next.ServeHTTP(w, r)
+//				return
+//			}
+//			// Apply the middleware for other paths
+//			middleware(next).ServeHTTP(w, r)
+//		})
+//	}
+//}
 
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
