@@ -159,7 +159,7 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	chiLogger := httplog.NewLogger("cbp-request-logs", httplog.Options{
 		JSON: true,
 	})
-	r.Use(httplog.RequestLogger(chiLogger))
+	r.Use(logMiddlewareOmittingPath("/metrics", httplog.RequestLogger(chiLogger)))
 
 	c.Logger = logger
 
@@ -180,6 +180,23 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	r.Mount("/v3/issuer", c.issuerRouterV3())
 
 	return ctx, r
+}
+
+func logMiddlewareOmittingPath(
+	path string,
+	middleware func(http.Handler) http.Handler,
+) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == path {
+				// Skip the logging middleware for the specified path
+				next.ServeHTTP(w, r)
+				return
+			}
+			// Apply the middleware for other paths
+			middleware(next).ServeHTTP(w, r)
+		})
+	}
 }
 
 // ListenAndServe listen to ports and mount handlers
