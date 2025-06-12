@@ -26,7 +26,7 @@ func main() {
 	)
 
 	serverCtx, logger := server.SetupLogger(context.Background())
-	logLevel = zerolog.WarnLevel
+	logLevel = zerolog.TraceLevel
 	if os.Getenv("ENV") == "local" {
 		logLevel = zerolog.TraceLevel
 	}
