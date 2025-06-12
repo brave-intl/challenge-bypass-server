@@ -56,15 +56,25 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	}
+
+	redeemDialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return err
+	}
 	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultRedeemV1Topic,
-		Dialer:  getDialer(ctx, logger),
+		Dialer:  redeemDialer,
 	})
+
+	signDialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return err
+	}
 	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultSignV1Topic,
-		Dialer:  getDialer(ctx, logger),
+		Dialer:  signDialer,
 	})
 	topicMappings := []TopicMapping{
 		{
@@ -87,7 +97,10 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		topics = append(topics, topicMapping.Topic)
 	}
 
-	reader := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
+	reader, err := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
+	if err != nil {
+		return err
+	}
 
 	batchPipeline := make(chan *MessageContext, 400)
 	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger)
@@ -196,10 +209,13 @@ func runMessageProcessor(
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) *kafkaGo.Reader {
+func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) (*kafkaGo.Reader, error) {
 	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
-	dialer := getDialer(ctx, logger)
+	dialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return nil, err
+	}
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
@@ -213,7 +229,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *z
 		MaxBytes:       10e6,             // 10MB
 	})
 	logger.Trace().Msgf("Reader created with subscription")
-	return reader
+	return reader, nil
 }
 
 // Emit sends a message over the Kafka interface.
@@ -250,7 +266,7 @@ func Emit(
 
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
-func getDialer(ctx context.Context, logger *zerolog.Logger) *kafkaGo.Dialer {
+func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, error) {
 	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" {
@@ -269,6 +285,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) *kafkaGo.Dialer {
 
 		if err != nil {
 			logger.Error().Msgf("failed to setup aws config: %e", err)
+			return nil, err
 		}
 
 		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
@@ -278,6 +295,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) *kafkaGo.Dialer {
 
 		if err != nil {
 			logger.Error().Msgf("failed to initialize TLS dialer: %e", err)
+			return nil, err
 		}
 	} else {
 		logger.Info().Msg("Generating Dialer")
@@ -286,5 +304,5 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) *kafkaGo.Dialer {
 			DualStack: true,
 		}
 	}
-	return dialer
+	return dialer, nil
 }
