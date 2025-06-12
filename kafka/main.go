@@ -16,19 +16,19 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
-	"github.com/segmentio/kafka-go"
+	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
 )
 
 var brokers []string
 
 // Processor is a function that is used to process Kafka messages on
-type Processor func(context.Context, kafka.Message, *zerolog.Logger) error
+type Processor func(context.Context, kafkaGo.Message, *zerolog.Logger) error
 
 // Subset of kafka.Reader methods that we use. This is used for testing.
 type messageReader interface {
-	FetchMessage(ctx context.Context) (kafka.Message, error)
-	Stats() kafka.ReaderStats
+	FetchMessage(ctx context.Context) (kafkaGo.Message, error)
+	Stats() kafkaGo.ReaderStats
 }
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
@@ -42,7 +42,7 @@ type MessageContext struct {
 	// The channel to close when the message is processed.
 	done chan struct{}
 	err  error
-	msg  kafka.Message
+	msg  kafkaGo.Message
 }
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
@@ -56,12 +56,12 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	}
-	redeemWriter := kafka.NewWriter(kafka.WriterConfig{
+	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultRedeemV1Topic,
 		Dialer:  getDialer(ctx, logger),
 	})
-	signWriter := kafka.NewWriter(kafka.WriterConfig{
+	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultSignV1Topic,
 		Dialer:  getDialer(ctx, logger),
@@ -69,14 +69,14 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	topicMappings := []TopicMapping{
 		{
 			Topic: adsRequestRedeemV1Topic,
-			Processor: func(ctx context.Context, msg kafka.Message,
+			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
 				return SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
 			},
 		},
 		{
 			Topic: adsRequestSignV1Topic,
-			Processor: func(ctx context.Context, msg kafka.Message,
+			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
 				return SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
 			},
@@ -108,7 +108,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 // committing so that the next reader gets the same message to try again.
 func readAndCommitBatchPipelineResults(
 	ctx context.Context,
-	reader *kafka.Reader,
+	reader *kafkaGo.Reader,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) error {
@@ -196,16 +196,16 @@ func runMessageProcessor(
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
+func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) *kafkaGo.Reader {
 	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
 	dialer := getDialer(ctx, logger)
-	reader := kafka.NewReader(kafka.ReaderConfig{
+	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
 		GroupTopics:    topics,
 		GroupID:        groupID,
-		StartOffset:    kafka.FirstOffset,
+		StartOffset:    kafkaGo.FirstOffset,
 		Logger:         logger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
@@ -219,7 +219,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *z
 // Emit sends a message over the Kafka interface.
 func Emit(
 	ctx context.Context,
-	producer *kafka.Writer,
+	producer *kafkaGo.Writer,
 	message []byte,
 	logger *zerolog.Logger,
 ) error {
@@ -234,7 +234,7 @@ func Emit(
 
 	err = producer.WriteMessages(
 		ctx,
-		kafka.Message{
+		kafkaGo.Message{
 			Value: []byte(message),
 			Key:   []byte(marshaledMessageKey),
 		},
@@ -250,8 +250,8 @@ func Emit(
 
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
-func getDialer(ctx context.Context, logger *zerolog.Logger) *kafka.Dialer {
-	var dialer *kafka.Dialer
+func getDialer(ctx context.Context, logger *zerolog.Logger) *kafkaGo.Dialer {
+	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" {
 		logger.Info().Msg("Generating TLSDialer")
@@ -281,7 +281,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) *kafka.Dialer {
 		}
 	} else {
 		logger.Info().Msg("Generating Dialer")
-		dialer = &kafka.Dialer{
+		dialer = &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
 		}
