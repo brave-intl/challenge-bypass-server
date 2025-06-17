@@ -26,7 +26,7 @@ func main() {
 	)
 
 	serverCtx, logger := server.SetupLogger(context.Background())
-	logLevel = zerolog.TraceLevel
+	logLevel = zerolog.WarnLevel
 	if os.Getenv("ENV") == "local" {
 		logLevel = zerolog.TraceLevel
 	}
@@ -71,17 +71,6 @@ func main() {
 
 	zeroLogger.Trace().Msg("Persistence and cron jobs initialized")
 
-	zeroLogger.Trace().Msg("Initializing API server")
-	go func() {
-		err = srv.ListenAndServe(serverCtx, logger)
-		if err != nil {
-			zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
-			raven.CaptureErrorAndWait(err, nil)
-			logger.Panic(err)
-			return
-		}
-	}()
-
 	// add profiling flag to enable profiling routes
 	if os.Getenv("PPROF_ENABLE") != "" {
 		zeroLogger.Trace().Msg("Enabling PPROF")
@@ -99,8 +88,19 @@ func main() {
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		startKafka(srv, zeroLogger)
+		go startKafka(srv, zeroLogger)
 	}
+
+	zeroLogger.Trace().Msg("Initializing API server")
+	go func() {
+		err = srv.ListenAndServe(serverCtx, logger)
+		if err != nil {
+			zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
+			raven.CaptureErrorAndWait(err, nil)
+			logger.Panic(err)
+			return
+		}
+	}()
 }
 
 func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
