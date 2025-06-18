@@ -405,6 +405,7 @@ func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 }
 
 func (c *Server) issuerRouterV1() chi.Router {
+	v1IssuerCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
@@ -416,6 +417,7 @@ func (c *Server) issuerRouterV1() chi.Router {
 }
 
 func (c *Server) issuerRouterV2() chi.Router {
+	v2IssuerCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
@@ -426,6 +428,7 @@ func (c *Server) issuerRouterV2() chi.Router {
 }
 
 func (c *Server) issuerRouterV3() chi.Router {
+	v3IssuerCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
