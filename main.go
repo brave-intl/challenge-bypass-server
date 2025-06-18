@@ -92,15 +92,13 @@ func main() {
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
-	go func() {
-		err = srv.ListenAndServe(serverCtx, logger)
-		if err != nil {
-			zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
-			raven.CaptureErrorAndWait(err, nil)
-			logger.Panic(err)
-			return
-		}
-	}()
+	err = srv.ListenAndServe(serverCtx, logger)
+	if err != nil {
+		zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
+		raven.CaptureErrorAndWait(err, nil)
+		logger.Panic(err)
+		return
+	}
 }
 
 func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {

@@ -123,6 +123,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Iss
 }
 
 func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
 
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
@@ -142,6 +143,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *han
 }
 
 func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v3IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	issuerType := chi.URLParam(r, "type")
 
 	if issuerType == "" {
@@ -166,6 +168,7 @@ func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *handle
 }
 
 func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v2IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
@@ -193,6 +196,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *handle
 }
 
 func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1IssuerCallTotal.WithLabelValues("getAllIssuers").Inc()
 	defer closers.Panic(r.Context(), r.Body)
 
 	issuers, appErr := c.FetchAllIssuers()
@@ -219,6 +223,7 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *ha
 
 // issuerV3CreateHandler - creation of a time aware issuer
 func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v3IssuerCallTotal.WithLabelValues("createIssuer").Inc()
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerV3CreateRequest
 	if err := decoder.Decode(&req); err != nil {
@@ -273,6 +278,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 }
 
 func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v2IssuerCallTotal.WithLabelValues("createIssuer").Inc()
 	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
@@ -329,6 +335,7 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 }
 
 func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1IssuerCallTotal.WithLabelValues("createIssuer").Inc()
 	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
