@@ -14,6 +14,7 @@ import (
 	"github.com/brave-intl/bat-go/libs/middleware"
 	"github.com/go-chi/chi"
 	chiware "github.com/go-chi/chi/middleware"
+	"github.com/go-chi/httplog"
 	"github.com/jmoiron/sqlx"
 	"github.com/pressly/lg"
 	"github.com/prometheus/client_golang/prometheus"
@@ -155,10 +156,10 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	r.Use(chiware.Timeout(60 * time.Second))
 	r.Use(middleware.BearerToken)
 	// Also handles panic recovery
-	//chiLogger := httplog.NewLogger("cbp-request-logs", httplog.Options{
-	//	JSON: true,
-	//})
-	//r.Use(logMiddlewareOmittingPath("/metrics", httplog.RequestLogger(chiLogger)))
+	chiLogger := httplog.NewLogger("cbp-request-logs", httplog.Options{
+		JSON: true,
+	})
+	r.Use(httplog.RequestLogger(chiLogger))
 
 	c.Logger = logger
 
@@ -180,23 +181,6 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 
 	return ctx, r
 }
-
-//func logMiddlewareOmittingPath(
-//	path string,
-//	middleware func(http.Handler) http.Handler,
-//) func(http.Handler) http.Handler {
-//	return func(next http.Handler) http.Handler {
-//		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-//			if r.URL.Path == path {
-//				// Skip the logging middleware for the specified path
-//				next.ServeHTTP(w, r)
-//				return
-//			}
-//			// Apply the middleware for other paths
-//			middleware(next).ServeHTTP(w, r)
-//		})
-//	}
-//}
 
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
