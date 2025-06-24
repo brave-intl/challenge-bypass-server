@@ -32,20 +32,64 @@ var (
 	ErrRequestTooLarge = errors.New("request too large to process")
 	// ErrUnrecognizedRequest - processing error, request unrecognized
 	ErrUnrecognizedRequest = errors.New("received unrecognized request type")
+
+	v1BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v1_blinded_token_total",
+		Help: "Number of calls to V1 blinded token HTTP endpoint",
+	})
+	v1IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v1_issuer_total",
+		Help: "Number of calls to V1 issuer HTTP endpoint",
+	})
+	v2BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v2_blinded_token_total",
+		Help: "Number of calls to V2 blinded token HTTP endpoint",
+	})
+	v2IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v2_issuer_total",
+		Help: "Number of calls to V2 issuer HTTP endpoint",
+	})
+	v3BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v3_blinded_token_total",
+		Help: "Number of calls to V3 blinded token HTTP endpoint",
+	})
+	v3IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_api_v3_issuer_total",
+		Help: "Number of calls to V3 issuer HTTP endpoint",
+	})
 )
 
 // init - Register Metrics for Server
 func init() {
 	// DB
-	prometheus.MustRegister(fetchIssuerCounter)
-	prometheus.MustRegister(createIssuerCounter)
-	prometheus.MustRegister(redeemTokenCounter)
-	prometheus.MustRegister(fetchRedemptionCounter)
+	prometheus.MustRegister(fetchIssuerTotal)
+	prometheus.MustRegister(createIssuerTotal)
+	prometheus.MustRegister(redeemTokenTotal)
+	prometheus.MustRegister(fetchRedemptionTotal)
 	// DB latency
 	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
 	prometheus.MustRegister(createIssuerDBDuration)
 	prometheus.MustRegister(createRedemptionDBDuration)
 	prometheus.MustRegister(fetchRedemptionDBDuration)
+	// API Calls
+	prometheus.MustRegister(v1BlindedTokenCallTotal)
+	prometheus.MustRegister(v1IssuerCallTotal)
+	prometheus.MustRegister(v2BlindedTokenCallTotal)
+	prometheus.MustRegister(v2IssuerCallTotal)
+	prometheus.MustRegister(v3BlindedTokenCallTotal)
+	prometheus.MustRegister(v3IssuerCallTotal)
+
+	fetchIssuerTotal.Add(0)
+	createIssuerTotal.Add(0)
+	redeemTokenTotal.Add(0)
+	fetchRedemptionTotal.Add(0)
+
+	v1BlindedTokenCallTotal.Add(0)
+	v1IssuerCallTotal.Add(0)
+	v2BlindedTokenCallTotal.Add(0)
+	v2IssuerCallTotal.Add(0)
+	v3BlindedTokenCallTotal.Add(0)
+	v3IssuerCallTotal.Add(0)
 }
 
 // Server - base server type

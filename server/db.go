@@ -129,22 +129,22 @@ func (c *Server) InitDB() {
 }
 
 var (
-	fetchIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	fetchIssuerTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "cbp_fetch_issuer_total",
 		Help: "Number of fetch issuer attempts",
 	})
 
-	createIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	createIssuerTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "cbp_create_issuer_total",
 		Help: "Number of create issuer attempts",
 	})
 
-	redeemTokenCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	redeemTokenTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "cbp_redeem_token_total",
 		Help: "Number of calls to redeem token",
 	})
 
-	fetchRedemptionCounter = prometheus.NewCounter(prometheus.CounterOpts{
+	fetchRedemptionTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "cbp_fetch_redemption_total",
 		Help: "Number of calls to fetch redemption",
 	})
@@ -183,12 +183,12 @@ var (
 	})
 )
 
-func incrementCounter(c prometheus.Counter) {
+func incrementTotal(c prometheus.Counter) {
 	c.Add(1)
 }
 
 func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
-	defer incrementCounter(fetchIssuerCounter)
+	defer incrementTotal(fetchIssuerTotal)
 
 	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
 		if issuer, ok := cached.(*model.Issuer); ok {
@@ -528,7 +528,7 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 
 // createIssuer - creation of a v3 issuer
 func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
-	defer incrementCounter(createIssuerCounter)
+	defer incrementTotal(createIssuerTotal)
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
 	}
@@ -735,7 +735,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 }
 
 func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens int, expiresAt *time.Time) error {
-	defer incrementCounter(createIssuerCounter)
+	defer incrementTotal(createIssuerTotal)
 	if maxTokens == 0 {
 		maxTokens = 40
 	}
@@ -751,7 +751,7 @@ func (c *Server) createIssuerV2(issuerType string, issuerCohort int16, maxTokens
 }
 
 func (c *Server) createIssuer(issuerType string, issuerCohort int16, maxTokens int, expiresAt *time.Time) error {
-	defer incrementCounter(createIssuerCounter)
+	defer incrementTotal(createIssuerTotal)
 	if maxTokens == 0 {
 		maxTokens = 40
 	}
@@ -773,7 +773,7 @@ type Queryable interface {
 
 // RedeemToken redeems a token given an issuer and and preimage
 func (c *Server) RedeemToken(issuerForRedemption *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
-	defer incrementCounter(redeemTokenCounter)
+	defer incrementTotal(redeemTokenTotal)
 	if issuerForRedemption.Version == 1 {
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
 	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
@@ -804,7 +804,7 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 }
 
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
-	defer incrementCounter(fetchRedemptionCounter)
+	defer incrementTotal(fetchRedemptionTotal)
 
 	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
 		if redemption, ok := cached.(*Redemption); ok {
