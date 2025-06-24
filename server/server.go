@@ -222,6 +222,11 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 	r.Mount("/v3/blindedToken", c.tokenRouterV3())
 	r.Mount("/v3/issuer", c.issuerRouterV3())
 
+	// Metrics for retroactive compatibility
+	// @TODO: Remove  this once the service health check is transferred to th 9090
+	// version
+	r.Get("/metrics", middleware.Metrics())
+
 	return ctx, r
 }
 
