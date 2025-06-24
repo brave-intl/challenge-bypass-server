@@ -45,6 +45,7 @@ func SignedTokenRedeemHandler(
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
+		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
 			message,
@@ -66,6 +67,7 @@ func SignedTokenRedeemHandler(
 		// NOTE: When we start supporting multiple requests we will need to review
 		// errors and return values as well.
 		message := fmt.Sprintf("request %s: data array unexpectedly contained more than a single message. This array is intended to make future extension easier, but no more than a single value is currently expected", tokenRedeemRequestSet.Request_id)
+		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
 			message,
@@ -80,9 +82,11 @@ func SignedTokenRedeemHandler(
 	issuers, err := server.FetchAllIssuers()
 	if err != nil {
 		if processingError, ok := err.(*utils.ProcessingError); ok && processingError.Temporary {
+			kafkaErrorTotal.Inc()
 			return processingError
 		}
 		message := fmt.Sprintf("request %s: failed to fetch all issuers", tokenRedeemRequestSet.Request_id)
+		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
 			message,
@@ -116,6 +120,7 @@ func SignedTokenRedeemHandler(
 			// Unmarshalling failure is a data issue and is probably permanent.
 			if mErr != nil {
 				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				kafkaErrorTotal.Inc()
 				return handlePermanentRedemptionError(
 					ctx,
 					message,
@@ -147,6 +152,7 @@ func SignedTokenRedeemHandler(
 			logger.Error().
 				Err(fmt.Errorf("request %s: missing public key", tokenRedeemRequestSet.Request_id)).
 				Msg("signed token redeem handler")
+			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
@@ -161,6 +167,7 @@ func SignedTokenRedeemHandler(
 			logger.Error().
 				Err(fmt.Errorf("request %s: empty request", tokenRedeemRequestSet.Request_id)).
 				Msg("signed token redeem handler")
+			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
@@ -175,6 +182,7 @@ func SignedTokenRedeemHandler(
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into preimage", tokenRedeemRequestSet.Request_id)
+			kafkaErrorTotal.Inc()
 			return handlePermanentRedemptionError(
 				ctx,
 				message,
@@ -191,6 +199,7 @@ func SignedTokenRedeemHandler(
 		// Unmarshaling failure is a data issue and is probably permanent.
 		if err != nil {
 			message := fmt.Sprintf("request %s: could not unmarshal text into verification signature", tokenRedeemRequestSet.Request_id)
+			kafkaErrorTotal.Inc()
 			return handlePermanentRedemptionError(
 				ctx,
 				message,
@@ -228,6 +237,7 @@ func SignedTokenRedeemHandler(
 				Err(fmt.Errorf("request %s: could not verify that the token redemption is valid",
 					tokenRedeemRequestSet.Request_id)).
 				Msg("signed token redeem handler")
+			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
 				Issuer_cohort:   0,
@@ -247,6 +257,7 @@ func SignedTokenRedeemHandler(
 				}
 			}
 			message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
+			kafkaErrorTotal.Inc()
 			return handlePermanentRedemptionError(
 				ctx,
 				message,
@@ -262,6 +273,7 @@ func SignedTokenRedeemHandler(
 		// Continue if there is a duplicate
 		switch equivalence {
 		case cbpServer.IDEquivalence:
+			duplicateRedemptionTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     verifiedIssuer.IssuerType,
 				Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -270,6 +282,7 @@ func SignedTokenRedeemHandler(
 			})
 			continue
 		case cbpServer.BindingEquivalence:
+			idempotentRedemptionTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     verifiedIssuer.IssuerType,
 				Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -282,6 +295,7 @@ func SignedTokenRedeemHandler(
 		// If no equivalent record was found in the database, persist.
 		if err := server.PersistRedemption(*redemption); err != nil {
 			logger.Error().Err(err).Msgf("request %s: token redemption failed: %e", tokenRedeemRequestSet.Request_id, err)
+			kafkaErrorTotal.Inc()
 			// In the unlikely event that there is a race condition that results
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
@@ -357,6 +371,7 @@ func SignedTokenRedeemHandler(
 	err = resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", tokenRedeemRequestSet.Request_id)
+		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
 			message,
@@ -371,12 +386,12 @@ func SignedTokenRedeemHandler(
 
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
 	if err != nil {
-		message := fmt.Sprintf(
+		log.Error().Err(err).Msgf(
 			"request %s: failed to emit results to topic %s",
 			resultSet.Request_id,
 			producer.Topic,
 		)
-		log.Error().Err(err).Msgf(message)
+		kafkaErrorTotal.Inc()
 		return err
 	}
 
@@ -421,6 +436,7 @@ func avroRedeemErrorResultFromError(
 	err := resultSet.Serialize(&resultSetBuffer)
 	if err != nil {
 		message := fmt.Sprintf("request %s: failed to serialize result set", requestID)
+		kafkaErrorTotal.Inc()
 		return []byte(message)
 	}
 	return resultSetBuffer.Bytes()
@@ -439,6 +455,7 @@ func handlePermanentRedemptionError(
 	logger *zerolog.Logger,
 ) error {
 	logger.Error().Err(cause).Msgf("encountered permanent redemption failure: %v", message)
+	kafkaErrorTotal.Inc()
 	toEmit := avroRedeemErrorResultFromError(
 		message,
 		msg,
@@ -447,6 +464,7 @@ func handlePermanentRedemptionError(
 		logger,
 	)
 	if err := Emit(ctx, producer, toEmit, logger); err != nil {
+		kafkaErrorTotal.Inc()
 		logger.Error().Err(err).Msg("failed to emit")
 	}
 	// TODO: consider returning err here as failing to emit error should not
