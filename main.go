@@ -91,7 +91,7 @@ func main() {
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		r := chi.NewRouter()
 		r.Get("/metrics", middleware.Metrics())
-		go http.ListenAndServe(":2416", r)
+		go http.ListenAndServe(":9090", r)
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
 		startKafka(srv, zeroLogger)
 	}
