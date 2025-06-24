@@ -10,11 +10,9 @@ import (
 	"time"
 
 	"github.com/brave-intl/bat-go/libs/logging"
-	"github.com/brave-intl/bat-go/libs/middleware"
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
-	"github.com/go-chi/chi"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -89,11 +87,8 @@ func main() {
 	}
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
-		r := chi.NewRouter()
-		r.Get("/metrics", middleware.Metrics())
-		go http.ListenAndServe(":9090", r)
 		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		startKafka(srv, zeroLogger)
+		go startKafka(srv, zeroLogger)
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
