@@ -173,7 +173,6 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 
 	r.Mount("/v2/blindedToken", c.tokenRouterV2())
 	r.Mount("/v2/issuer", c.issuerRouterV2())
-	r.Get("/metrics", middleware.Metrics())
 
 	// time aware token router
 	r.Mount("/v3/blindedToken", c.tokenRouterV3())
@@ -186,5 +185,11 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
 	addr := fmt.Sprintf(":%d", c.ListenPort)
 	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx, logger))}
+
+	// Run metrics on 9090 for collection
+	r := chi.NewRouter()
+	r.Get("/metrics", middleware.Metrics())
+	go http.ListenAndServe(":9090", r)
+
 	return srv.ListenAndServe()
 }

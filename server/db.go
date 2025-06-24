@@ -5,9 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
@@ -129,22 +130,22 @@ func (c *Server) InitDB() {
 
 var (
 	fetchIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fetch_issuer_count",
+		Name: "cbp_fetch_issuer_total",
 		Help: "Number of fetch issuer attempts",
 	})
 
 	createIssuerCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "create_issuer_count",
+		Name: "cbp_create_issuer_total",
 		Help: "Number of create issuer attempts",
 	})
 
 	redeemTokenCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "redeem_token_count",
+		Name: "cbp_redeem_token_total",
 		Help: "Number of calls to redeem token",
 	})
 
 	fetchRedemptionCounter = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "fetch_redemption_count",
+		Name: "cbp_fetch_redemption_total",
 		Help: "Number of calls to fetch redemption",
 	})
 
@@ -152,31 +153,31 @@ var (
 	latencyBuckets = []float64{.25, .5, 1, 2.5, 5, 10}
 
 	fetchIssuerByTypeDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "db_fetch_issuer_by_type_duration",
+		Name:    "cbp_db_fetch_issuer_by_type_duration",
 		Help:    "select issuer by type sql call duration",
 		Buckets: latencyBuckets,
 	})
 
 	createIssuerDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "db_create_issuer_duration",
+		Name:    "cbp_db_create_issuer_duration",
 		Help:    "create issuer sql call duration",
 		Buckets: latencyBuckets,
 	})
 
 	createTimeLimitedIssuerDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "db_create_time_limited_issuer_duration",
+		Name:    "cbp_db_create_time_limited_issuer_duration",
 		Help:    "create issuer sql call duration",
 		Buckets: latencyBuckets,
 	})
 
 	createRedemptionDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "db_create_redemption_duration",
+		Name:    "cbp_db_create_redemption_duration",
 		Help:    "create redemption sql call duration",
 		Buckets: latencyBuckets,
 	})
 
 	fetchRedemptionDBDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "db_fetch_redemption_duration",
+		Name:    "cbp_db_fetch_redemption_duration",
 		Help:    "fetch redemption sql call duration",
 		Buckets: latencyBuckets,
 	})
