@@ -92,9 +92,7 @@ func main() {
 	}
 
 	zeroLogger.Trace().Msg("Initializing API server")
-
 	err = srv.ListenAndServe(serverCtx, logger)
-
 	if err != nil {
 		zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
 		raven.CaptureErrorAndWait(err, nil)
@@ -104,8 +102,9 @@ func main() {
 }
 
 func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
+	ctx := context.Background()
 	zeroLogger.Trace().Msg("Initializing Kafka consumers")
-	err := kafka.StartConsumers(&srv, zeroLogger)
+	err := kafka.StartConsumers(ctx, &srv, zeroLogger)
 
 	if err != nil {
 		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")

@@ -10,22 +10,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/rs/zerolog"
-	"github.com/segmentio/kafka-go"
+	kafkaGo "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
 )
 
 var brokers []string
 
 // Processor is a function that is used to process Kafka messages on
-type Processor func(context.Context, kafka.Message, *zerolog.Logger) error
+type Processor func(context.Context, kafkaGo.Message, *zerolog.Logger) error
 
 // Subset of kafka.Reader methods that we use. This is used for testing.
 type messageReader interface {
-	FetchMessage(ctx context.Context) (kafka.Message, error)
-	Stats() kafka.ReaderStats
+	FetchMessage(ctx context.Context) (kafkaGo.Message, error)
+	Stats() kafkaGo.ReaderStats
 }
 
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
@@ -39,11 +42,11 @@ type MessageContext struct {
 	// The channel to close when the message is processed.
 	done chan struct{}
 	err  error
-	msg  kafka.Message
+	msg  kafkaGo.Message
 }
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
-func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error {
+func StartConsumers(ctx context.Context, providedServer *server.Server, logger *zerolog.Logger) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
 	adsResultRedeemV1Topic := os.Getenv("REDEEM_PRODUCER_TOPIC")
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
@@ -51,29 +54,39 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
 	if len(brokers) < 1 {
-		brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	}
-	redeemWriter := kafka.NewWriter(kafka.WriterConfig{
+
+	redeemDialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return fmt.Errorf("failed to get redeem dialer: %w", err)
+	}
+	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultRedeemV1Topic,
-		Dialer:  getDialer(logger),
+		Dialer:  redeemDialer,
 	})
-	signWriter := kafka.NewWriter(kafka.WriterConfig{
+
+	signDialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return fmt.Errorf("failed to get sign dialer: %w", err)
+	}
+	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
 		Brokers: brokers,
 		Topic:   adsResultSignV1Topic,
-		Dialer:  getDialer(logger),
+		Dialer:  signDialer,
 	})
 	topicMappings := []TopicMapping{
 		{
 			Topic: adsRequestRedeemV1Topic,
-			Processor: func(ctx context.Context, msg kafka.Message,
+			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
 				return SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
 			},
 		},
 		{
 			Topic: adsRequestSignV1Topic,
-			Processor: func(ctx context.Context, msg kafka.Message,
+			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
 				return SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
 			},
@@ -84,10 +97,12 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 		topics = append(topics, topicMapping.Topic)
 	}
 
-	reader := newConsumer(topics, adsConsumerGroupV1, logger)
+	reader, err := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
+	if err != nil {
+		return fmt.Errorf("failed to get shared consumer dialer: %w", err)
+	}
 
 	batchPipeline := make(chan *MessageContext, 400)
-	ctx := context.Background()
 	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger)
 	for {
 		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
@@ -106,7 +121,7 @@ func StartConsumers(providedServer *server.Server, logger *zerolog.Logger) error
 // committing so that the next reader gets the same message to try again.
 func readAndCommitBatchPipelineResults(
 	ctx context.Context,
-	reader *kafka.Reader,
+	reader *kafkaGo.Reader,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) error {
@@ -194,16 +209,19 @@ func runMessageProcessor(
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka.Reader {
-	brokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) (*kafkaGo.Reader, error) {
+	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
-	dialer := getDialer(logger)
-	reader := kafka.NewReader(kafka.ReaderConfig{
+	dialer, err := getDialer(ctx, logger)
+	if err != nil {
+		return nil, err
+	}
+	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
 		GroupTopics:    topics,
 		GroupID:        groupID,
-		StartOffset:    kafka.FirstOffset,
+		StartOffset:    kafkaGo.FirstOffset,
 		Logger:         logger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
@@ -211,13 +229,13 @@ func newConsumer(topics []string, groupID string, logger *zerolog.Logger) *kafka
 		MaxBytes:       10e6,             // 10MB
 	})
 	logger.Trace().Msgf("Reader created with subscription")
-	return reader
+	return reader, nil
 }
 
 // Emit sends a message over the Kafka interface.
 func Emit(
 	ctx context.Context,
-	producer *kafka.Writer,
+	producer *kafkaGo.Writer,
 	message []byte,
 	logger *zerolog.Logger,
 ) error {
@@ -232,7 +250,7 @@ func Emit(
 
 	err = producer.WriteMessages(
 		ctx,
-		kafka.Message{
+		kafkaGo.Message{
 			Value: []byte(message),
 			Key:   []byte(marshaledMessageKey),
 		},
@@ -248,21 +266,43 @@ func Emit(
 
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
-func getDialer(logger *zerolog.Logger) *kafka.Dialer {
-	var dialer *kafka.Dialer
-	if os.Getenv("ENV") != "local" {
+func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, error) {
+	var dialer *kafkaGo.Dialer
+	env := os.Getenv("ENV")
+	if env != "local" {
 		logger.Info().Msg("Generating TLSDialer")
+		var cfg aws.Config
+		var err error
+
+		if env == "development" {
+			cfg, err = awsConfig.LoadDefaultConfig(
+				ctx,
+				awsConfig.WithRegion(os.Getenv("AWS_DEFAULT_REGION")),
+			)
+		} else {
+			cfg, err = awsConfig.LoadDefaultConfig(ctx)
+		}
+
+		if err != nil {
+			logger.Error().Msgf("failed to setup aws config: %e", err)
+			return nil, err
+		}
+
+		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
 		tlsDialer, _, err := batgo_kafka.TLSDialer()
 		dialer = tlsDialer
+		dialer.SASLMechanism = mechanism
+
 		if err != nil {
 			logger.Error().Msgf("failed to initialize TLS dialer: %e", err)
+			return nil, err
 		}
 	} else {
 		logger.Info().Msg("Generating Dialer")
-		dialer = &kafka.Dialer{
+		dialer = &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
 		}
 	}
-	return dialer
+	return dialer, nil
 }
