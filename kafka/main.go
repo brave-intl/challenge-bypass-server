@@ -104,14 +104,6 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	prometheus.MustRegister(idempotentRedemptionTotal)
 	prometheus.MustRegister(rebootFromPanicTotal)
 	prometheus.MustRegister(kafkaErrorTotal)
-	tokenIssuanceRequestTotal.Add(0)
-	tokenIssuanceFailureTotal.Add(0)
-	tokenRedeemRequestTotal.Add(0)
-	tokenRedeemFailureTotal.Add(0)
-	duplicateRedemptionTotal.Add(0)
-	idempotentRedemptionTotal.Add(0)
-	rebootFromPanicTotal.Add(0)
-	kafkaErrorTotal.Add(0)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")

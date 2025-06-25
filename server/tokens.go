@@ -71,6 +71,7 @@ type BlindedTokenBulkRedeemRequest struct {
 
 // BlindedTokenIssuerHandlerV2 - handler for token issuer v2
 func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v2BlindedTokenCallTotal.WithLabelValues("issueTokens").Inc()
 	var response blindedTokenIssueResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		var request BlindedTokenIssueRequestV2
@@ -129,6 +130,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 
 // Old endpoint, that always handles tokens with v1cohort
 func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1BlindedTokenCallTotal.WithLabelValues("issueToken").Inc()
 	var response blindedTokenIssueResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
@@ -179,6 +181,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v3BlindedTokenCallTotal.WithLabelValues("redeemTokens").Inc()
 	ctx := r.Context()
 
 	issuerType := chi.URLParamFromCtx(ctx, "type")
@@ -295,6 +298,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 }
 
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1BlindedTokenCallTotal.WithLabelValues("redeemToken").Inc()
 	var response blindedTokenRedeemResponse
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuers, appErr := c.getIssuers(r.Context(), issuerType)
@@ -379,6 +383,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 }
 
 func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1BlindedTokenCallTotal.WithLabelValues("bulkRedeemTokens").Inc()
 	var request BlindedTokenBulkRedeemRequest
 
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
@@ -461,6 +466,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 }
 
 func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Request) *handlers.AppError {
+	v1BlindedTokenCallTotal.WithLabelValues("checkToken").Inc()
 	var response interface{}
 	if issuerID := chi.URLParam(r, "id"); issuerID != "" {
 		tokenID := chi.URLParam(r, "tokenId")
@@ -528,7 +534,6 @@ func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Re
 }
 
 func (c *Server) tokenRouterV1() chi.Router {
-	v1BlindedTokenCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
@@ -552,7 +557,6 @@ func (c *Server) tokenRouterV2() chi.Router {
 }
 
 func (c *Server) tokenRouterV3() chi.Router {
-	v3BlindedTokenCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)

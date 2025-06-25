@@ -33,30 +33,48 @@ var (
 	// ErrUnrecognizedRequest - processing error, request unrecognized
 	ErrUnrecognizedRequest = errors.New("received unrecognized request type")
 
-	v1BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v1_blinded_token_total",
-		Help: "Number of calls to V1 blinded token HTTP endpoint",
-	})
-	v1IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v1_issuer_total",
-		Help: "Number of calls to V1 issuer HTTP endpoint",
-	})
-	v2BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v2_blinded_token_total",
-		Help: "Number of calls to V2 blinded token HTTP endpoint",
-	})
-	v2IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v2_issuer_total",
-		Help: "Number of calls to V2 issuer HTTP endpoint",
-	})
-	v3BlindedTokenCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v3_blinded_token_total",
-		Help: "Number of calls to V3 blinded token HTTP endpoint",
-	})
-	v3IssuerCallTotal = prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "cbp_api_v3_issuer_total",
-		Help: "Number of calls to V3 issuer HTTP endpoint",
-	})
+	v1BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v1_blinded_token_total",
+			Help: "Number of calls to V1 blinded token HTTP endpoint",
+		},
+		[]string{"issueToken", "redeemToken", "checkToken", "bulkredeemTokens"},
+	)
+	v1IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v1_issuer_total",
+			Help: "Number of calls to V1 issuer HTTP endpoint",
+		},
+		[]string{"getIssuer", "createIssuer", "getAllIssuers"},
+	)
+	v2BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v2_blinded_token_total",
+			Help: "Number of calls to V2 blinded token HTTP endpoint",
+		},
+		[]string{"issueTokens"},
+	)
+	v2IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v2_issuer_total",
+			Help: "Number of calls to V2 issuer HTTP endpoint",
+		},
+		[]string{"getIssuer", "createIssuer"},
+	)
+	v3BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v3_blinded_token_total",
+			Help: "Number of calls to V3 blinded token HTTP endpoint",
+		},
+		[]string{"redeemTokens"},
+	)
+	v3IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v3_issuer_total",
+			Help: "Number of calls to V3 issuer HTTP endpoint",
+		},
+		[]string{"getIssuer", "createIssuer"},
+	)
 )
 
 // init - Register Metrics for Server
@@ -78,18 +96,6 @@ func init() {
 	prometheus.MustRegister(v2IssuerCallTotal)
 	prometheus.MustRegister(v3BlindedTokenCallTotal)
 	prometheus.MustRegister(v3IssuerCallTotal)
-
-	fetchIssuerTotal.Add(0)
-	createIssuerTotal.Add(0)
-	redeemTokenTotal.Add(0)
-	fetchRedemptionTotal.Add(0)
-
-	v1BlindedTokenCallTotal.Add(0)
-	v1IssuerCallTotal.Add(0)
-	v2BlindedTokenCallTotal.Add(0)
-	v2IssuerCallTotal.Add(0)
-	v3BlindedTokenCallTotal.Add(0)
-	v3IssuerCallTotal.Add(0)
 }
 
 // Server - base server type
