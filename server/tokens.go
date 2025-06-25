@@ -547,7 +547,6 @@ func (c *Server) tokenRouterV1() chi.Router {
 
 // New end point to generated marked tokens
 func (c *Server) tokenRouterV2() chi.Router {
-	v2BlindedTokenCallTotal.Inc()
 	r := chi.NewRouter()
 	if os.Getenv("ENV") == "production" {
 		r.Use(middleware.SimpleTokenAuthorizedOnly)
