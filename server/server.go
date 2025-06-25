@@ -38,42 +38,42 @@ var (
 			Name: "cbp_api_v1_blinded_token_total",
 			Help: "Number of calls to V1 blinded token HTTP endpoint",
 		},
-		[]string{"issueToken", "redeemToken", "checkToken", "bulkredeemTokens"},
+		[]string{"action"},
 	)
 	v1IssuerCallTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cbp_api_v1_issuer_total",
 			Help: "Number of calls to V1 issuer HTTP endpoint",
 		},
-		[]string{"getIssuer", "createIssuer", "getAllIssuers"},
+		[]string{"action"},
 	)
 	v2BlindedTokenCallTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cbp_api_v2_blinded_token_total",
 			Help: "Number of calls to V2 blinded token HTTP endpoint",
 		},
-		[]string{"issueTokens"},
+		[]string{"action"},
 	)
 	v2IssuerCallTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cbp_api_v2_issuer_total",
 			Help: "Number of calls to V2 issuer HTTP endpoint",
 		},
-		[]string{"getIssuer", "createIssuer"},
+		[]string{"action"},
 	)
 	v3BlindedTokenCallTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cbp_api_v3_blinded_token_total",
 			Help: "Number of calls to V3 blinded token HTTP endpoint",
 		},
-		[]string{"redeemTokens"},
+		[]string{"action"},
 	)
 	v3IssuerCallTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cbp_api_v3_issuer_total",
 			Help: "Number of calls to V3 issuer HTTP endpoint",
 		},
-		[]string{"getIssuer", "createIssuer"},
+		[]string{"action"},
 	)
 )
 
