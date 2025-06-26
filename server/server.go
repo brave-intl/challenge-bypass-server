@@ -32,20 +32,70 @@ var (
 	ErrRequestTooLarge = errors.New("request too large to process")
 	// ErrUnrecognizedRequest - processing error, request unrecognized
 	ErrUnrecognizedRequest = errors.New("received unrecognized request type")
+
+	v1BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v1_blinded_token_total",
+			Help: "Number of calls to V1 blinded token HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	v1IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v1_issuer_total",
+			Help: "Number of calls to V1 issuer HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	v2BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v2_blinded_token_total",
+			Help: "Number of calls to V2 blinded token HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	v2IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v2_issuer_total",
+			Help: "Number of calls to V2 issuer HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	v3BlindedTokenCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v3_blinded_token_total",
+			Help: "Number of calls to V3 blinded token HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	v3IssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_v3_issuer_total",
+			Help: "Number of calls to V3 issuer HTTP endpoint",
+		},
+		[]string{"action"},
+	)
 )
 
 // init - Register Metrics for Server
 func init() {
 	// DB
-	prometheus.MustRegister(fetchIssuerCounter)
-	prometheus.MustRegister(createIssuerCounter)
-	prometheus.MustRegister(redeemTokenCounter)
-	prometheus.MustRegister(fetchRedemptionCounter)
+	prometheus.MustRegister(fetchIssuerTotal)
+	prometheus.MustRegister(createIssuerTotal)
+	prometheus.MustRegister(redeemTokenTotal)
+	prometheus.MustRegister(fetchRedemptionTotal)
 	// DB latency
 	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
 	prometheus.MustRegister(createIssuerDBDuration)
 	prometheus.MustRegister(createRedemptionDBDuration)
 	prometheus.MustRegister(fetchRedemptionDBDuration)
+	// API Calls
+	prometheus.MustRegister(v1BlindedTokenCallTotal)
+	prometheus.MustRegister(v1IssuerCallTotal)
+	prometheus.MustRegister(v2BlindedTokenCallTotal)
+	prometheus.MustRegister(v2IssuerCallTotal)
+	prometheus.MustRegister(v3BlindedTokenCallTotal)
+	prometheus.MustRegister(v3IssuerCallTotal)
 }
 
 // Server - base server type
@@ -173,11 +223,15 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 
 	r.Mount("/v2/blindedToken", c.tokenRouterV2())
 	r.Mount("/v2/issuer", c.issuerRouterV2())
-	r.Get("/metrics", middleware.Metrics())
 
 	// time aware token router
 	r.Mount("/v3/blindedToken", c.tokenRouterV3())
 	r.Mount("/v3/issuer", c.issuerRouterV3())
+
+	// Metrics for retroactive compatibility
+	// @TODO: Remove  this once the service health check is transferred to th 9090
+	// version
+	r.Get("/metrics", middleware.Metrics())
 
 	return ctx, r
 }
@@ -186,5 +240,11 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
 	addr := fmt.Sprintf(":%d", c.ListenPort)
 	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx, logger))}
+
+	// Run metrics on 9090 for collection
+	r := chi.NewRouter()
+	r.Get("/metrics", middleware.Metrics())
+	go http.ListenAndServe(":9090", r)
+
 	return srv.ListenAndServe()
 }
