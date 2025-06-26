@@ -15,6 +15,7 @@ import (
 	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rs/zerolog"
 	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
@@ -45,6 +46,48 @@ type MessageContext struct {
 	msg  kafkaGo.Message
 }
 
+var (
+	tokenIssuanceRequestTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_token_issuance_request_total",
+		Help: "Number of requests for new tokens",
+	})
+	tokenIssuanceFailureTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_token_issuance_failure_total",
+		Help: "Number of token requests that failed",
+	})
+	tokenRedeemRequestTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_token_redeem_request_total",
+		Help: "Number of requests for token redemption",
+	})
+	tokenRedeemFailureTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_token_redeem_failure_total",
+		Help: "Number of tokens redeemed",
+	})
+	duplicateRedemptionTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_duplicate_redemption_total",
+		Help: `Number of tokens requested for redemption after already being
+		processed, but with modified request information. This is malicious and
+		should be rare.`,
+	})
+	idempotentRedemptionTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_idempotent_redemption_total",
+		Help: `Number of identical tokens requested for redemption. This is an
+		innocent retry.`,
+	})
+	rebootFromPanicTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_reboot_from_panic_total",
+		Help: `There is a case where the current expected behavior is to panic
+		to avoid any chance of committing a bad offset to Kafka. This counts
+		that case.`,
+	})
+	kafkaErrorTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "cbp_kafka_error_total",
+		Help: `Total errors in the Kafka processor of any kind. This counter is
+		incremented liberally and may double-count an error that is returned up
+		the stack.`,
+	})
+)
+
 // StartConsumers reads configuration variables and starts the associated kafka consumers
 func StartConsumers(ctx context.Context, providedServer *server.Server, logger *zerolog.Logger) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
@@ -53,12 +96,22 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
+	prometheus.MustRegister(tokenIssuanceRequestTotal)
+	prometheus.MustRegister(tokenIssuanceFailureTotal)
+	prometheus.MustRegister(tokenRedeemRequestTotal)
+	prometheus.MustRegister(tokenRedeemFailureTotal)
+	prometheus.MustRegister(duplicateRedemptionTotal)
+	prometheus.MustRegister(idempotentRedemptionTotal)
+	prometheus.MustRegister(rebootFromPanicTotal)
+	prometheus.MustRegister(kafkaErrorTotal)
+
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
 	}
 
 	redeemDialer, err := getDialer(ctx, logger)
 	if err != nil {
+		kafkaErrorTotal.Inc()
 		return fmt.Errorf("failed to get redeem dialer: %w", err)
 	}
 	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
@@ -69,6 +122,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 
 	signDialer, err := getDialer(ctx, logger)
 	if err != nil {
+		kafkaErrorTotal.Inc()
 		return fmt.Errorf("failed to get sign dialer: %w", err)
 	}
 	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
@@ -81,14 +135,24 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 			Topic: adsRequestRedeemV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
-				return SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
+				tokenRedeemRequestTotal.Inc()
+				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
+				if err != nil {
+					tokenRedeemFailureTotal.Inc()
+				}
+				return err
 			},
 		},
 		{
 			Topic: adsRequestSignV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
 				logger *zerolog.Logger) error {
-				return SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
+				tokenIssuanceRequestTotal.Inc()
+				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
+				if err != nil {
+					tokenIssuanceFailureTotal.Inc()
+				}
+				return err
 			},
 		},
 	}
@@ -99,6 +163,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 
 	reader, err := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
 	if err != nil {
+		kafkaErrorTotal.Inc()
 		return fmt.Errorf("failed to get shared consumer dialer: %w", err)
 	}
 
@@ -109,6 +174,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		if err != nil {
 			// If readAndCommitBatchPipelineResults returns an error.
 			close(batchPipeline)
+			kafkaErrorTotal.Inc()
 			return err
 		}
 	}
@@ -130,11 +196,13 @@ func readAndCommitBatchPipelineResults(
 
 	if msgCtx.err != nil {
 		logger.Error().Err(msgCtx.err).Msg("temporary failure encountered")
+		kafkaErrorTotal.Inc()
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
-	logger.Info().Msgf("Committing offset %d", msgCtx.msg.Offset)
+	logger.Info().Msgf("committing offset %d", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
 		logger.Error().Err(err).Msg("failed to commit")
+		kafkaErrorTotal.Inc()
 		return errors.New("failed to commit")
 	}
 	return nil
@@ -150,6 +218,13 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 	batchPipeline chan *MessageContext,
 	logger *zerolog.Logger,
 ) {
+	// Catch the panic cases in order to count them, but continue to panic.
+	defer func() {
+		if r := recover(); r != nil {
+			rebootFromPanicTotal.Inc()
+			panic(r) // Re-panic to ensure termination
+		}
+	}()
 	// Loop forever
 	for {
 		msg, err := reader.FetchMessage(ctx)
@@ -157,9 +232,10 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 			// Indicates batch has no more messages. End the loop for
 			// this batch and fetch another.
 			if err == io.EOF {
-				logger.Info().Msg("Batch complete")
+				logger.Info().Msg("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				logger.Error().Err(err).Msg("batch item error")
+				kafkaErrorTotal.Inc()
 				panic("failed to fetch kafka messages and closed channel")
 			}
 			// There are other possible errors, but the underlying consumer
@@ -176,8 +252,8 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 		// this write will panic, which is desired behavior, as the rest of the context
 		// will also have died and will be restarted from kafka/main.go
 		batchPipeline <- msgCtx
-		logger.Debug().Msgf("Processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-		logger.Debug().Msgf("Reader Stats: %#v", reader.Stats())
+		logger.Debug().Msgf("processing message for topic %s at offset %d", msg.Topic, msg.Offset)
+		logger.Debug().Msgf("reader Stats: %#v", reader.Stats())
 		logger.Debug().Msgf("topicMappings: %+v", topicMappings)
 		go runMessageProcessor(ctx, msgCtx, topicMappings, logger)
 	}
@@ -206,14 +282,16 @@ func runMessageProcessor(
 	// This is a permanent error, so do not set msgCtx.err to commit the
 	// received message.
 	logger.Error().Msgf("topic received whose topic is not configured: %s", msg.Topic)
+	kafkaErrorTotal.Inc()
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
 func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) (*kafkaGo.Reader, error) {
 	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
-	logger.Info().Msgf("Subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
+	logger.Info().Msgf("subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
 	dialer, err := getDialer(ctx, logger)
 	if err != nil {
+		kafkaErrorTotal.Inc()
 		return nil, err
 	}
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
@@ -228,7 +306,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *z
 		MinBytes:       1e3,              // 1KB
 		MaxBytes:       10e6,             // 10MB
 	})
-	logger.Trace().Msgf("Reader created with subscription")
+	logger.Trace().Msgf("reader created with subscription")
 	return reader, nil
 }
 
@@ -239,12 +317,13 @@ func Emit(
 	message []byte,
 	logger *zerolog.Logger,
 ) error {
-	logger.Info().Msgf("Beginning data emission for topic %s", producer.Topic)
+	logger.Info().Msgf("beginning data emission for topic %s", producer.Topic)
 
 	messageKey := uuid.New()
 	marshaledMessageKey, err := messageKey.MarshalBinary()
 	if err != nil {
 		logger.Error().Msgf("failed to marshal UUID into binary. Using default key value: %e", err)
+		kafkaErrorTotal.Inc()
 		marshaledMessageKey = []byte("default")
 	}
 
@@ -257,10 +336,11 @@ func Emit(
 	)
 	if err != nil {
 		logger.Error().Msgf("failed to write messages: %e", err)
+		kafkaErrorTotal.Inc()
 		return err
 	}
 
-	logger.Info().Msg("Data emitted")
+	logger.Info().Msg("data emitted")
 	return nil
 }
 
@@ -270,7 +350,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, er
 	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" {
-		logger.Info().Msg("Generating TLSDialer")
+		logger.Info().Msg("generating TLSDialer")
 		var cfg aws.Config
 		var err error
 
@@ -285,6 +365,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, er
 
 		if err != nil {
 			logger.Error().Msgf("failed to setup aws config: %e", err)
+			kafkaErrorTotal.Inc()
 			return nil, err
 		}
 
@@ -295,10 +376,11 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, er
 
 		if err != nil {
 			logger.Error().Msgf("failed to initialize TLS dialer: %e", err)
+			kafkaErrorTotal.Inc()
 			return nil, err
 		}
 	} else {
-		logger.Info().Msg("Generating Dialer")
+		logger.Info().Msg("generating Dialer")
 		dialer = &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
