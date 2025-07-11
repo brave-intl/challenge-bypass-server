@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"log/slog"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -43,8 +44,8 @@ func main() {
 	if configFile != "" {
 		srv, err = server.LoadConfigFile(configFile)
 		if err != nil {
-			logger.Panic(err)
-			return
+			logger.Error("loadconfigfile", slog.Any("error", err))
+			panic(err)
 		}
 	}
 
@@ -56,7 +57,8 @@ func main() {
 
 	err = srv.InitDBConfig()
 	if err != nil {
-		logger.Panic(err)
+		logger.Error("initdbconfig", slog.Any("error", err))
+		panic(err)
 	}
 
 	zeroLogger.Trace().Msg("Initializing persistence and cron jobs")
@@ -96,8 +98,8 @@ func main() {
 	if err != nil {
 		zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
 		raven.CaptureErrorAndWait(err, nil)
-		logger.Panic(err)
-		return
+		logger.Error("listenandserve", slog.Any("error", err))
+		panic(err)
 	}
 }
 
