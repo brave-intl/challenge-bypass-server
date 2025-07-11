@@ -4,14 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
 	"github.com/pressly/lg"
-	"github.com/sirupsen/logrus"
 
 	"github.com/brave-intl/bat-go/libs/closers"
 	"github.com/brave-intl/bat-go/libs/handlers"
@@ -69,10 +69,7 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 				Code:    404,
 			}
 		}
-		c.Logger.WithFields(
-			logrus.Fields{
-				"err": err.Error(),
-			}).Error("Error finding issuer")
+		c.Logger.Error("failed to find issuer", slog.Any("err", err))
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",
@@ -109,10 +106,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Iss
 				Code:    404,
 			}
 		}
-		c.Logger.WithFields(
-			logrus.Fields{
-				"err": err.Error(),
-			}).Error("Error finding issuer")
+		c.Logger.Error("failed to find issuer", slog.Any("err", err))
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",

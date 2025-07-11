@@ -32,7 +32,7 @@ func (c *Server) SetupCronTasks() {
 		if err != nil {
 			panic(err)
 		}
-		c.Logger.Infof("cron: delete issuers keys removed %d", rows)
+		c.Logger.Info("cron", "delete issuers keys removed", rows)
 	}); err != nil {
 		panic(err)
 	}
