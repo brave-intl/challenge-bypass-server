@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -12,13 +13,11 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/bat-go/libs/middleware"
-	"github.com/go-chi/chi"
-	chiware "github.com/go-chi/chi/middleware"
-	"github.com/go-chi/httplog"
+	"github.com/go-chi/chi/v5"
+	chiware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/httplog/v3"
 	"github.com/jmoiron/sqlx"
-	"github.com/pressly/lg"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/sirupsen/logrus"
 )
 
 var (
@@ -100,10 +99,10 @@ func init() {
 
 // Server - base server type
 type Server struct {
-	ListenPort   int            `json:"listen_port,omitempty"`
-	MaxTokens    int            `json:"max_tokens,omitempty"`
-	DBConfigPath string         `json:"db_config_path"`
-	Logger       *logrus.Logger `json:",omitempty"`
+	ListenPort   int          `json:"listen_port,omitempty"`
+	MaxTokens    int          `json:"max_tokens,omitempty"`
+	DBConfigPath string       `json:"db_config_path"`
+	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
 	db           *sqlx.DB
@@ -184,32 +183,35 @@ func (c *Server) InitDBConfig() error {
 }
 
 // SetupLogger creates a logger to use
-func SetupLogger(ctx context.Context) (context.Context, *logrus.Logger) {
-	logger := logrus.New()
-
-	logger.SetLevel(logrus.WarnLevel)
-	if os.Getenv("ENV") == "local" {
-		logger.SetLevel(logrus.TraceLevel)
-	}
-
-	// Redirect output from the standard logging package "log"
-	lg.RedirectStdlogOutput(logger)
-	lg.DefaultLogger = logger
-	ctx = lg.WithLoggerContext(ctx, logger)
+func SetupLogger(ctx context.Context) (context.Context, *slog.Logger) {
+	// Simplify logs during local development
+	env := os.Getenv("ENV")
+	logFormat := httplog.SchemaECS.Concise(env == "local")
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		ReplaceAttr: logFormat.ReplaceAttr,
+		Level:       slog.LevelWarn,
+	})).With(
+		slog.String("app", "challenge-bypass"),
+		slog.String("version", "@TODO"),
+		slog.String("env", env),
+	)
 	return ctx, logger
 }
 
-func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (context.Context, *chi.Mux) {
+func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.Context, *chi.Mux) {
 	r := chi.NewRouter()
 	r.Use(chiware.RequestID)
 	r.Use(chiware.Heartbeat("/"))
 	r.Use(chiware.Timeout(60 * time.Second))
 	r.Use(middleware.BearerToken)
-	// Also handles panic recovery
-	chiLogger := httplog.NewLogger("cbp-request-logs", httplog.Options{
-		JSON: true,
+	chiLogger := httplog.RequestLogger(logger, &httplog.Options{
+		RecoverPanics: true,
+		Schema:        httplog.SchemaECS,
+		Skip: func(req *http.Request, respStatus int) bool {
+			return req.URL.Path == "/metrics"
+		},
 	})
-	r.Use(httplog.RequestLogger(chiLogger))
+	r.Use(chiLogger)
 
 	c.Logger = logger
 
@@ -237,14 +239,13 @@ func (c *Server) setupRouter(ctx context.Context, logger *logrus.Logger) (contex
 }
 
 // ListenAndServe listen to ports and mount handlers
-func (c *Server) ListenAndServe(ctx context.Context, logger *logrus.Logger) error {
-	addr := fmt.Sprintf(":%d", c.ListenPort)
-	srv := http.Server{Addr: addr, Handler: chi.ServerBaseContext(c.setupRouter(ctx, logger))}
+func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
+	_, srv := c.setupRouter(ctx, logger)
 
 	// Run metrics on 9090 for collection
 	r := chi.NewRouter()
 	r.Get("/metrics", middleware.Metrics())
 	go http.ListenAndServe(":9090", r)
 
-	return srv.ListenAndServe()
+	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), srv)
 }

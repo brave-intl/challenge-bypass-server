@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/sirupsen/logrus"
 )
 
 // CachingConfig is how long data is cached
@@ -490,10 +490,7 @@ func (c *Server) rotateIssuersV3() error {
 			issuer.Keys = append(issuer.Keys, v)
 			c.Logger.Info("appended keys")
 		}
-		c.Logger.WithFields(
-			logrus.Fields{
-				"issuer keys": issuer.Keys,
-			}).Info("calling txpopulateissuerkeys")
+		c.Logger.Info("txpopulateissuerkeys", "issuer keys", issuer.Keys)
 
 		// populate the buffer of keys for the v3 issuer
 		if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
@@ -587,7 +584,7 @@ func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
-func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issuer) error {
+func txPopulateIssuerKeys(logger *slog.Logger, tx *sqlx.Tx, issuer model.Issuer) error {
 	var (
 		duration *timeutils.ISODuration
 		err      error
@@ -599,10 +596,10 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 		if issuer.Duration != nil {
 			duration, err = timeutils.ParseDuration(*issuer.Duration)
 			if err != nil {
-				logger.WithFields(
-					logrus.Fields{
-						"err": err.Error(),
-					}).Error("failed to parse issuer duration")
+				logger.Error(
+					"failed to parse issuer duration",
+					slog.Any("err", err),
+				)
 				return fmt.Errorf("failed to parse issuer duration: %w", err)
 			}
 		}
@@ -628,11 +625,7 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 		tmp := *issuer.Keys[len(issuer.Keys)-1].EndAt
 		start = &tmp
 		i = len(issuer.Keys)
-		logger.WithFields(
-			logrus.Fields{
-				"i":     i,
-				"start": start,
-			}).Debug("figured out the lacking keys")
+		logger.Debug("figured out the lacking keys", "i", i, "start", start)
 	}
 
 	var keys []model.IssuerKeys
@@ -642,46 +635,43 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 			// start/end, increment every iteration
 			end, err = duration.From(*start)
 			if err != nil {
-				logger.WithFields(
-					logrus.Fields{
-						"err": err.Error(),
-					}).Error("unable to calculate end time")
+				logger.Error(
+					"unable to calculate end time",
+					slog.Any("err", err),
+				)
 				return fmt.Errorf("unable to calculate end time: %w", err)
 			}
 		}
 
-		logger.WithFields(
-			logrus.Fields{
-				"end": end,
-			}).Debug("making keys")
+		logger.Debug("txpopulateissuerkeys finished")
 
 		signingKey, err := crypto.RandomSigningKey()
 		if err != nil {
-			logger.WithFields(
-				logrus.Fields{
-					"err": err.Error(),
-				}).Error("error generating key")
+			logger.Error(
+				"error generating key",
+				slog.Any("err", err),
+			)
 			return err
 		}
 
 		signingKeyTxt, err := signingKey.MarshalText()
 		if err != nil {
-			logger.WithFields(
-				logrus.Fields{
-					"err": err.Error(),
-				}).Error("error marshalling signing key")
+			logger.Error(
+				"error marshalling signing key",
+				slog.Any("err", err),
+			)
 			return err
 		}
 
 		pubKeyTxt, err := signingKey.PublicKey().MarshalText()
 		if err != nil {
-			logger.WithFields(
-				logrus.Fields{
-					"err": err.Error(),
-				}).Error("error marshalling public key")
+			logger.Error(
+				"error marshalling public key",
+				slog.Any("err", err),
+			)
 			return err
 		}
-		logger.Debugf("iteration key pubkey: %s", string(pubKeyTxt))
+		logger.Debug("iteration key", "pubkey", string(pubKeyTxt))
 
 		tmpStart := *start
 		tmpEnd := *end
@@ -713,24 +703,18 @@ func txPopulateIssuerKeys(logger *logrus.Logger, tx *sqlx.Tx, issuer model.Issue
 		insertValues[idx] =
 			map[string]interface{}{"issuer_id": v.IssuerID, "signing_key": v.SigningKey, "public_key": v.PublicKey, "cohort": v.Cohort, "start_at": v.StartAt, "end_at": v.EndAt}
 	}
-	logger.WithFields(
-		logrus.Fields{
-			"values": insertValues,
-		}).Debug("about to insert")
+	logger.Debug("txpopulateissuerkeys", "inserting", insertValues)
 
 	_, err = tx.NamedExec(`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at) 
 		VALUES (:issuer_id, :signing_key, :public_key, :cohort, :start_at, :end_at)`, insertValues)
 	if err != nil {
-		logger.WithFields(
-			logrus.Fields{
-				"err": err.Error(),
-			}).Error("could not insert the new issuer keys into the db")
+		logger.Error(
+			"could not insert the new issuer keys into the db",
+			slog.Any("err", err),
+		)
 		return err
 	}
-	logger.WithFields(
-		logrus.Fields{
-			"values": insertValues,
-		}).Debug("performed insert")
+	logger.Debug("txpopulateissuerkeys", "performed insert", insertValues)
 	return nil
 }
 

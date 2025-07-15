@@ -5,8 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
-	"github.com/lib/pq"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/lib/pq"
+
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 
@@ -22,7 +23,6 @@ import (
 
 	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	"github.com/go-chi/chi"
 	uuid "github.com/satori/go.uuid"
 	"github.com/stretchr/testify/suite"
 )
@@ -53,12 +53,12 @@ func (suite *ServerTestSuite) SetupSuite() {
 	suite.srv.InitDB()
 	suite.srv.InitDynamo()
 
-	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
+	_, suite.handler = suite.srv.setupRouter(SetupLogger(context.Background()))
 
 	err = test.SetupDynamodbTables(suite.srv.dynamo)
 	suite.Require().NoError(err)
 
-	suite.handler = chi.ServerBaseContext(suite.srv.setupRouter(SetupLogger(context.Background())))
+	_, suite.handler = suite.srv.setupRouter(SetupLogger(context.Background()))
 }
 
 func (suite *ServerTestSuite) SetupTest() {
