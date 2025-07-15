@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
-	"github.com/pressly/lg"
 
 	"github.com/brave-intl/bat-go/libs/closers"
 	"github.com/brave-intl/bat-go/libs/handlers"
@@ -273,7 +272,6 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 
 func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	v2IssuerCallTotal.WithLabelValues("createIssuer").Inc()
-	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
@@ -304,7 +302,7 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 
 	if err := c.createIssuerV2(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		// if this is a duplicate on a constraint we already inserted it
-		log.Errorf("%s", err)
+		c.Logger.Error("issuercreatehandlerv2", slog.Any("error", err))
 
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
@@ -330,7 +328,6 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 
 func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	v1IssuerCallTotal.WithLabelValues("createIssuer").Inc()
-	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
@@ -360,7 +357,7 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 	}
 
 	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
-		log.Errorf("%s", err)
+		c.Logger.Error("issuercreatehandlerv1", slog.Any("error", err))
 
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
