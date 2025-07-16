@@ -4,14 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
-	"github.com/pressly/lg"
-	"github.com/sirupsen/logrus"
 
 	"github.com/brave-intl/bat-go/libs/closers"
 	"github.com/brave-intl/bat-go/libs/handlers"
@@ -69,10 +68,7 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 				Code:    404,
 			}
 		}
-		c.Logger.WithFields(
-			logrus.Fields{
-				"err": err.Error(),
-			}).Error("Error finding issuer")
+		c.Logger.Error("failed to find issuer", slog.Any("err", err))
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",
@@ -109,10 +105,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Iss
 				Code:    404,
 			}
 		}
-		c.Logger.WithFields(
-			logrus.Fields{
-				"err": err.Error(),
-			}).Error("Error finding issuer")
+		c.Logger.Error("failed to find issuer", slog.Any("err", err))
 		return nil, &handlers.AppError{
 			Cause:   err,
 			Message: "Error finding issuer",
@@ -279,7 +272,6 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 
 func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	v2IssuerCallTotal.WithLabelValues("createIssuer").Inc()
-	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
@@ -310,7 +302,7 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 
 	if err := c.createIssuerV2(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		// if this is a duplicate on a constraint we already inserted it
-		log.Errorf("%s", err)
+		c.Logger.Error("issuercreatehandlerv2", slog.Any("error", err))
 
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
@@ -336,7 +328,6 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 
 func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *handlers.AppError {
 	v1IssuerCallTotal.WithLabelValues("createIssuer").Inc()
-	log := lg.Log(r.Context())
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
@@ -366,7 +357,7 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 	}
 
 	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
-		log.Errorf("%s", err)
+		c.Logger.Error("issuercreatehandlerv1", slog.Any("error", err))
 
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
