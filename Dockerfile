@@ -14,7 +14,16 @@ WORKDIR /src
 COPY . .
 RUN go mod download
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
-RUN go build -ldflags '-linkmode external -extldflags "-static"' -tags 'osusergo netgo static_build' -o challenge-bypass-server main.go
+RUN VERSION=$(git describe --tags --always --dirty || echo "unknown") \
+    COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
+    BUILD_TIME=$(date "+%Y-%m-%d %H:%M:%S") \
+    go build -ldflags "\
+    -X main.Version=${VERSION} \
+    -X main.BuildTime=${BUILD_TIME} \
+    -X main.Commit=${COMMIT} \
+    -linkmode external -extldflags \"-static\"" \
+    -tags "osusergo netgo static_build" \
+    -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
 FROM ubuntu:22.04

@@ -4,10 +4,10 @@ package kafka
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 	"testing"
 
-	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -25,7 +25,7 @@ func (r *testMessageReader) Stats() kafka.ReaderStats {
 }
 
 func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
-	nopLog := zerolog.Nop()
+	nopLog := slog.New(slog.DiscardHandler)
 	t.Run("AbsentTopicClosesMsg", func(t *testing.T) {
 		t.Parallel()
 
@@ -43,7 +43,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 			select {}
 		}
 		go processMessagesIntoBatchPipeline(context.Background(),
-			nil, r, batchPipeline, &nopLog)
+			nil, r, batchPipeline, nopLog)
 		msg := <-batchPipeline
 		assert.NotNil(t, msg)
 		<-msg.done
@@ -78,7 +78,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 		atomicCounter := int32(N)
 		topicMappings := []TopicMapping{{
 			Topic: "topicA",
-			Processor: func(ctx context.Context, msg kafka.Message, logger *zerolog.Logger) error {
+			Processor: func(ctx context.Context, msg kafka.Message, logger *slog.Logger) error {
 				if msg.Partition < N {
 					// Make processor to post results in the reverse order of
 					// messages using a busy wait
@@ -95,7 +95,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 		}}
 
 		go processMessagesIntoBatchPipeline(context.Background(),
-			topicMappings, r, batchPipeline, &nopLog)
+			topicMappings, r, batchPipeline, nopLog)
 		for i := 0; i < 2*N; i++ {
 			msg := <-batchPipeline
 			assert.NotNil(t, msg)

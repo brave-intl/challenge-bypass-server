@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -16,7 +17,6 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/rs/zerolog"
 	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
 )
@@ -24,7 +24,7 @@ import (
 var brokers []string
 
 // Processor is a function that is used to process Kafka messages on
-type Processor func(context.Context, kafkaGo.Message, *zerolog.Logger) error
+type Processor func(context.Context, kafkaGo.Message, *slog.Logger) error
 
 // Subset of kafka.Reader methods that we use. This is used for testing.
 type messageReader interface {
@@ -89,7 +89,7 @@ var (
 )
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
-func StartConsumers(ctx context.Context, providedServer *server.Server, logger *zerolog.Logger) error {
+func StartConsumers(ctx context.Context, providedServer *server.Server, logger *slog.Logger) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
 	adsResultRedeemV1Topic := os.Getenv("REDEEM_PRODUCER_TOPIC")
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
@@ -134,7 +134,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		{
 			Topic: adsRequestRedeemV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *zerolog.Logger) error {
+				logger *slog.Logger) error {
 				tokenRedeemRequestTotal.Inc()
 				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
 				if err != nil {
@@ -146,7 +146,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		{
 			Topic: adsRequestSignV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *zerolog.Logger) error {
+				logger *slog.Logger) error {
 				tokenIssuanceRequestTotal.Inc()
 				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
 				if err != nil {
@@ -189,19 +189,19 @@ func readAndCommitBatchPipelineResults(
 	ctx context.Context,
 	reader *kafkaGo.Reader,
 	batchPipeline chan *MessageContext,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
 	msgCtx := <-batchPipeline
 	<-msgCtx.done
 
 	if msgCtx.err != nil {
-		logger.Error().Err(msgCtx.err).Msg("temporary failure encountered")
+		logger.Error("temporary failure encountered")
 		kafkaErrorTotal.Inc()
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
-	logger.Info().Msgf("committing offset %d", msgCtx.msg.Offset)
+	logger.Info("committing offset", "offset", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
-		logger.Error().Err(err).Msg("failed to commit")
+		logger.Error("failed to commit")
 		kafkaErrorTotal.Inc()
 		return errors.New("failed to commit")
 	}
@@ -216,7 +216,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 	topicMappings []TopicMapping,
 	reader messageReader,
 	batchPipeline chan *MessageContext,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) {
 	// Catch the panic cases in order to count them, but continue to panic.
 	defer func() {
@@ -232,9 +232,9 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 			// Indicates batch has no more messages. End the loop for
 			// this batch and fetch another.
 			if err == io.EOF {
-				logger.Info().Msg("batch complete")
+				logger.Info("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
-				logger.Error().Err(err).Msg("batch item error")
+				logger.Error("batch item error")
 				kafkaErrorTotal.Inc()
 				panic("failed to fetch kafka messages and closed channel")
 			}
@@ -252,9 +252,9 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 		// this write will panic, which is desired behavior, as the rest of the context
 		// will also have died and will be restarted from kafka/main.go
 		batchPipeline <- msgCtx
-		logger.Debug().Msgf("processing message for topic %s at offset %d", msg.Topic, msg.Offset)
-		logger.Debug().Msgf("reader Stats: %#v", reader.Stats())
-		logger.Debug().Msgf("topicMappings: %+v", topicMappings)
+		logger.Debug("processing message", "topic", msg.Topic, "offset", msg.Offset)
+		logger.Debug("reader Stats", slog.Any("stats", reader.Stats()))
+		logger.Debug("topic mappings", slog.Any("topicMappings", topicMappings))
 		go runMessageProcessor(ctx, msgCtx, topicMappings, logger)
 	}
 }
@@ -268,12 +268,12 @@ func runMessageProcessor(
 	ctx context.Context,
 	msgCtx *MessageContext,
 	topicMappings []TopicMapping,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) {
 	defer close(msgCtx.done)
 	msg := msgCtx.msg
 	for _, topicMapping := range topicMappings {
-		logger.Debug().Msgf("topic: %+v, topicMapping: %+v", msg.Topic, topicMapping.Topic)
+		logger.Debug("iterating topic mapping", "topic", msg.Topic, "topicMapping", topicMapping.Topic)
 		if msg.Topic == topicMapping.Topic {
 			msgCtx.err = topicMapping.Processor(ctx, msg, logger)
 			return
@@ -281,32 +281,39 @@ func runMessageProcessor(
 	}
 	// This is a permanent error, so do not set msgCtx.err to commit the
 	// received message.
-	logger.Error().Msgf("topic received whose topic is not configured: %s", msg.Topic)
+	logger.Error("topic received whose topic is not configured", slog.Any("topic", msg.Topic))
 	kafkaErrorTotal.Inc()
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
-func newConsumer(ctx context.Context, topics []string, groupID string, logger *zerolog.Logger) (*kafkaGo.Reader, error) {
+func newConsumer(ctx context.Context, topics []string, groupID string, logger *slog.Logger) (*kafkaGo.Reader, error) {
 	brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
-	logger.Info().Msgf("subscribing to kafka topic %s on behalf of group %s using brokers %s", topics, groupID, brokers)
+	logger.Info("subscribing",
+		"topics", topics,
+		"group", groupID,
+		"brokers", brokers,
+	)
 	dialer, err := getDialer(ctx, logger)
 	if err != nil {
 		kafkaErrorTotal.Inc()
 		return nil, err
 	}
+	// kafka-go's ReaderConfig requires the old styl log.Logger
+	// We can make one from our slog.Logger.
+	logLogger := slog.NewLogLogger(logger.Handler(), slog.LevelInfo)
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
 		GroupTopics:    topics,
 		GroupID:        groupID,
 		StartOffset:    kafkaGo.FirstOffset,
-		Logger:         logger,
+		Logger:         logLogger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
 		MinBytes:       1e3,              // 1KB
 		MaxBytes:       10e6,             // 10MB
 	})
-	logger.Trace().Msgf("reader created with subscription")
+	logger.Debug("reader created with subscription")
 	return reader, nil
 }
 
@@ -315,14 +322,17 @@ func Emit(
 	ctx context.Context,
 	producer *kafkaGo.Writer,
 	message []byte,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
-	logger.Info().Msgf("beginning data emission for topic %s", producer.Topic)
+	logger.Info("beginning data emission", "topic", producer.Topic)
 
 	messageKey := uuid.New()
 	marshaledMessageKey, err := messageKey.MarshalBinary()
 	if err != nil {
-		logger.Error().Msgf("failed to marshal UUID into binary. Using default key value: %e", err)
+		logger.Error(
+			"failed to marshal UUID into binary using default key value",
+			slog.Any("error", err),
+		)
 		kafkaErrorTotal.Inc()
 		marshaledMessageKey = []byte("default")
 	}
@@ -335,22 +345,22 @@ func Emit(
 		},
 	)
 	if err != nil {
-		logger.Error().Msgf("failed to write messages: %e", err)
+		logger.Error("failed to write messages", slog.Any("error", err))
 		kafkaErrorTotal.Inc()
 		return err
 	}
 
-	logger.Info().Msg("data emitted")
+	logger.Info("data emitted")
 	return nil
 }
 
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
-func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, error) {
+func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error) {
 	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" {
-		logger.Info().Msg("generating TLSDialer")
+		logger.Info("generating TLSDialer")
 		var cfg aws.Config
 		var err error
 
@@ -364,7 +374,7 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, er
 		}
 
 		if err != nil {
-			logger.Error().Msgf("failed to setup aws config: %e", err)
+			logger.Error("failed to setup aws config", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
 			return nil, err
 		}
@@ -375,12 +385,12 @@ func getDialer(ctx context.Context, logger *zerolog.Logger) (*kafkaGo.Dialer, er
 		dialer.SASLMechanism = mechanism
 
 		if err != nil {
-			logger.Error().Msgf("failed to initialize TLS dialer: %e", err)
+			logger.Error("failed to initialize TLS dialer", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
 			return nil, err
 		}
 	} else {
-		logger.Info().Msg("generating Dialer")
+		logger.Info("generating Dialer")
 		dialer = &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
