@@ -13,7 +13,6 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -81,14 +80,14 @@ func main() {
 		// pprof attaches routes to default serve mux
 		// host:6061/debug/pprof/
 		go func() {
-			log.Error().Err(http.ListenAndServe(addr, http.DefaultServeMux))
+			logger.Error("listenandserve", slog.Any("error", http.ListenAndServe(addr, http.DefaultServeMux)))
 		}()
 	}
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		logger.Debug("Spawning Kafka goroutine")
 		server.ServeMetrics()
-		startKafka(srv, logger)
+		go startKafka(srv, logger)
 	}
 
 	logger.Debug("Initializing API server")
