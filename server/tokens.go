@@ -4,14 +4,14 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
 	"time"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
 
 	"github.com/brave-intl/bat-go/libs/handlers"
 	"github.com/brave-intl/bat-go/libs/middleware"
@@ -76,7 +76,10 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		var request BlindedTokenIssueRequestV2
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
-			c.Logger.WithError(err)
+			c.Logger.Error(
+				"failed to parse request body",
+				slog.Any("error", err),
+			)
 			return handlers.WrapError(err, "Could not parse the request body", 400)
 		}
 
@@ -107,7 +110,11 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
-			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
+			c.Logger.Error(
+				"invalid issuer, must have one signing key",
+				"issuerType",
+				issuer.IssuerType,
+			)
 			return &handlers.AppError{
 				Message: "Invalid Issuer",
 				Code:    http.StatusBadRequest,
@@ -159,7 +166,11 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
-			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
+			c.Logger.Error(
+				"invalid issuer, must have one signing key",
+				"issuerType",
+				issuer.IssuerType,
+			)
 			return &handlers.AppError{
 				Message: "Invalid Issuer",
 				Code:    http.StatusBadRequest,
@@ -198,7 +209,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 				Code:    http.StatusNotFound,
 			}
 		default:
-			c.Logger.WithError(err).Error("error fetching issuer")
+			c.Logger.Error("error fetching issuer", slog.Any("error", err))
 
 			return &handlers.AppError{
 				Cause:   errors.New("internal server error"),
@@ -261,7 +272,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	}
 
 	if len(skeys) == 0 {
-		c.Logger.WithFields(logrus.Fields{"now": now}).Error("failed to find appropriate key")
+		c.Logger.Error("failed to find appropriate key", "at", now)
 
 		return &handlers.AppError{
 			Message: "Issuer has no key that corresponds to start < now < end",
@@ -339,7 +350,11 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 			} else {
 				// need to have atleast one signing key
-				c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
+				c.Logger.Error(
+					"invalid issuer, must have one signing key",
+					"issuerType",
+					issuer.IssuerType,
+				)
 				return &handlers.AppError{
 					Message: "Invalid Issuer",
 					Code:    http.StatusBadRequest,
@@ -422,7 +437,11 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
-			c.Logger.Errorf("Invalid issuer, must have one signing key: %s", issuer.IssuerType)
+			c.Logger.Error(
+				"invalid issuer, must have one signing key",
+				"issuerType",
+				issuer.IssuerType,
+			)
 			return &handlers.AppError{
 				Message: "Invalid Issuer",
 				Code:    http.StatusBadRequest,
