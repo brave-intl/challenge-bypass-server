@@ -27,6 +27,13 @@ import (
 	"github.com/stretchr/testify/suite"
 )
 
+// Build information - populated at build time
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+	Commit    = "none"
+)
+
 type ServerTestSuite struct {
 	suite.Suite
 	handler     http.Handler
@@ -53,12 +60,24 @@ func (suite *ServerTestSuite) SetupSuite() {
 	suite.srv.InitDB()
 	suite.srv.InitDynamo()
 
-	_, suite.handler = suite.srv.setupRouter(SetupLogger(context.Background()))
+	_, suite.handler = suite.srv.setupRouter(
+		SetupLogger(
+			context.Background(),
+			Version,
+			BuildTime,
+			Commit,
+		))
 
 	err = test.SetupDynamodbTables(suite.srv.dynamo)
 	suite.Require().NoError(err)
 
-	_, suite.handler = suite.srv.setupRouter(SetupLogger(context.Background()))
+	_, suite.handler = suite.srv.setupRouter(
+		SetupLogger(
+			context.Background(),
+			Version,
+			BuildTime,
+			Commit,
+		))
 }
 
 func (suite *ServerTestSuite) SetupTest() {

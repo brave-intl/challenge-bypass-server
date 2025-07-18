@@ -21,8 +21,6 @@ import (
 )
 
 var (
-	// Version - the version?
-	Version        = "dev"
 	maxRequestSize = int64(1024 * 1024) // 1MiB
 
 	// ErrNoSecretKey - configuration error, no secret key
@@ -183,7 +181,12 @@ func (c *Server) InitDBConfig() error {
 }
 
 // SetupLogger creates a logger to use
-func SetupLogger(ctx context.Context) (context.Context, *slog.Logger) {
+func SetupLogger(
+	ctx context.Context,
+	version,
+	buildTime,
+	commit string,
+) (context.Context, *slog.Logger) {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
 	logFormat := httplog.SchemaECS.Concise(env == "local")
@@ -192,7 +195,10 @@ func SetupLogger(ctx context.Context) (context.Context, *slog.Logger) {
 		Level:       slog.LevelWarn,
 	})).With(
 		slog.String("app", "challenge-bypass"),
-		slog.String("version", "@TODO"),
+		slog.String("version", version),
+		slog.String("buildTime", buildTime),
+		slog.String("commit", commit),
+		slog.String("version", version),
 		slog.String("env", env),
 	)
 	return ctx, logger
@@ -242,10 +248,15 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, srv := c.setupRouter(ctx, logger)
 
+	ServeMetrics()
+
+	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), srv)
+}
+
+// ServeMetrics exposes the metrics collection endpoint on :9090
+func ServeMetrics() {
 	// Run metrics on 9090 for collection
 	r := chi.NewRouter()
 	r.Get("/metrics", middleware.Metrics())
 	go http.ListenAndServe(":9090", r)
-
-	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), srv)
 }
