@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"time"
 
@@ -13,7 +14,6 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
-	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -35,7 +35,7 @@ func SignedBlindedTokenIssuerHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
-	log *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
 	const (
 		issuerOk      = 0
@@ -44,26 +44,22 @@ func SignedBlindedTokenIssuerHandler(
 	)
 	data := msg.Value
 
-	log.Info().Msg("starting blinded token processor")
+	logger.Debug("starting blinded token processor")
 
 	defer func() {
 		for i := 0; i < 20; i++ {
-			log.Info().Msg("flush log")
+			logger.Debug("flush log")
 		}
 	}()
 
-	log.Info().Msg("deserialize signing request")
+	logger.Debug("deserialize signing request")
 
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
-		message := fmt.Sprintf(
-			"request %s: failed avro deserialization",
-			blindedTokenRequestSet.Request_id,
-		)
 		kafkaErrorTotal.Inc()
 		return handlePermanentIssuanceError(
 			ctx,
-			message,
+			fmt.Sprintf("failed arvo deserialization"),
 			err,
 			nil,
 			nil,
@@ -73,13 +69,15 @@ func SignedBlindedTokenIssuerHandler(
 			blindedTokenRequestSet.Request_id,
 			msg,
 			producer,
-			log,
+			logger,
 		)
 	}
 
-	logger := log.With().Str("request_id", blindedTokenRequestSet.Request_id).Logger()
+	reqLogger := logger.With(
+		slog.String("request_id", blindedTokenRequestSet.Request_id),
+	)
 
-	logger.Info().Msg("processing blinded token request for request_id")
+	reqLogger.Debug("processing blinded token request for request_id")
 
 	var blindedTokenResults []avroSchema.SigningResultV2
 	if len(blindedTokenRequestSet.Data) > 1 {
@@ -102,15 +100,15 @@ func SignedBlindedTokenIssuerHandler(
 			blindedTokenRequestSet.Request_id,
 			msg,
 			producer,
-			&logger,
+			reqLogger,
 		)
 	}
 
 OUTER:
 	for _, request := range blindedTokenRequestSet.Data {
-		logger.Info().Msgf("processing request: %+v", request)
+		reqLogger.Info("processing request", slog.Any("request", request))
 		if request.Blinded_tokens == nil {
-			logger.Error().Err(errors.New("blinded tokens is empty")).Msg("")
+			reqLogger.Error("blinded tokens is empty")
 			kafkaErrorTotal.Inc()
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
@@ -122,9 +120,9 @@ OUTER:
 		}
 
 		// check to see if issuer cohort will overflow
-		logger.Info().Msgf("checking request cohort: %+v", request)
+		reqLogger.Info("checking request cohort", slog.Any("request", request))
 		if request.Issuer_cohort > math.MaxInt16 || request.Issuer_cohort < math.MinInt16 {
-			logger.Error().Msg("invalid cohort")
+			reqLogger.Error("invalid cohort")
 			kafkaErrorTotal.Inc()
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
@@ -135,10 +133,14 @@ OUTER:
 			continue OUTER
 		}
 
-		logger.Info().Msgf("getting latest issuer: %+v with cohort: %+v", request.Issuer_type, request.Issuer_cohort)
+		reqLogger.Info(
+			"getting latest issuer",
+			slog.Any("issuer", request.Issuer_type),
+			slog.Any("cohort", request.Issuer_cohort),
+		)
 		issuer, appErr := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if appErr != nil {
-			logger.Error().Err(appErr).Msg("error retrieving issuer")
+			reqLogger.Error("error retrieving issuer")
 			kafkaErrorTotal.Inc()
 			var processingError *utils.ProcessingError
 			if errors.As(err, &processingError) {
@@ -155,11 +157,11 @@ OUTER:
 			continue OUTER
 		}
 
-		logger.Info().Msgf("checking if issuer is version 3: %+v", issuer)
+		reqLogger.Info("checking if issuer is version 3", slog.Any("issuer", issuer))
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
 			if len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap) != 0 {
-				logger.Error().Err(errors.New("error request contains invalid number of blinded tokens")).Msg("")
+				reqLogger.Error("error request contains invalid number of blinded tokens")
 				kafkaErrorTotal.Inc()
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
@@ -171,17 +173,22 @@ OUTER:
 			}
 		}
 
-		logger.Info().Msgf("checking blinded tokens: %+v", request.Blinded_tokens)
+		reqLogger.Debug(
+			"checking blinded tokens",
+			slog.Any("blinded_tokens", request.Blinded_tokens),
+		)
 		var blindedTokens []*crypto.BlindedToken
 		// Iterate over the provided tokens and create data structure from them,
 		// grouping into a slice for approval
 		for _, stringBlindedToken := range request.Blinded_tokens {
-			logger.Info().Msgf("blinded token: %+v", stringBlindedToken)
+			reqLogger.Debug("blinded token", slog.Any("token", stringBlindedToken))
 			blindedToken := crypto.BlindedToken{}
 			err := blindedToken.UnmarshalText([]byte(stringBlindedToken))
 			if err != nil {
-				logger.Error().Err(fmt.Errorf("failed to unmarshal blinded tokens: %w", err)).
-					Msg("signed blinded token issuer handler")
+				reqLogger.Error(
+					"failed to unmarshal blinded tokens in signed blinded token issuer handler",
+					slog.Any("error", err),
+				)
 				kafkaErrorTotal.Inc()
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
@@ -194,7 +201,11 @@ OUTER:
 			blindedTokens = append(blindedTokens, &blindedToken)
 		}
 
-		logger.Info().Msgf("checking if issuer is time aware: %+v - %+v", issuer.Version, issuer.Buffer)
+		reqLogger.Debug(
+			"checking if issuer is time aware",
+			slog.Any("version", issuer.Version),
+			slog.Any("buffer", issuer.Buffer),
+		)
 		// if the issuer is time aware, we need to approve tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
 			// Calculate the number of tokens per signing key.
@@ -216,7 +227,11 @@ OUTER:
 						len(issuer.Keys))
 				}
 
-				logger.Info().Msgf("version 3 issuer: %+v , numT: %+v", issuer, numT)
+				reqLogger.Debug(
+					"version 3 issuer",
+					slog.Any("issuer", issuer),
+					slog.Any("numT", numT),
+				)
 				var (
 					blindedTokensSlice []*crypto.BlindedToken
 					signingKey         *crypto.SigningKey
@@ -230,13 +245,16 @@ OUTER:
 
 				pubKeyTxt, _ := signingKey.PublicKey().MarshalText()
 
-				logger.Info().
-					Str("len_keys", fmt.Sprintf("%d", len(issuer.Keys))).
-					Str("count", fmt.Sprintf("%d", count)).
-					Str("valid_from", validFrom).
-					Str("valid_to", validTo).
-					Str("signing_key", string(pubKeyTxt)).
-					Msgf("signing with version 3 issuer key: %+v, numT: %+v", issuer.Keys[len(issuer.Keys)-count], numT)
+				reqLogger.Info(
+					"key data",
+					"len_keys", fmt.Sprintf("%d", len(issuer.Keys)),
+					"count", fmt.Sprintf("%d", count),
+					"valid_from", validFrom,
+					"valid_to", validTo,
+					"signing_key", string(pubKeyTxt),
+					"version_3_issuer_key", issuer.Keys[len(issuer.Keys)-count],
+					"numT", numT,
+				)
 
 				// Calculate the next step size to retrieve. Given previous checks end should never
 				// be greater than the total number of tokens.
@@ -253,8 +271,10 @@ OUTER:
 				if err != nil {
 					kafkaErrorTotal.Inc()
 					// @TODO: If one token fails they will all fail. Assess this behavior
-					logger.Error().Err(fmt.Errorf("error could not approve new tokens: %w", err)).
-						Msg("signed blinded token issuer handler")
+					reqLogger.Error(
+						"could not approve new tokens",
+						slog.Any("error", err),
+					)
 					blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 						Signed_tokens:     nil,
 						Issuer_public_key: "",
@@ -264,7 +284,7 @@ OUTER:
 					break OUTER
 				}
 
-				logger.Info().Msg("marshalling proof")
+				reqLogger.Debug("marshalling proof")
 
 				marshaledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
@@ -282,7 +302,7 @@ OUTER:
 						blindedTokenRequestSet.Request_id,
 						msg,
 						producer,
-						&logger,
+						reqLogger,
 					)
 				}
 
@@ -304,7 +324,7 @@ OUTER:
 							blindedTokenRequestSet.Request_id,
 							msg,
 							producer,
-							&logger,
+							reqLogger,
 						)
 					}
 					marshaledBlindedTokens = append(marshaledBlindedTokens, string(marshaledToken))
@@ -328,13 +348,13 @@ OUTER:
 							blindedTokenRequestSet.Request_id,
 							msg,
 							producer,
-							&logger,
+							reqLogger,
 						)
 					}
 					marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken))
 				}
 
-				logger.Info().Msg("getting public key")
+				reqLogger.Debug("getting public key")
 				publicKey := signingKey.PublicKey()
 				marshaledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
@@ -352,7 +372,7 @@ OUTER:
 						blindedTokenRequestSet.Request_id,
 						msg,
 						producer,
-						&logger,
+						reqLogger,
 					)
 				}
 
@@ -366,14 +386,16 @@ OUTER:
 					Status:            issuerOk,
 					Associated_data:   request.Associated_data,
 				})
-				logger.Info().
-					Str("blinded_tokens", fmt.Sprintf("%+v", marshaledBlindedTokens)).
-					Str("signed_tokens", fmt.Sprintf("%+v", marshaledSignedTokens)).
-					Str("proof", string(marshaledDLEQProof)).
-					Str("public_key", string(marshaledPublicKey)).
-					Str("valid_from", string(validFrom)).
-					Str("valid_to", string(validTo)).
-					Msgf("signing with version 3 issuer key: %+v, numT: %+v", issuer.Keys[len(issuer.Keys)-count], numT)
+				reqLogger.Info(
+					"blinded_tokens", fmt.Sprintf("%+v", marshaledBlindedTokens),
+					"signed_tokens", fmt.Sprintf("%+v", marshaledSignedTokens),
+					"proof", string(marshaledDLEQProof),
+					"public_key", string(marshaledPublicKey),
+					"valid_from", string(validFrom),
+					"valid_to", string(validTo),
+					slog.Any("version_3_issuer_key", issuer.Keys[len(issuer.Keys)-count]),
+					"numT", numT,
+				)
 			}
 		} else {
 			// otherwise, use the latest key for signing get the latest signing key from issuer
@@ -382,13 +404,15 @@ OUTER:
 				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 			}
 
-			logger.Info().Msgf("approving tokens: %+v", blindedTokens)
+			reqLogger.Debug("approving tokens", slog.Any("tokens", blindedTokens))
 			// @TODO: If one token fails they will all fail. Assess this behavior
 			signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokens, signingKey)
 			if err != nil {
-				logger.Error().
-					Err(fmt.Errorf("error could not approve new tokens: %w", err)).
-					Msg("signed blinded token issuer handler")
+				reqLogger.Error(
+					"error could not approve new tokens",
+					slog.Any("error", err),
+				)
+
 				kafkaErrorTotal.Inc()
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
@@ -416,7 +440,7 @@ OUTER:
 					blindedTokenRequestSet.Request_id,
 					msg,
 					producer,
-					&logger,
+					reqLogger,
 				)
 			}
 
@@ -438,7 +462,7 @@ OUTER:
 						blindedTokenRequestSet.Request_id,
 						msg,
 						producer,
-						&logger,
+						reqLogger,
 					)
 				}
 				marshaledBlindedTokens = append(marshaledBlindedTokens, string(marshaledToken))
@@ -462,7 +486,7 @@ OUTER:
 						blindedTokenRequestSet.Request_id,
 						msg,
 						producer,
-						&logger,
+						reqLogger,
 					)
 				}
 				marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken))
@@ -485,7 +509,7 @@ OUTER:
 					blindedTokenRequestSet.Request_id,
 					msg,
 					producer,
-					&logger,
+					reqLogger,
 				)
 			}
 
@@ -504,7 +528,7 @@ OUTER:
 		Request_id: blindedTokenRequestSet.Request_id,
 		Data:       blindedTokenResults,
 	}
-	logger.Info().Msgf("resultSet: %+v", resultSet)
+	reqLogger.Debug("resultSet", slog.Any("resultSet", resultSet))
 
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
@@ -527,24 +551,23 @@ OUTER:
 			blindedTokenRequestSet.Request_id,
 			msg,
 			producer,
-			&logger,
+			reqLogger,
 		)
 	}
 
-	logger.Info().Msg("ending blinded token request processor loop")
-	logger.Info().Msgf("about to emit: %+v", resultSet)
-	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
+	reqLogger.Debug("ending blinded token request processor loop")
+	reqLogger.Debug("about to emit", slog.Any("resultSet", resultSet))
+	err = Emit(ctx, producer, resultSetBuffer.Bytes(), reqLogger)
 	if err != nil {
-		log.Error().Err(err).Msgf(
-			"request %s: failed to emit to topic %s with result: %v",
-			resultSet.Request_id,
-			producer.Topic,
-			resultSet,
+		reqLogger.Error(
+			"failed to emit",
+			"topic", producer.Topic,
+			slog.Any("resultSet", resultSet),
 		)
 		kafkaErrorTotal.Inc()
 		return err
 	}
-	logger.Info().Msgf("emitted: %+v", resultSet)
+	reqLogger.Debug("emitted", slog.Any("resultSet", resultSet))
 
 	return nil
 }
@@ -560,7 +583,6 @@ func avroIssuerErrorResultFromError(
 	issuerResultStatus int32,
 	requestID string,
 	msg kafka.Message,
-	logger *zerolog.Logger,
 ) []byte {
 	signingResult := avroSchema.SigningResultV2{
 		Blinded_tokens:    marshaledBlindedTokens,
@@ -599,9 +621,12 @@ func handlePermanentIssuanceError(
 	requestID string,
 	msg kafka.Message,
 	producer *kafka.Writer,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
-	logger.Error().Err(cause).Msgf("encountered permanent issuance failure: %v", message)
+	logger.Error(
+		"encountered permanent issuance failure",
+		"message", message,
+	)
 	toEmit := avroIssuerErrorResultFromError(
 		message,
 		marshaledBlindedTokens,
@@ -611,11 +636,10 @@ func handlePermanentIssuanceError(
 		issuerResultStatus,
 		requestID,
 		msg,
-		logger,
 	)
 
 	if err := Emit(ctx, producer, toEmit, logger); err != nil {
-		logger.Error().Err(err).Msg("failed to emit")
+		logger.Error("failed to emit")
 		kafkaErrorTotal.Inc()
 	}
 	// TODO: consider returning err here as failing to emit error should not

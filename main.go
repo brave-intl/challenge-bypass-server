@@ -10,12 +10,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/brave-intl/bat-go/libs/logging"
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	raven "github.com/getsentry/raven-go"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
 )
 
 func main() {
@@ -23,16 +20,15 @@ func main() {
 	var (
 		configFile string
 		err        error
-		logLevel   zerolog.Level
+	)
+	// Build information - populated at build time
+	var (
+		Version   = "dev"
+		BuildTime = "unknown"
+		Commit    = "none"
 	)
 
-	serverCtx, logger := server.SetupLogger(context.Background())
-	logLevel = zerolog.WarnLevel
-	if os.Getenv("ENV") == "local" {
-		logLevel = zerolog.TraceLevel
-	}
-	_, zeroLogger := logging.SetupLoggerWithLevel(serverCtx, logLevel)
-
+	serverCtx, logger := server.SetupLogger(context.Background(), Version, BuildTime, Commit)
 	srv := *server.DefaultServer
 	srv.Logger = logger
 
@@ -61,7 +57,7 @@ func main() {
 		panic(err)
 	}
 
-	zeroLogger.Trace().Msg("Initializing persistence and cron jobs")
+	logger.Debug("Initializing persistence and cron jobs")
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
 	srv.InitDB()
@@ -71,11 +67,11 @@ func main() {
 		srv.SetupCronTasks()
 	}
 
-	zeroLogger.Trace().Msg("Persistence and cron jobs initialized")
+	logger.Debug("Persistence and cron jobs initialized")
 
 	// add profiling flag to enable profiling routes
 	if os.Getenv("PPROF_ENABLE") != "" {
-		zeroLogger.Trace().Msg("Enabling PPROF")
+		logger.Debug("Enabling PPROF")
 		var addr = ":6061"
 		if os.Getenv("PPROF_PORT") != "" {
 			addr = os.Getenv("PPROF_PORT")
@@ -84,34 +80,34 @@ func main() {
 		// pprof attaches routes to default serve mux
 		// host:6061/debug/pprof/
 		go func() {
-			log.Error().Err(http.ListenAndServe(addr, http.DefaultServeMux))
+			logger.Error("listenandserve", slog.Any("error", http.ListenAndServe(addr, http.DefaultServeMux)))
 		}()
 	}
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
-		zeroLogger.Trace().Msg("Spawning Kafka goroutine")
-		go startKafka(srv, zeroLogger)
+		logger.Debug("Spawning Kafka goroutine")
+		go startKafka(srv, logger)
 	}
 
-	zeroLogger.Trace().Msg("Initializing API server")
+	logger.Debug("Initializing API server")
 	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
-		zeroLogger.Error().Err(err).Msg("Failed to initialize API server")
+		logger.Error("listenandserve", slog.Any("error", err))
 		raven.CaptureErrorAndWait(err, nil)
 		logger.Error("listenandserve", slog.Any("error", err))
 		panic(err)
 	}
 }
 
-func startKafka(srv server.Server, zeroLogger *zerolog.Logger) {
+func startKafka(srv server.Server, logger *slog.Logger) {
 	ctx := context.Background()
-	zeroLogger.Trace().Msg("Initializing Kafka consumers")
-	err := kafka.StartConsumers(ctx, &srv, zeroLogger)
+	logger.Debug("Initializing Kafka consumers")
+	err := kafka.StartConsumers(ctx, &srv, logger)
 
 	if err != nil {
-		zeroLogger.Error().Err(err).Msg("Failed to initialize Kafka consumers")
+		logger.Error("startkafka", slog.Any("error", err))
 		// If err is something then start consumer again
 		time.Sleep(10 * time.Second)
-		startKafka(srv, zeroLogger)
+		startKafka(srv, logger)
 	}
 }

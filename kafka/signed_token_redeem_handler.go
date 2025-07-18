@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
-	"github.com/rs/zerolog"
 	"github.com/segmentio/kafka-go"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -38,27 +38,28 @@ func SignedTokenRedeemHandler(
 	msg kafka.Message,
 	producer *kafka.Writer,
 	server *cbpServer.Server,
-	log *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
 	data := msg.Value
 	// Deserialize request into usable struct
 	tokenRedeemRequestSet, err := avroSchema.DeserializeRedeemRequestSet(bytes.NewReader(data))
 	if err != nil {
-		message := fmt.Sprintf("request %s: failed avro deserialization", tokenRedeemRequestSet.Request_id)
 		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
-			message,
+			"failed avro deserialization",
 			err,
 			msg,
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
-			log,
+			logger,
 		)
 	}
 
-	logger := log.With().Str("request_id", tokenRedeemRequestSet.Request_id).Logger()
+	reqLogger := logger.With(
+		slog.String("request_id", tokenRedeemRequestSet.Request_id),
+	)
 
 	var redeemedTokenResults []avroSchema.RedeemResult
 	// For the time being, we are only accepting one message at a time in this data set.
@@ -76,7 +77,7 @@ func SignedTokenRedeemHandler(
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
-			log,
+			reqLogger,
 		)
 	}
 	issuers, err := server.FetchAllIssuers()
@@ -95,7 +96,7 @@ func SignedTokenRedeemHandler(
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
-			log,
+			reqLogger,
 		)
 	}
 
@@ -129,7 +130,7 @@ func SignedTokenRedeemHandler(
 					producer,
 					tokenRedeemRequestSet.Request_id,
 					int32(avroSchema.RedeemResultStatusError),
-					log,
+					reqLogger,
 				)
 			}
 
@@ -149,9 +150,7 @@ func SignedTokenRedeemHandler(
 			verifiedCohort int32
 		)
 		if request.Public_key == "" {
-			logger.Error().
-				Err(fmt.Errorf("request %s: missing public key", tokenRedeemRequestSet.Request_id)).
-				Msg("signed token redeem handler")
+			reqLogger.Error("missing public key", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
@@ -164,9 +163,7 @@ func SignedTokenRedeemHandler(
 
 		// preimage, signature, and binding are all required to proceed
 		if request.Token_preimage == "" || request.Signature == "" || request.Binding == "" {
-			logger.Error().
-				Err(fmt.Errorf("request %s: empty request", tokenRedeemRequestSet.Request_id)).
-				Msg("signed token redeem handler")
+			reqLogger.Error("empty request", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
@@ -191,7 +188,7 @@ func SignedTokenRedeemHandler(
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
-				log,
+				reqLogger,
 			)
 		}
 		verificationSignature := crypto.VerificationSignature{}
@@ -208,16 +205,15 @@ func SignedTokenRedeemHandler(
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
-				log,
+				reqLogger,
 			)
 		}
 
 		if signedToken, ok := signedTokens[request.Public_key]; ok {
-			logger.
-				Trace().
-				Str("requestID", tokenRedeemRequestSet.Request_id).
-				Str("publicKey", request.Public_key).
-				Msg("attempting token redemption verification")
+			reqLogger.Debug(
+				"attempting token redemption verification",
+				"publicKey", request.Public_key,
+			)
 
 			issuer := signedToken.issuer
 			if err := btd.VerifyTokenRedemption(
@@ -233,10 +229,7 @@ func SignedTokenRedeemHandler(
 		}
 
 		if !verified {
-			logger.Error().
-				Err(fmt.Errorf("request %s: could not verify that the token redemption is valid",
-					tokenRedeemRequestSet.Request_id)).
-				Msg("signed token redeem handler")
+			reqLogger.Error("could not verify that the token redemption is valid")
 			kafkaErrorTotal.Inc()
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     "",
@@ -246,7 +239,7 @@ func SignedTokenRedeemHandler(
 			})
 			continue
 		} else {
-			logger.Info().Msg(fmt.Sprintf("request %s: validated", tokenRedeemRequestSet.Request_id))
+			reqLogger.Debug("token validated")
 		}
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 		if err != nil {
@@ -266,7 +259,7 @@ func SignedTokenRedeemHandler(
 				producer,
 				tokenRedeemRequestSet.Request_id,
 				int32(avroSchema.RedeemResultStatusError),
-				log,
+				reqLogger,
 			)
 		}
 
@@ -294,7 +287,7 @@ func SignedTokenRedeemHandler(
 
 		// If no equivalent record was found in the database, persist.
 		if err := server.PersistRedemption(*redemption); err != nil {
-			logger.Error().Err(err).Msgf("request %s: token redemption failed: %e", tokenRedeemRequestSet.Request_id, err)
+			reqLogger.Error("token redemption failed", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
 			// In the unlikely event that there is a race condition that results
 			// in a duplicate error upon save that was not detected previously
@@ -317,15 +310,14 @@ func SignedTokenRedeemHandler(
 						producer,
 						tokenRedeemRequestSet.Request_id,
 						int32(avroSchema.RedeemResultStatusError),
-						log,
+						reqLogger,
 					)
 				}
-				logger.Error().Err(fmt.Errorf("request %s: duplicate redemption: %w",
-					tokenRedeemRequestSet.Request_id, err)).
-					Msg("signed token redeem handler")
+				reqLogger.Error("duplicate redemption", slog.Any("error", err))
 				// Continue if there is a duplicate
 				switch equivalence {
 				case cbpServer.IDEquivalence:
+					duplicateRedemptionTotal.Inc()
 					redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 						Issuer_name:     verifiedIssuer.IssuerType,
 						Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -334,6 +326,7 @@ func SignedTokenRedeemHandler(
 					})
 					continue
 				case cbpServer.BindingEquivalence:
+					idempotentRedemptionTotal.Inc()
 					redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 						Issuer_name:     verifiedIssuer.IssuerType,
 						Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -343,9 +336,7 @@ func SignedTokenRedeemHandler(
 					continue
 				}
 			}
-			logger.Error().Err(fmt.Errorf("request %s: could not mark token redemption",
-				tokenRedeemRequestSet.Request_id)).
-				Msg("signed token redeem handler")
+			reqLogger.Error("could not mark token redemption")
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     verifiedIssuer.IssuerType,
 				Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -354,7 +345,7 @@ func SignedTokenRedeemHandler(
 			})
 			continue
 		}
-		logger.Trace().Msgf("request %s: redeemed", tokenRedeemRequestSet.Request_id)
+		reqLogger.Debug("redeemed")
 		issuerName := verifiedIssuer.IssuerType
 		redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 			Issuer_name:     issuerName,
@@ -380,16 +371,15 @@ func SignedTokenRedeemHandler(
 			producer,
 			tokenRedeemRequestSet.Request_id,
 			int32(avroSchema.RedeemResultStatusError),
-			log,
+			reqLogger,
 		)
 	}
 
-	err = Emit(ctx, producer, resultSetBuffer.Bytes(), log)
+	err = Emit(ctx, producer, resultSetBuffer.Bytes(), reqLogger)
 	if err != nil {
-		log.Error().Err(err).Msgf(
-			"request %s: failed to emit results to topic %s",
-			resultSet.Request_id,
-			producer.Topic,
+		reqLogger.Error("failed to emit results to topic",
+			"topic", producer.Topic,
+			slog.Any("error", err),
 		)
 		kafkaErrorTotal.Inc()
 		return err
@@ -420,7 +410,6 @@ func avroRedeemErrorResultFromError(
 	msg kafka.Message,
 	requestID string,
 	redeemResultStatus int32,
-	logger *zerolog.Logger,
 ) []byte {
 	redeemResult := avroSchema.RedeemResult{
 		Issuer_name:     "",
@@ -452,20 +441,19 @@ func handlePermanentRedemptionError(
 	producer *kafka.Writer,
 	requestID string,
 	redeemResultStatus int32,
-	logger *zerolog.Logger,
+	logger *slog.Logger,
 ) error {
-	logger.Error().Err(cause).Msgf("encountered permanent redemption failure: %v", message)
+	logger.Error("encountered permanent redemption failure", slog.Any("error", message))
 	kafkaErrorTotal.Inc()
 	toEmit := avroRedeemErrorResultFromError(
 		message,
 		msg,
 		requestID,
 		int32(avroSchema.RedeemResultStatusError),
-		logger,
 	)
 	if err := Emit(ctx, producer, toEmit, logger); err != nil {
 		kafkaErrorTotal.Inc()
-		logger.Error().Err(err).Msg("failed to emit")
+		logger.Error("failed to emit", slog.Any("error", err))
 	}
 	// TODO: consider returning err here as failing to emit error should not
 	// commit messages the same way as failing to emit a success does not
