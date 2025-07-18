@@ -14,10 +14,11 @@ WORKDIR /src
 COPY . .
 RUN go mod download
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
-RUN VERSION=$(git describe --tags --always --dirty || echo "unknown") \
-    COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown") \
-    BUILD_TIME=$(date "+%Y-%m-%d %H:%M:%S") \
-    go build -ldflags "\
+
+ARG VERSION
+ARG COMMIT
+ARG BUILD_TIME
+RUN go build -ldflags "\
     -X main.Version=${VERSION} \
     -X main.BuildTime=${BUILD_TIME} \
     -X main.Commit=${COMMIT} \
