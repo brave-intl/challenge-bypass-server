@@ -317,6 +317,7 @@ func SignedTokenRedeemHandler(
 				// Continue if there is a duplicate
 				switch equivalence {
 				case cbpServer.IDEquivalence:
+					duplicateRedemptionTotal.Inc()
 					redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 						Issuer_name:     verifiedIssuer.IssuerType,
 						Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
@@ -325,6 +326,7 @@ func SignedTokenRedeemHandler(
 					})
 					continue
 				case cbpServer.BindingEquivalence:
+					idempotentRedemptionTotal.Inc()
 					redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 						Issuer_name:     verifiedIssuer.IssuerType,
 						Issuer_cohort:   int32(verifiedIssuer.IssuerCohort),
