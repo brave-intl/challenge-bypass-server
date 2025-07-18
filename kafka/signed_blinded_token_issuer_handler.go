@@ -44,15 +44,15 @@ func SignedBlindedTokenIssuerHandler(
 	)
 	data := msg.Value
 
-	logger.Info("starting blinded token processor")
+	logger.Debug("starting blinded token processor")
 
 	defer func() {
 		for i := 0; i < 20; i++ {
-			logger.Info("flush log")
+			logger.Debug("flush log")
 		}
 	}()
 
-	logger.Info("deserialize signing request")
+	logger.Debug("deserialize signing request")
 
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
@@ -77,7 +77,7 @@ func SignedBlindedTokenIssuerHandler(
 		slog.String("request_id", blindedTokenRequestSet.Request_id),
 	)
 
-	reqLogger.Info("processing blinded token request for request_id")
+	reqLogger.Debug("processing blinded token request for request_id")
 
 	var blindedTokenResults []avroSchema.SigningResultV2
 	if len(blindedTokenRequestSet.Data) > 1 {
@@ -173,7 +173,7 @@ OUTER:
 			}
 		}
 
-		reqLogger.Info(
+		reqLogger.Debug(
 			"checking blinded tokens",
 			slog.Any("blinded_tokens", request.Blinded_tokens),
 		)
@@ -181,7 +181,7 @@ OUTER:
 		// Iterate over the provided tokens and create data structure from them,
 		// grouping into a slice for approval
 		for _, stringBlindedToken := range request.Blinded_tokens {
-			reqLogger.Info("blinded token", slog.Any("token", stringBlindedToken))
+			reqLogger.Debug("blinded token", slog.Any("token", stringBlindedToken))
 			blindedToken := crypto.BlindedToken{}
 			err := blindedToken.UnmarshalText([]byte(stringBlindedToken))
 			if err != nil {
@@ -201,7 +201,7 @@ OUTER:
 			blindedTokens = append(blindedTokens, &blindedToken)
 		}
 
-		reqLogger.Info(
+		reqLogger.Debug(
 			"checking if issuer is time aware",
 			slog.Any("version", issuer.Version),
 			slog.Any("buffer", issuer.Buffer),
@@ -227,7 +227,7 @@ OUTER:
 						len(issuer.Keys))
 				}
 
-				reqLogger.Info(
+				reqLogger.Debug(
 					"version 3 issuer",
 					slog.Any("issuer", issuer),
 					slog.Any("numT", numT),
@@ -284,7 +284,7 @@ OUTER:
 					break OUTER
 				}
 
-				reqLogger.Info("marshalling proof")
+				reqLogger.Debug("marshalling proof")
 
 				marshaledDLEQProof, err := DLEQProof.MarshalText()
 				if err != nil {
@@ -354,7 +354,7 @@ OUTER:
 					marshaledSignedTokens = append(marshaledSignedTokens, string(marshaledToken))
 				}
 
-				reqLogger.Info("getting public key")
+				reqLogger.Debug("getting public key")
 				publicKey := signingKey.PublicKey()
 				marshaledPublicKey, err := publicKey.MarshalText()
 				if err != nil {
@@ -404,7 +404,7 @@ OUTER:
 				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
 			}
 
-			reqLogger.Info("approving tokens", slog.Any("tokens", blindedTokens))
+			reqLogger.Debug("approving tokens", slog.Any("tokens", blindedTokens))
 			// @TODO: If one token fails they will all fail. Assess this behavior
 			signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokens, signingKey)
 			if err != nil {
@@ -528,7 +528,7 @@ OUTER:
 		Request_id: blindedTokenRequestSet.Request_id,
 		Data:       blindedTokenResults,
 	}
-	reqLogger.Info("resultSet", slog.Any("resultSet", resultSet))
+	reqLogger.Debug("resultSet", slog.Any("resultSet", resultSet))
 
 	var resultSetBuffer bytes.Buffer
 	err = resultSet.Serialize(&resultSetBuffer)
@@ -555,7 +555,7 @@ OUTER:
 		)
 	}
 
-	reqLogger.Info("ending blinded token request processor loop")
+	reqLogger.Debug("ending blinded token request processor loop")
 	reqLogger.Debug("about to emit", slog.Any("resultSet", resultSet))
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), reqLogger)
 	if err != nil {

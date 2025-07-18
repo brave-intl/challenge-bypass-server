@@ -172,6 +172,7 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	for {
 		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
 		if err != nil {
+			logger.Error("failed to process batch pipeline", slog.Any("error", err))
 			// If readAndCommitBatchPipelineResults returns an error.
 			close(batchPipeline)
 			kafkaErrorTotal.Inc()
@@ -195,15 +196,13 @@ func readAndCommitBatchPipelineResults(
 	<-msgCtx.done
 
 	if msgCtx.err != nil {
-		logger.Error("temporary failure encountered")
 		kafkaErrorTotal.Inc()
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
-	logger.Info("committing offset", "offset", msgCtx.msg.Offset)
+	logger.Debug("committing offset", "offset", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
-		logger.Error("failed to commit")
 		kafkaErrorTotal.Inc()
-		return errors.New("failed to commit")
+		return fmt.Errorf("failed to commit: %w", err)
 	}
 	return nil
 }
@@ -232,9 +231,8 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 			// Indicates batch has no more messages. End the loop for
 			// this batch and fetch another.
 			if err == io.EOF {
-				logger.Info("batch complete")
+				logger.Debug("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
-				logger.Error("batch item error")
 				kafkaErrorTotal.Inc()
 				panic("failed to fetch kafka messages and closed channel")
 			}
@@ -345,12 +343,11 @@ func Emit(
 		},
 	)
 	if err != nil {
-		logger.Error("failed to write messages", slog.Any("error", err))
 		kafkaErrorTotal.Inc()
-		return err
+		return fmt.Errorf("failed to write messages: %w", err)
 	}
 
-	logger.Info("data emitted")
+	logger.Debug("data emitted")
 	return nil
 }
 
@@ -360,7 +357,7 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" {
-		logger.Info("generating TLSDialer")
+		logger.Debug("generating TLSDialer")
 		var cfg aws.Config
 		var err error
 
@@ -374,9 +371,8 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 		}
 
 		if err != nil {
-			logger.Error("failed to setup aws config", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
-			return nil, err
+			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 
 		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
@@ -385,12 +381,11 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 		dialer.SASLMechanism = mechanism
 
 		if err != nil {
-			logger.Error("failed to initialize TLS dialer", slog.Any("error", err))
 			kafkaErrorTotal.Inc()
-			return nil, err
+			return nil, fmt.Errorf("failed to initialize TLS dialer: %w", err)
 		}
 	} else {
-		logger.Info("generating Dialer")
+		logger.Debug("generating Dialer")
 		dialer = &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,

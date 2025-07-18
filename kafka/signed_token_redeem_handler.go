@@ -239,7 +239,7 @@ func SignedTokenRedeemHandler(
 			})
 			continue
 		} else {
-			reqLogger.Info("token validated")
+			reqLogger.Debug("token validated")
 		}
 		redemption, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 		if err != nil {
