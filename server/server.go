@@ -189,10 +189,14 @@ func SetupLogger(
 ) (context.Context, *slog.Logger) {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
+	logLevel := slog.LevelWarn
+	if env == "local" || env == "test" {
+		logLevel = slog.LevelDebug
+	}
 	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		ReplaceAttr: logFormat.ReplaceAttr,
-		Level:       slog.LevelWarn,
+		Level:       logLevel,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),
