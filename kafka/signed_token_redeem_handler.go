@@ -47,7 +47,7 @@ func SignedTokenRedeemHandler(
 		kafkaErrorTotal.Inc()
 		return handlePermanentRedemptionError(
 			ctx,
-			fmt.Sprintf("failed avro deserialization"),
+			"failed avro deserialization",
 			err,
 			msg,
 			producer,
