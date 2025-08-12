@@ -91,8 +91,6 @@ The integration tests use a separate `docker-compose.integration.yml` file which
 - Runs LocalStack for DynamoDB emulation
 - Configures all services with test-specific settings
 
-The test runner writes results to the `./test-results` directory for inspection after test runs.
-
 ### Have an M1 / M2 (ARM) Mac?
 
 1.) In Docker Desktop, go to: `Settings -> Docker Engine` <br />
