@@ -415,7 +415,7 @@ func TestHTTPIssuerGetEndpoint(t *testing.T) {
 
 	t.Log("HTTP ISSUER GET ENDPOINT TEST PASSED")
 }
-func TestHTTPTokenIssuanceViaKafkaAndRedeemFlow(t *testing.T) {
+func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 	t.Log("TESTING TOKEN ISSUANCE VIA KAFKA AND REDEMPTION VIA HTTP")
 	issuerName := "TestIssuer-" + testIssuerSuffix.String()
 	requestID := fmt.Sprintf("test-request-%d", time.Now().UnixNano())
