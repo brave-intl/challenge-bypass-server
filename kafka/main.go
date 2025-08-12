@@ -16,7 +16,6 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/segmentio/kafka-go"
 	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
 )
@@ -374,7 +373,7 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 
-		return &kafka.Dialer{
+		return &kafkaGo.Dialer{
 			Timeout:       10 * time.Second,
 			DualStack:     true,
 			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
