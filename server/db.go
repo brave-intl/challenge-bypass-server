@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/model"
@@ -63,9 +64,9 @@ type RedemptionV2 struct {
 
 // CacheInterface cache functions
 type CacheInterface interface {
-	Get(k string) (interface{}, bool)
+	Get(k string) (any, bool)
 	Delete(k string)
-	SetDefault(k string, x interface{})
+	SetDefault(k string, x any)
 }
 
 var (
@@ -78,6 +79,51 @@ var (
 // LoadDBConfig loads config into server variable
 func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
+}
+
+// InitDBConfig reads os environment and update conf
+func (c *Server) InitDBConfig() error {
+	conf := DBConfig{
+		DefaultDaysBeforeExpiry: 7,
+		DefaultIssuerValidDays:  30,
+		MaxConnection:           100,
+	}
+	// Heroku style
+	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
+		conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	}
+	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
+		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
+	}
+	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
+		if count, err := strconv.Atoi(maxConnection); err == nil {
+			conf.MaxConnection = count
+		}
+	}
+	if defaultDaysBeforeExpiry := os.Getenv("DEFAULT_DAYS_BEFORE_EXPIRY"); defaultDaysBeforeExpiry != "" {
+		if count, err := strconv.Atoi(defaultDaysBeforeExpiry); err == nil {
+			conf.DefaultDaysBeforeExpiry = count
+		}
+	}
+	if defaultIssuerValidDays := os.Getenv("DEFAULT_ISSUER_VALID_DAYS"); defaultIssuerValidDays != "" {
+		if count, err := strconv.Atoi(defaultIssuerValidDays); err == nil {
+			conf.DefaultIssuerValidDays = count
+		}
+	}
+	if cacheEnabled := os.Getenv("CACHE_ENABLED"); cacheEnabled == "true" {
+		cachingConfig := CachingConfig{
+			Enabled:       true,
+			ExpirationSec: 10,
+		}
+		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheDurationSecs != "" {
+			if secs, err := strconv.Atoi(cacheDurationSecs); err == nil {
+				cachingConfig.ExpirationSec = secs
+			}
+		}
+		conf.CachingConfig = cachingConfig
+	}
+	c.LoadDBConfig(conf)
+	return nil
 }
 
 // InitDB initialzes the database connection based on a server's configuration
