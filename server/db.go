@@ -22,15 +22,8 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Why?
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
-	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
 )
-
-// CachingConfig is how long data is cached
-type CachingConfig struct {
-	Enabled       bool `json:"enabled"`
-	ExpirationSec int  `json:"expirationSec"`
-}
 
 // DBConfig defines app configurations
 type DBConfig struct {
@@ -59,13 +52,6 @@ type RedemptionV2 struct {
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
 	Offset    int64     `json:"offset"`
-}
-
-// CacheInterface cache functions
-type CacheInterface interface {
-	Get(k string) (interface{}, bool)
-	Delete(k string)
-	SetDefault(k string, x interface{})
 }
 
 var (
@@ -842,27 +828,4 @@ func isPostgresNotFoundError(err error) bool {
 		return true
 	}
 	return false
-}
-
-func retrieveFromCache(
-	caches map[string]CacheInterface,
-	cacheName string,
-	key string,
-) interface{} {
-	if caches != nil {
-		if cached, found := caches[cacheName].Get(key); found {
-			return cached
-		}
-	}
-	return nil
-}
-
-func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
-	caches := make(map[string]CacheInterface)
-	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
-	caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
-	return caches
 }
