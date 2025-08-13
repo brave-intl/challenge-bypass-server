@@ -1,0 +1,28 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches:
+      - master
+      - production
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  integration-tests:
+    name: Run Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3.6.0
+
+      - name: Run integration tests
+        run: make integration-test
+
+      - name: Cleanup
+        if: always()
+        run: make integration-test-clean
