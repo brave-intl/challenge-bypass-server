@@ -60,9 +60,8 @@ func (suite *ServerTestSuite) SetupSuite() {
 	suite.srv.InitDB()
 	suite.srv.InitDynamo()
 
-	_, suite.handler = suite.srv.setupRouter(
+	suite.handler = suite.srv.setupRouter(
 		SetupLogger(
-			context.Background(),
 			Version,
 			BuildTime,
 			Commit,
@@ -71,9 +70,8 @@ func (suite *ServerTestSuite) SetupSuite() {
 	err = test.SetupDynamodbTables(suite.srv.dynamo)
 	suite.Require().NoError(err)
 
-	_, suite.handler = suite.srv.setupRouter(
+	suite.handler = suite.srv.setupRouter(
 		SetupLogger(
-			context.Background(),
 			Version,
 			BuildTime,
 			Commit,

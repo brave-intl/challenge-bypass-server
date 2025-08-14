@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/model"
@@ -20,7 +21,6 @@ import (
 	migrate "github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file" // Why?
-	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
 	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
@@ -63,9 +63,9 @@ type RedemptionV2 struct {
 
 // CacheInterface cache functions
 type CacheInterface interface {
-	Get(k string) (interface{}, bool)
+	Get(k string) (any, bool)
 	Delete(k string)
-	SetDefault(k string, x interface{})
+	SetDefault(k string, x any)
 }
 
 var (
@@ -80,11 +80,56 @@ func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
 }
 
+// InitDBConfig reads os environment and update conf
+func (c *Server) InitDBConfig() error {
+	conf := DBConfig{
+		DefaultDaysBeforeExpiry: 7,
+		DefaultIssuerValidDays:  30,
+		MaxConnection:           100,
+	}
+	// Heroku style
+	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
+		conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	}
+	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
+		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
+	}
+	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
+		if count, err := strconv.Atoi(maxConnection); err == nil {
+			conf.MaxConnection = count
+		}
+	}
+	if defaultDaysBeforeExpiry := os.Getenv("DEFAULT_DAYS_BEFORE_EXPIRY"); defaultDaysBeforeExpiry != "" {
+		if count, err := strconv.Atoi(defaultDaysBeforeExpiry); err == nil {
+			conf.DefaultDaysBeforeExpiry = count
+		}
+	}
+	if defaultIssuerValidDays := os.Getenv("DEFAULT_ISSUER_VALID_DAYS"); defaultIssuerValidDays != "" {
+		if count, err := strconv.Atoi(defaultIssuerValidDays); err == nil {
+			conf.DefaultIssuerValidDays = count
+		}
+	}
+	if cacheEnabled := os.Getenv("CACHE_ENABLED"); cacheEnabled == "true" {
+		cachingConfig := CachingConfig{
+			Enabled:       true,
+			ExpirationSec: 10,
+		}
+		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheDurationSecs != "" {
+			if secs, err := strconv.Atoi(cacheDurationSecs); err == nil {
+				cachingConfig.ExpirationSec = secs
+			}
+		}
+		conf.CachingConfig = cachingConfig
+	}
+	c.LoadDBConfig(conf)
+	return nil
+}
+
 // InitDB initialzes the database connection based on a server's configuration
 func (c *Server) InitDB() {
 	cfg := c.dbConfig
 
-	db, err := sqlx.Open("postgres", cfg.ConnectionURI)
+	db, err := sql.Open("postgres", cfg.ConnectionURI)
 	if err != nil {
 		panic(err)
 	}
@@ -584,7 +629,7 @@ func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
-func txPopulateIssuerKeys(logger *slog.Logger, tx *sqlx.Tx, issuer model.Issuer) error {
+func txPopulateIssuerKeys(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) error {
 	var (
 		duration *timeutils.ISODuration
 		err      error
@@ -700,19 +745,34 @@ func txPopulateIssuerKeys(logger *slog.Logger, tx *sqlx.Tx, issuer model.Issuer)
 	insertValues := make([]map[string]interface{}, len(keys))
 	// create our value params for insertion
 	for idx, v := range keys {
-		insertValues[idx] =
-			map[string]interface{}{"issuer_id": v.IssuerID, "signing_key": v.SigningKey, "public_key": v.PublicKey, "cohort": v.Cohort, "start_at": v.StartAt, "end_at": v.EndAt}
+		insertValues[idx] = map[string]interface{}{
+			"issuer_id":   v.IssuerID,
+			"signing_key": v.SigningKey,
+			"public_key":  v.PublicKey,
+			"cohort":      v.Cohort,
+			"start_at":    v.StartAt,
+			"end_at":      v.EndAt,
+		}
 	}
 	logger.Debug("txpopulateissuerkeys", "inserting", insertValues)
 
-	_, err = tx.NamedExec(`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at) 
-		VALUES (:issuer_id, :signing_key, :public_key, :cohort, :start_at, :end_at)`, insertValues)
-	if err != nil {
-		logger.Error(
-			"could not insert the new issuer keys into the db",
-			slog.Any("err", err),
-		)
-		return err
+	for _, values := range insertValues {
+		_, err = tx.Exec(
+			`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at) 
+			VALUES (?, ?, ?, ?, ?, ?)`,
+			values["issuer_id"],
+			values["signing_key"],
+			values["public_key"],
+			values["cohort"],
+			values["start_at"],
+			values["end_at"])
+		if err != nil {
+			logger.Error(
+				"could not insert the new issuer key into the db",
+				slog.Any("err", err),
+			)
+			return err
+		}
 	}
 	logger.Debug("txpopulateissuerkeys", "performed insert", insertValues)
 	return nil
