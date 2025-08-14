@@ -3,6 +3,7 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -377,6 +378,9 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			Timeout:       10 * time.Second,
 			DualStack:     true,
 			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
+			TLS: &tls.Config{
+			    MinVersion: tls.VersionTLS12,
+		    },
 		}, nil
 	} else {
 		logger.Debug("generating Dialer")
