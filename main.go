@@ -28,7 +28,7 @@ func main() {
 		Commit    = "none"
 	)
 
-	serverCtx, logger := server.SetupLogger(context.Background(), Version, BuildTime, Commit)
+	logger := server.SetupLogger(Version, BuildTime, Commit)
 	srv := *server.DefaultServer
 	srv.Logger = logger
 
@@ -90,7 +90,7 @@ func main() {
 	}
 
 	logger.Debug("Initializing API server")
-	err = srv.ListenAndServe(serverCtx, logger)
+	err = srv.ListenAndServe(logger)
 	if err != nil {
 		logger.Error("listenandserve", slog.Any("error", err))
 		raven.CaptureErrorAndWait(err, nil)

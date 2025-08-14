@@ -11,8 +11,6 @@ require (
 	github.com/brave-intl/bat-go/libs v0.0.0-20250515184320-890ea7676fc7
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
 	github.com/getsentry/raven-go v0.2.0
-	github.com/go-chi/chi/v5 v5.2.2
-	github.com/go-chi/httplog/v3 v3.2.2
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/uuid v1.6.0
 	github.com/jmoiron/sqlx v1.3.5
@@ -23,7 +21,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/segmentio/kafka-go v0.4.38
 	github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2 v0.1.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 )
 
 require (
