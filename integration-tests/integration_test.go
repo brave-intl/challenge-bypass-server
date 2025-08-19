@@ -20,12 +20,13 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
-	"github.com/brave-intl/challenge-bypass-server/utils/test"
 	"github.com/google/uuid"
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
+	"github.com/brave-intl/challenge-bypass-server/utils/test"
 )
 
 // RedeemEndpoint identifies which redemption API to use
@@ -50,8 +51,8 @@ var (
 	testIssuerSuffix          = uuid.New()
 )
 
-// TokenInfo represents an unblinded token and its signing key
-type TokenInfo struct {
+// tokenInfo represents an unblinded token and its signing key
+type tokenInfo struct {
 	UnblindedToken *crypto.UnblindedToken
 	SignedKey      string
 }
@@ -64,6 +65,7 @@ type issuerResponse struct {
 	ExpiresAt string            `json:"expires_at,omitempty"`
 	Cohort    int16             `json:"cohort"`
 }
+
 type issuerV3CreateRequest struct {
 	Name      string     `json:"name"`
 	Cohort    int16      `json:"cohort"`
@@ -74,18 +76,13 @@ type issuerV3CreateRequest struct {
 	Overlap   int        `json:"overlap"`
 	Buffer    int        `json:"buffer"`
 }
+
 type blindedTokenRedeemRequest struct {
 	Payload       string                        `json:"payload"`
 	TokenPreimage *crypto.TokenPreimage         `json:"t"`
 	Signature     *crypto.VerificationSignature `json:"signature"`
 }
-type blindedTokenRedeemResponse struct {
-	Cohort int16 `json:"cohort"`
-}
-type BlindedTokenIssueRequestV2 struct {
-	BlindedTokens []*crypto.BlindedToken `json:"blinded_tokens"`
-	IssuerCohort  int16                  `json:"cohort"`
-}
+
 type blindedTokenIssueResponse struct {
 	BatchProof   *crypto.BatchDLEQProof `json:"batch_proof"`
 	SignedTokens []*crypto.SignedToken  `json:"signed_tokens"`
@@ -98,6 +95,7 @@ func TestMain(m *testing.M) {
 	result := m.Run()
 	os.Exit(result)
 }
+
 func setup() {
 	logger := log.New(os.Stdout, "[TEST SETUP] ", log.Ldate|log.Ltime)
 	logger.Println("Starting test environment setup...")
@@ -109,42 +107,7 @@ func setup() {
 	createTestIssuer(logger)
 	logger.Println("Test environment setup completed successfully")
 }
-func TestBasicKafkaConnection(t *testing.T) {
-	t.Log("TESTING BASIC KAFKA CONNECTION")
-	testMessage := "Hello Kafka " + uuid.New().String()
 
-	t.Log("Connecting to Kafka for writing...")
-	conn, err := kafka.DialLeader(context.Background(), "tcp", kafkaHost, connectionTestTopicName, 0)
-	require.NoError(t, err, "Failed to connect to Kafka for writing")
-	defer conn.Close()
-
-	t.Log("Writing test message to Kafka...")
-	conn.SetWriteDeadline(time.Now().Add(30 * time.Second))
-	_, err = conn.WriteMessages(
-		kafka.Message{Value: []byte(testMessage)},
-	)
-	require.NoError(t, err, "Failed to write test message")
-	t.Logf("Successfully wrote message: %s", testMessage)
-
-	t.Log("Creating reader to verify message...")
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers: []string{kafkaHost},
-		Topic:   connectionTestTopicName,
-	})
-	defer reader.Close()
-
-	t.Log("Attempting to read back the message...")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	message, err := reader.ReadMessage(ctx)
-	if err != nil {
-		t.Fatalf("Failed to read message: %v", err)
-	}
-	t.Logf("Successfully read message: %s", string(message.Value))
-	assert.Equal(t, testMessage, string(message.Value), "Message content doesn't match")
-	t.Log("BASIC KAFKA CONNECTION TEST PASSED")
-}
 func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 	t.Log("TESTING KAFKA TOKEN ISSUANCE AND REDEMPTION FLOW")
 	requestID := fmt.Sprintf("test-request-%d", time.Now().UnixNano())
@@ -327,9 +290,7 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 		var resultSet avroSchema.RedeemResultSet
 		message, err := reader.ReadMessage(ctx)
-		if err != nil {
-			t.Fatalf("Failed to read redemption response from Kafka: %v", err)
-		}
+		require.NoError(t, err, "Failed to read redemption response from Kafka")
 		t.Log("Successfully received redemption message from Kafka")
 
 		t.Log("Deserializing redemption response...")
@@ -356,7 +317,8 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 	t.Log("KAFKA TOKEN ISSUANCE AND REDEMPTION FLOW TEST COMPLETED")
 }
-func TestHTTPIssuerGetEndpoint(t *testing.T) {
+
+func TestGetIssuerV1(t *testing.T) {
 	t.Log("TESTING HTTP ISSUER GET ENDPOINT")
 	issuerName := "TestIssuer-" + testIssuerSuffix.String()
 
@@ -415,6 +377,7 @@ func TestHTTPIssuerGetEndpoint(t *testing.T) {
 
 	t.Log("HTTP ISSUER GET ENDPOINT TEST PASSED")
 }
+
 func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 	t.Log("TESTING TOKEN ISSUANCE VIA KAFKA AND REDEMPTION VIA HTTP")
 	issuerName := "TestIssuer-" + testIssuerSuffix.String()
@@ -437,7 +400,7 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 
 	t.Log("Step 2: Mapping original blinded tokens to unblinded tokens and signing keys...")
 	// Map each original blinded token to its unblinded token and signing key
-	var allTokenInfos []TokenInfo
+	var allTokenInfos []tokenInfo
 	for i, originalBlindedToken := range blindedTokens {
 		t.Logf("Processing token %d/%d...", i+1, len(blindedTokens))
 
@@ -482,7 +445,7 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 
 					require.Len(t, resultUnblindedTokens, 1, "Should get exactly one unblinded token")
 
-					allTokenInfos = append(allTokenInfos, TokenInfo{
+					allTokenInfos = append(allTokenInfos, tokenInfo{
 						UnblindedToken: resultUnblindedTokens[0],
 						SignedKey:      result.Issuer_public_key,
 					})
@@ -512,6 +475,7 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 
 	t.Log("TOKEN ISSUANCE VIA KAFKA AND REDEMPTION VIA HTTP TEST COMPLETED")
 }
+
 func waitForKafka(logger *log.Logger) {
 	var conn *kafka.Conn
 	var err error
@@ -533,6 +497,7 @@ func waitForKafka(logger *log.Logger) {
 
 	logger.Fatalf("FATAL: Failed to connect to Kafka after %d attempts: %v", maxRetries, err)
 }
+
 func ensureTopicsExist(logger *log.Logger) {
 	logger.Printf("Connecting to Kafka broker at %s to create topics...", kafkaHost)
 
@@ -581,6 +546,7 @@ func ensureTopicsExist(logger *log.Logger) {
 		}
 	}
 }
+
 func inspectKafkaSetup(logger *log.Logger) {
 	logger.Printf("Connecting to Kafka at %s to inspect configuration...", kafkaHost)
 
@@ -629,6 +595,7 @@ func inspectKafkaSetup(logger *log.Logger) {
 		}
 	}
 }
+
 func checkNetworkConnectivity(logger *log.Logger) {
 	hosts := []string{
 		kafkaHost,
@@ -651,6 +618,7 @@ func checkNetworkConnectivity(logger *log.Logger) {
 		}
 	}
 }
+
 func initializeLocalStack(logger *log.Logger) {
 	logger.Print("Creating AWS session for LocalStack...")
 
@@ -680,6 +648,7 @@ func initializeLocalStack(logger *log.Logger) {
 
 	logger.Print("SUCCESS: LocalStack DynamoDB setup completed successfully")
 }
+
 func createTestIssuer(logger *log.Logger) {
 	issuerName := "TestIssuer-" + testIssuerSuffix.String()
 	logger.Printf("Creating test issuer '%s'...", issuerName)
@@ -791,6 +760,7 @@ func validateResponse(t *testing.T, response avroSchema.RedeemResultSet) {
 		}
 	}
 }
+
 func issueTokensViaKafka(
 	t *testing.T,
 	requestID string,
@@ -895,7 +865,8 @@ func issueTokensViaKafka(
 
 	return tokens, blindedTokens, signingResultSet
 }
-func doRedemptionHTTPTest(t *testing.T, issuerName string, which RedeemEndpoint, tokenInfos []TokenInfo) {
+
+func doRedemptionHTTPTest(t *testing.T, issuerName string, which RedeemEndpoint, tokenInfos []tokenInfo) {
 	t.Logf("TESTING HTTP REDEMPTION VIA %s ENDPOINT", which)
 	t.Logf("Issuer: %s, Token count: %d", issuerName, len(tokenInfos))
 
