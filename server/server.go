@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
@@ -189,14 +190,24 @@ func SetupLogger(
 ) (context.Context, *slog.Logger) {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
-	logLevel := slog.LevelWarn
-	if env == "local" || env == "test" {
-		logLevel = slog.LevelDebug
+	var level slog.Level
+	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "WARN":
+		level = slog.LevelWarn
+	case "INFO":
+		level = slog.LevelInfo
+	case "ERROR":
+		level = slog.LevelError
+	default:
+		level = slog.LevelWarn
 	}
+
 	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		ReplaceAttr: logFormat.ReplaceAttr,
-		Level:       logLevel,
+		Level:       level,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),

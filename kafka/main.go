@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -361,7 +360,6 @@ func Emit(
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
 func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error) {
-	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
 	if env != "local" && env != "test" {
 		logger.Debug("generating TLSDialer")
@@ -382,20 +380,16 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 
-		tlsDialer, _, err := batgo_kafka.TLSDialer()
-		if err != nil {
-			kafkaErrorTotal.Inc()
-			return nil, fmt.Errorf("failed to initialize TLS dialer: %w", err)
-		}
-		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
-		dialer = tlsDialer
-		dialer.SASLMechanism = mechanism
+		return &kafkaGo.Dialer{
+			Timeout:       10 * time.Second,
+			DualStack:     true,
+			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
+		}, nil
 	} else {
 		logger.Debug("generating Dialer")
-		dialer = &kafkaGo.Dialer{
+		return &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
-		}
+		}, nil
 	}
-	return dialer, nil
 }
