@@ -83,12 +83,6 @@ type blindedTokenRedeemRequest struct {
 	Signature     *crypto.VerificationSignature `json:"signature"`
 }
 
-type blindedTokenIssueResponse struct {
-	BatchProof   *crypto.BatchDLEQProof `json:"batch_proof"`
-	SignedTokens []*crypto.SignedToken  `json:"signed_tokens"`
-	PublicKey    *crypto.PublicKey      `json:"public_key"`
-}
-
 // TestMain runs setup before all tests
 func TestMain(m *testing.M) {
 	setup()
