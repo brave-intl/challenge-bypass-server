@@ -48,27 +48,24 @@ var (
 	responseRedeemTopicName   = os.Getenv("TEST_SHOULD_READ_REDEEM_REQUESTS_HERE")
 	requestIssuanceTopicName  = os.Getenv("TEST_SHOULD_WRITE_SIGNING_REQUESTS_HERE")
 	responseIssuanceTopicName = os.Getenv("TEST_SHOULD_READ_SIGNING_REQUESTS_HERE")
-	testIssuerSuffix          = uuid.New()
 )
 
-// tokenInfo represents an unblinded token and its signing key
 type tokenInfo struct {
 	UnblindedToken *crypto.UnblindedToken
 	SignedKey      string
 }
 
-// API request/response types
 type issuerResponse struct {
 	ID        string            `json:"id"`
 	Name      string            `json:"name"`
 	PublicKey *crypto.PublicKey `json:"public_key"`
 	ExpiresAt string            `json:"expires_at,omitempty"`
-	Cohort    int16             `json:"cohort"`
+	Cohort    int32             `json:"cohort"`
 }
 
 type issuerV3CreateRequest struct {
 	Name      string     `json:"name"`
-	Cohort    int16      `json:"cohort"`
+	Cohort    int32      `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
 	ExpiresAt *time.Time `json:"expires_at"`
 	ValidFrom *time.Time `json:"valid_from"`
@@ -101,286 +98,350 @@ func setup() {
 
 func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 	t.Log("TESTING KAFKA TOKEN ISSUANCE AND REDEMPTION FLOW")
+	issuerName := "TestIssuer-" + uuid.New().String()
+
 	requestID := fmt.Sprintf("test-request-%d", time.Now().UnixNano())
-	testMetadata := []byte(
-		`{"user_id": "test-user", "timestamp": "2025-07-30T12:00:00Z"}`,
-	)
+	testMetadata := []byte(`{"user_id": "test-user", "timestamp": "2025-07-30T12:00:00Z"}`)
 	testID := uuid.New().String()
 
 	t.Logf("Test parameters: RequestID=%s, TestID=%s", requestID, testID)
-	t.Log("Step 1: Issuing tokens via Kafka...")
-	tokens, blindedTokens, signingResultSet := issueTokensViaKafka(
-		t,
-		requestID,
-		testMetadata,
-		testID,
+
+	var tokens []*crypto.Token
+	var blindedTokens []*crypto.BlindedToken
+	var signingResultSet avroSchema.SigningResultV2Set
+	t.Logf("Creating test issuer '%s'...", issuerName)
+
+	now := time.Now()
+	expires := now.Add(1 * time.Hour)
+
+	issuerRequest := issuerV3CreateRequest{
+		Name:      issuerName,
+		Cohort:    1,
+		MaxTokens: 500,
+		ExpiresAt: &expires,
+		ValidFrom: &now,
+		Duration:  "PT1H30M",
+		Overlap:   1,
+		Buffer:    1,
+	}
+
+	t.Logf(
+		"Issuer configuration: MaxTokens=%d, ValidFrom=%s, ExpiresAt=%s, Duration=%s, Overlap=%d, Buffer=%d",
+		issuerRequest.MaxTokens,
+		now.Format(time.RFC3339),
+		expires.Format(time.RFC3339),
+		issuerRequest.Duration,
+		issuerRequest.Overlap,
+		issuerRequest.Buffer,
 	)
-	t.Logf("Successfully received signing results with %d tokens", len(tokens))
+	createTestIssuer(t, issuerRequest)
 
-	// Unblind tokens and attempt to redeem each one
-	t.Log("Step 2: Processing signing results and attempting redemption...")
-	for i, result := range signingResultSet.Data {
-		t.Logf("Processing signing result %d/%d", i+1, len(signingResultSet.Data))
+	t.Run("issue_tokens", func(t *testing.T) {
+		tokens, blindedTokens, signingResultSet = issueTokensViaKafka(
+			t,
+			testMetadata,
+			testID,
+			requestID,
+			issuerRequest,
+		)
+		t.Logf("Successfully received signing results with %d tokens", len(tokens))
+		require.NotEmpty(t, tokens, "Should have tokens after issuance")
+		require.NotEmpty(t, blindedTokens, "Should have blinded tokens after issuance")
+		require.NotEmpty(t, signingResultSet.Data, "Should have signing results after issuance")
+	})
 
-		require.Equal(
-			t,
-			avroSchema.SigningResultV2StatusOk,
-			result.Status,
-			"Signing failed for result %d",
-			i,
-		)
-		require.NotEmpty(
-			t,
-			result.Signed_tokens,
-			"No signed tokens in result %d",
-			i,
-		)
-		require.NotEmpty(
-			t,
-			result.Issuer_public_key,
-			"No public key in result %d",
-			i,
-		)
-		require.NotEmpty(t, result.Proof, "No proof in result %d", i)
-		t.Logf(
-			"Successfully received %d signed tokens for request %d",
-			len(result.Signed_tokens),
-			i+1,
-		)
-
-		validFrom, _ := time.Parse(time.RFC3339, result.Valid_from.String)
-		// Skip tokens signed with future keys
-		if validFrom.After(time.Now()) {
+	t.Run("process_signing_results", func(t *testing.T) {
+		for i, result := range signingResultSet.Data {
 			t.Logf(
-				"SKIPPING: Token signed with future key %s (valid from %s) - this is expected",
-				result.Issuer_public_key,
-				validFrom.Format(time.RFC3339),
+				"Processing signing result %d/%d",
+				i+1,
+				len(signingResultSet.Data),
 			)
-			continue
-		}
 
-		t.Log("Processing signed tokens...")
-		var signedTokens []*crypto.SignedToken
-		for _, signedTokenString := range result.Signed_tokens {
-			var signedToken crypto.SignedToken
-			err := signedToken.UnmarshalText([]byte(signedTokenString))
-			require.NoError(t, err, "failed to unmarshal signed token")
-			signedTokens = append(signedTokens, &signedToken)
-		}
-
-		t.Log("Processing blinded tokens...")
-		var responseBlindedTokens []*crypto.BlindedToken
-		for _, blindedTokenString := range result.Blinded_tokens {
-			var blindedToken crypto.BlindedToken
-			err := blindedToken.UnmarshalText([]byte(blindedTokenString))
-			require.NoError(t, err, "failed to unmarshal blinded token")
-			responseBlindedTokens = append(responseBlindedTokens, &blindedToken)
-		}
-
-		t.Log("Unmarshaling cryptographic parameters...")
-		var (
-			batchDLEQProof  crypto.BatchDLEQProof
-			issuerPublicKey crypto.PublicKey
-		)
-		err := issuerPublicKey.UnmarshalText([]byte(result.Issuer_public_key))
-		require.NoError(t, err, "failed to unmarshal issuer public key")
-		err = batchDLEQProof.UnmarshalText([]byte(result.Proof))
-		require.NoError(t, err, "failed to unmarshal batch DLEQ proof")
-
-		// Verify signed tokens
-		t.Log("Verifying signed tokens with DLEQ proof...")
-		verifyResult, err := batchDLEQProof.Verify(
-			responseBlindedTokens,
-			signedTokens,
-			&issuerPublicKey,
-		)
-		require.NoError(t, err, "failed to verify signed tokens")
-		require.Equal(t, verifyResult, true, "DLEQ proof should be valid")
-		t.Log("Successfully verified tokens with DLEQ proof")
-
-		// REDEMPTION PHASE - Use the specific token that was signed with this key
-		t.Log("Preparing for token redemption...")
-		tokenIndex := 0
-		if i > 0 {
-			tokenIndex = 1 // For the second result, use the second token
-			t.Log("Using second token for this redemption (i > 0)")
-		} else {
-			t.Log("Using first token for this redemption (i = 0)")
-		}
-
-		// Get the specific token that was signed with this issuer's key
-		specificToken := tokens[tokenIndex]
-		specificBlindedTokenText, err := blindedTokens[tokenIndex].MarshalText()
-		require.NoError(t, err, "failed to marshal specific blinded tokens")
-
-		// Find the signed token that corresponds to our blinded token
-		t.Log("Finding the corresponding signed token...")
-		var signedUnblindedToken *crypto.UnblindedToken
-		var matchFound bool
-
-		for j, respBlindedToken := range responseBlindedTokens {
-			respBlindedTokenText, err := respBlindedToken.MarshalText()
-			require.NoError(
+			require.Equal(
 				t,
-				err,
-				"failed to marshal response blinded tokens",
+				avroSchema.SigningResultV2StatusOk,
+				result.Status,
+				"Signing should succeed for result %d",
+				i,
 			)
 
-			if bytes.Equal(respBlindedTokenText, specificBlindedTokenText) {
-				t.Logf("Found matching token at index %d", j)
-				matchFound = true
+			require.NotEmpty(
+				t,
+				result.Signed_tokens,
+				"Should have signed tokens in result %d",
+				i,
+			)
 
-				// This is our token - unblind it with the corresponding signed token
-				t.Log("Unblinding token...")
-				unblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
-					[]*crypto.Token{specificToken},
-					[]*crypto.BlindedToken{respBlindedToken},
-					[]*crypto.SignedToken{signedTokens[j]},
-					&issuerPublicKey,
-				)
-				require.NoError(
-					t,
-					err,
-					"failed to verify and unblind specific token",
-				)
-				require.Len(
-					t,
-					unblindedTokens,
-					1,
-					"expected exactly one unblinded token",
-				)
+			require.NotEmpty(
+				t,
+				result.Issuer_public_key,
+				"Should have public key in result %d",
+				i,
+			)
 
-				signedUnblindedToken = unblindedTokens[0]
+			require.NotEmpty(
+				t,
+				result.Proof,
+				"Should have proof in result %d",
+				i,
+			)
+
+			validFrom, _ := time.Parse(time.RFC3339, result.Valid_from.String)
+			if validFrom.After(time.Now()) {
+				t.Logf(
+					"Skipping token with future key (valid from %s)",
+					validFrom.Format(time.RFC3339),
+				)
+				continue
+			}
+
+			// Verify the rest of the test only needs to run once, for a valid token
+			if i == 0 {
+				t.Run("verify_and_redeem_token", func(t *testing.T) {
+					// Process the first signed token for simplicity
+					var signedToken crypto.SignedToken
+					err := signedToken.UnmarshalText([]byte(result.Signed_tokens[0]))
+					require.NoError(t, err, "Should unmarshal signed token")
+
+					var blindedToken crypto.BlindedToken
+					err = blindedToken.UnmarshalText([]byte(result.Blinded_tokens[0]))
+					require.NoError(t, err, "Should unmarshal blinded token")
+
+					var issuerPublicKey crypto.PublicKey
+					err = issuerPublicKey.UnmarshalText([]byte(result.Issuer_public_key))
+					require.NoError(t, err, "Should unmarshal issuer public key")
+
+					var batchDLEQProof crypto.BatchDLEQProof
+					err = batchDLEQProof.UnmarshalText([]byte(result.Proof))
+					require.NoError(t, err, "Should unmarshal batch DLEQ proof")
+
+					// Verify signed token with DLEQ proof
+					verifyResult, err := batchDLEQProof.Verify(
+						[]*crypto.BlindedToken{&blindedToken},
+						[]*crypto.SignedToken{&signedToken},
+						&issuerPublicKey,
+					)
+					require.NoError(t, err, "Should verify signed token")
+					require.True(t, verifyResult, "DLEQ proof should be valid")
+
+					// Find the token that corresponds to this signed token
+					var specificToken *crypto.Token
+					for j, origBlinded := range blindedTokens {
+						origBlindedText, _ := origBlinded.MarshalText()
+						respBlindedText, _ := blindedToken.MarshalText()
+
+						if bytes.Equal(origBlindedText, respBlindedText) {
+							specificToken = tokens[j]
+							break
+						}
+					}
+					require.NotNil(t, specificToken, "Should find the original token")
+
+					// Unblind the token
+					unblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
+						[]*crypto.Token{specificToken},
+						[]*crypto.BlindedToken{&blindedToken},
+						[]*crypto.SignedToken{&signedToken},
+						&issuerPublicKey,
+					)
+					require.NoError(t, err, "Should verify and unblind token")
+					require.Len(t, unblindedTokens, 1, "Should get exactly one unblinded token")
+
+					signedUnblindedToken := unblindedTokens[0]
+
+					// Redeem the token via Kafka
+					t.Run("redeem_via_kafka", func(t *testing.T) {
+						tokenPreimage, err := signedUnblindedToken.Preimage().MarshalText()
+						require.NoError(t, err, "Should marshal preimage")
+
+						signature, err := signedUnblindedToken.DeriveVerificationKey().Sign("test")
+						require.NoError(t, err, "Should create signature")
+
+						stringSignature, err := signature.MarshalText()
+						require.NoError(t, err, "Should marshal signature")
+
+						redeemRequest := avroSchema.RedeemRequest{
+							Associated_data: testMetadata,
+							Public_key:      result.Issuer_public_key,
+							Token_preimage:  string(tokenPreimage),
+							Binding:         "test",
+							Signature:       string(stringSignature),
+						}
+
+						requestSet := &avroSchema.RedeemRequestSet{
+							Request_id: requestID,
+							Data:       []avroSchema.RedeemRequest{redeemRequest},
+						}
+
+						var requestSetBuffer bytes.Buffer
+						err = requestSet.Serialize(&requestSetBuffer)
+						require.NoError(t, err, "Should serialize redeem request")
+
+						// Set up Kafka writer and reader
+						writer := kafka.NewWriter(kafka.WriterConfig{
+							Brokers: []string{kafkaHost},
+							Topic:   requestRedeemTopicName,
+						})
+						defer writer.Close()
+
+						reader := kafka.NewReader(kafka.ReaderConfig{
+							Brokers:     []string{kafkaHost},
+							Topic:       responseRedeemTopicName,
+							GroupID:     fmt.Sprintf("test-redeem-%s", testID),
+							StartOffset: kafka.LastOffset,
+							MinBytes:    1,
+							MaxBytes:    10e6,
+							MaxWait:     100 * time.Millisecond,
+						})
+						defer reader.Close()
+
+						// Send redemption request
+						err = writer.WriteMessages(context.Background(),
+							kafka.Message{
+								Key:   []byte(requestID),
+								Value: requestSetBuffer.Bytes(),
+							},
+						)
+						require.NoError(t, err, "Should write redeem request to Kafka")
+
+						// Wait for response
+						ctx, cancel := context.WithTimeout(
+							context.Background(),
+							responseWaitDuration,
+						)
+						defer cancel()
+
+						message, err := reader.ReadMessage(ctx)
+						require.NoError(t, err, "Should read redemption response")
+
+						// Deserialize and validate
+						resultSet, err := avroSchema.DeserializeRedeemResultSet(
+							bytes.NewReader(message.Value),
+						)
+						require.NoError(t, err, "Should deserialize redemption response")
+
+						require.Equal(t, requestID, resultSet.Request_id,
+							"Response request ID should match")
+
+						require.NotEmpty(t, resultSet.Data, "Should have redemption results")
+
+						// Validate first result
+						result := resultSet.Data[0]
+						assert.NotEmpty(t, result.Issuer_name, "Should have issuer name")
+						assert.Greater(t, result.Issuer_cohort, int32(-1), "Should have valid cohort")
+						assert.Contains(t,
+							[]avroSchema.RedeemResultStatus{
+								avroSchema.RedeemResultStatusOk,
+								avroSchema.RedeemResultStatusIdempotent_redemption,
+							},
+							result.Status,
+							"Redemption should succeed")
+					})
+
+					// Test duplicate redemption
+					t.Run("redeem_duplicate", func(t *testing.T) {
+						// Same redemption request as before
+						tokenPreimage, _ := signedUnblindedToken.Preimage().MarshalText()
+						signature, _ := signedUnblindedToken.DeriveVerificationKey().Sign("test")
+						stringSignature, _ := signature.MarshalText()
+
+						redeemRequest := avroSchema.RedeemRequest{
+							Associated_data: testMetadata,
+							Public_key:      result.Issuer_public_key,
+							Token_preimage:  string(tokenPreimage),
+							Binding:         "test",
+							Signature:       string(stringSignature),
+						}
+
+						duplicateRequestID := requestID + "-duplicate"
+						requestSet := &avroSchema.RedeemRequestSet{
+							Request_id: duplicateRequestID,
+							Data:       []avroSchema.RedeemRequest{redeemRequest},
+						}
+
+						var requestSetBuffer bytes.Buffer
+						err = requestSet.Serialize(&requestSetBuffer)
+						require.NoError(t, err, "Should serialize duplicate request")
+
+						// Set up Kafka writer and reader
+						writer := kafka.NewWriter(kafka.WriterConfig{
+							Brokers: []string{kafkaHost},
+							Topic:   requestRedeemTopicName,
+						})
+						defer writer.Close()
+
+						reader := kafka.NewReader(kafka.ReaderConfig{
+							Brokers:     []string{kafkaHost},
+							Topic:       responseRedeemTopicName,
+							GroupID:     fmt.Sprintf("test-duplicate-%s", testID),
+							StartOffset: kafka.LastOffset,
+							MinBytes:    1,
+							MaxBytes:    10e6,
+							MaxWait:     100 * time.Millisecond,
+						})
+						defer reader.Close()
+
+						// Send duplicate request
+						err = writer.WriteMessages(context.Background(),
+							kafka.Message{
+								Key:   []byte(duplicateRequestID),
+								Value: requestSetBuffer.Bytes(),
+							},
+						)
+						require.NoError(t, err, "Should write duplicate request")
+
+						// Wait for response
+						ctx, cancel := context.WithTimeout(
+							context.Background(),
+							responseWaitDuration,
+						)
+						defer cancel()
+
+						message, err := reader.ReadMessage(ctx)
+						require.NoError(t, err, "Should read duplicate response")
+
+						// Deserialize and validate
+						resultSet, err := avroSchema.DeserializeRedeemResultSet(
+							bytes.NewReader(message.Value),
+						)
+						require.NoError(t, err, "Should deserialize duplicate response")
+
+						require.Equal(t, duplicateRequestID, resultSet.Request_id,
+							"Duplicate response ID should match")
+
+						require.NotEmpty(t, resultSet.Data, "Should have duplicate results")
+
+						// Validate the result status should be duplicate
+						result := resultSet.Data[0]
+						assert.Equal(t,
+							avroSchema.RedeemResultStatusDuplicate_redemption,
+							result.Status,
+							"Duplicate redemption should be detected")
+					})
+				})
+
+				// Only need to run the detailed tests once
 				break
 			}
 		}
-
-		require.True(t, matchFound, "Should find a matching token")
-		require.NotNil(
-			t,
-			signedUnblindedToken,
-			"failed to find and unblind the specific token",
-		)
-
-		t.Log("Preparing redemption request...")
-		tokenPreimage, err := signedUnblindedToken.Preimage().MarshalText()
-		require.NoError(t, err, "failed to marshal preimage")
-
-		signature, err := signedUnblindedToken.DeriveVerificationKey().Sign("test")
-		require.NoError(t, err, "failed to create signature")
-
-		stringSignature, err := signature.MarshalText()
-		require.NoError(t, err, "failed to marshal signature")
-
-		redeemRequest := avroSchema.RedeemRequest{
-			Associated_data: testMetadata,
-			Public_key:      result.Issuer_public_key,
-			Token_preimage:  string(tokenPreimage),
-			Binding:         "test",
-			Signature:       string(stringSignature),
-		}
-
-		requestSet := &avroSchema.RedeemRequestSet{
-			Request_id: requestID,
-			Data:       []avroSchema.RedeemRequest{redeemRequest},
-		}
-
-		var requestSetBuffer bytes.Buffer
-		err = requestSet.Serialize(&requestSetBuffer)
-		require.NoError(t, err, "Failed to serialize redeem request to binary")
-
-		t.Log("Setting up Kafka writer and reader for redemption...")
-		writer := kafka.NewWriter(kafka.WriterConfig{
-			Brokers: []string{kafkaHost},
-			Topic:   requestRedeemTopicName,
-		})
-		defer writer.Close()
-
-		reader := kafka.NewReader(kafka.ReaderConfig{
-			Brokers:     []string{kafkaHost},
-			Topic:       responseRedeemTopicName,
-			GroupID:     fmt.Sprintf("test-signing-%s-%d", testID, i),
-			StartOffset: kafka.LastOffset,
-			MinBytes:    1,
-			MaxBytes:    10e6,
-			MaxWait:     100 * time.Millisecond,
-		})
-		defer reader.Close()
-
-		t.Log("Sending redemption request to Kafka...")
-		err = writer.WriteMessages(context.Background(),
-			kafka.Message{
-				Key:   []byte(requestID),
-				Value: requestSetBuffer.Bytes(),
-			},
-		)
-		require.NoError(t, err, "Failed to write redeem request to Kafka")
-		t.Logf(
-			"Successfully sent token redemption request to Kafka (RequestID: %s)",
-			requestID,
-		)
-
-		t.Log("Waiting for redemption response from Kafka...")
-		ctx, cancel := context.WithTimeout(
-			context.Background(),
-			responseWaitDuration,
-		)
-		defer cancel()
-
-		var resultSet avroSchema.RedeemResultSet
-		message, err := reader.ReadMessage(ctx)
-		require.NoError(t, err, "Failed to read redemption response from Kafka")
-		t.Log("Successfully received redemption message from Kafka")
-
-		t.Log("Deserializing redemption response...")
-		resultSet, err = avroSchema.DeserializeRedeemResultSet(
-			bytes.NewReader(message.Value),
-		)
-
-		if err != nil {
-			t.Logf("WARNING: Cannot deserialize redemption message: %v", err)
-			t.Logf("Raw message content: %s", string(message.Value))
-		}
-
-		if resultSet.Request_id == requestID {
-			t.Logf(
-				"Found matching redemption response for request ID: %s",
-				requestID,
-			)
-			t.Log("Validating response...")
-			validateResponse(t, resultSet)
-		} else {
-			t.Logf(
-				"WARNING: Received redemption message for different request ID: %s (expected: %s)",
-				resultSet.Request_id,
-				requestID,
-			)
-		}
-
-		require.NotNil(t, resultSet, "Redemption response set should not be nil")
-	}
-
-	t.Log("KAFKA TOKEN ISSUANCE AND REDEMPTION FLOW TEST COMPLETED")
+	})
 }
 
 func TestIssuerV1(t *testing.T) {
-	t.Cleanup(func() {
-		_, _ = dbi.Exec("TRUNCATE TABLE issuers;")
-	})
-
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	exp := time.Now().Add(time.Hour).UTC()
 
-	issReq := issuerV3CreateRequest{
-		Name:      "test-issuer-V1",
+	issuerRequest := issuerV3CreateRequest{
+		Name:      "TestIssuer-" + uuid.New().String(),
 		Cohort:    1,
 		MaxTokens: 1,
 		ExpiresAt: &exp,
 	}
 
 	t.Run("create_issuer", func(t *testing.T) {
-		body, err := json.Marshal(issReq)
+		body, err := json.Marshal(issuerRequest)
 		require.NoError(t, err)
 
 		req, err := http.NewRequest(
@@ -398,12 +459,11 @@ func TestIssuerV1(t *testing.T) {
 
 	t.Run("get_issuer", func(t *testing.T) {
 		t.Log("TESTING HTTP ISSUER GET ENDPOINT")
-		issuerName := "TestIssuer-" + testIssuerSuffix.String()
 
-		t.Logf("Retrieving issuer information for '%s'...", issuerName)
+		t.Logf("Retrieving issuer information for '%s'...", issuerRequest.Name)
 		req, err := http.NewRequest(
 			"GET",
-			fmt.Sprintf("http://cbp:2416/v1/issuer/%s", issuerName),
+			fmt.Sprintf("http://cbp:2416/v1/issuer/%s", issuerRequest.Name),
 			nil,
 		)
 		require.NoError(t, err, "failed to create GET issuer HTTP request")
@@ -429,9 +489,9 @@ func TestIssuerV1(t *testing.T) {
 			issuerResp.ID, issuerResp.Name, issuerResp.Cohort)
 
 		assert.NotEmpty(t, issuerResp.ID, "issuer ID should not be empty")
-		assert.Equal(t, issuerName, issuerResp.Name, "issuer name should match")
+		assert.Equal(t, issuerRequest.Name, issuerResp.Name, "issuer name should match")
 		assert.NotNil(t, issuerResp.PublicKey, "public key should not be nil")
-		assert.Equal(t, int16(1), issuerResp.Cohort, "cohort should be 1")
+		assert.Equal(t, int32(1), issuerResp.Cohort, "cohort should be 1")
 
 		if issuerResp.ExpiresAt != "" {
 			expiresAt, err := time.Parse(time.RFC3339, issuerResp.ExpiresAt)
@@ -510,113 +570,210 @@ func TestIssuerV1(t *testing.T) {
 
 func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 	t.Log("TESTING TOKEN ISSUANCE VIA KAFKA AND REDEMPTION VIA HTTP")
-	issuerName := "TestIssuer-" + testIssuerSuffix.String()
+
+	issuerName := "TestIssuer-" + uuid.New().String()
 	requestID := fmt.Sprintf("test-request-%d", time.Now().UnixNano())
-	testMetadata := []byte(
-		`{"user_id": "test-user", "timestamp": "2025-07-30T12:00:00Z"}`,
-	)
+	testMetadata := []byte(`{"user_id": "test-user", "timestamp": "2025-07-30T12:00:00Z"}`)
 	testID := uuid.New().String()
 
 	t.Logf("Test parameters: IssuerName=%s, RequestID=%s, TestID=%s",
 		issuerName, requestID, testID)
 
-	t.Log("Step 1: Issuing tokens via Kafka...")
-	tokens, blindedTokens, signingResultSet := issueTokensViaKafka(
-		t,
-		requestID,
-		testMetadata,
-		testID,
-	)
-	t.Logf(
-		"Successfully received signing results with %d tokens and %d result entries",
-		len(tokens),
-		len(signingResultSet.Data),
-	)
-
-	t.Log("Step 2: Mapping original blinded tokens to unblinded tokens and signing keys...")
-	// Map each original blinded token to its unblinded token and signing key
+	var tokens []*crypto.Token
+	var blindedTokens []*crypto.BlindedToken
+	var signingResultSet avroSchema.SigningResultV2Set
 	var allTokenInfos []tokenInfo
-	for i, originalBlindedToken := range blindedTokens {
-		t.Logf("Processing token %d/%d...", i+1, len(blindedTokens))
 
-		originalBlindedTokenBytes, _ := originalBlindedToken.MarshalText()
-		originalBlindedTokenStr := string(originalBlindedTokenBytes)
+	t.Logf("Creating test issuer '%s'...", issuerName)
 
-		var foundMatch bool
-		for j, result := range signingResultSet.Data {
-			t.Logf(
-				"Checking against result %d/%d...",
-				j+1,
-				len(signingResultSet.Data),
-			)
+	now := time.Now()
+	expires := now.Add(1 * time.Hour)
 
-			for k, resultBlindedTokenStr := range result.Blinded_tokens {
-				if resultBlindedTokenStr == originalBlindedTokenStr {
-					t.Logf(
-						"Found matching blinded token in result %d at position %d",
-						j+1,
-						k+1,
-					)
-					foundMatch = true
+	issuerRequest := issuerV3CreateRequest{
+		Name:      issuerName,
+		Cohort:    1,
+		MaxTokens: 500,
+		ExpiresAt: &expires,
+		ValidFrom: &now,
+		Duration:  "PT1H30M",
+		Overlap:   1,
+		Buffer:    1,
+	}
 
-					// Correct batch-proof for this token
-					t.Log("Unmarshaling cryptographic parameters...")
-					var batchDLEQProof crypto.BatchDLEQProof
-					_ = batchDLEQProof.UnmarshalText([]byte(result.Proof))
+	t.Logf(
+		"Issuer configuration: MaxTokens=%d, ValidFrom=%s, ExpiresAt=%s, Duration=%s, Overlap=%d, Buffer=%d",
+		issuerRequest.MaxTokens,
+		now.Format(time.RFC3339),
+		expires.Format(time.RFC3339),
+		issuerRequest.Duration,
+		issuerRequest.Overlap,
+		issuerRequest.Buffer,
+	)
+	createTestIssuer(t, issuerRequest)
 
-					var issuerPublicKey crypto.PublicKey
-					_ = issuerPublicKey.UnmarshalText([]byte(result.Issuer_public_key))
+	t.Run("issue_tokens_via_kafka", func(t *testing.T) {
+		tokens, blindedTokens, signingResultSet = issueTokensViaKafka(
+			t,
+			testMetadata,
+			testID,
+			requestID,
+			issuerRequest,
+		)
+		t.Logf(
+			"Successfully received signing results with %d tokens and %d result entries",
+			len(tokens),
+			len(signingResultSet.Data),
+		)
+		require.NotEmpty(t, tokens, "Should have tokens after issuance")
+		require.NotEmpty(t, blindedTokens, "Should have blinded tokens after issuance")
+		require.NotEmpty(t, signingResultSet.Data, "Should have signing results after issuance")
+	})
 
-					var signedToken crypto.SignedToken
-					_ = signedToken.UnmarshalText([]byte(result.Signed_tokens[k]))
+	t.Run("map_tokens_to_signing_keys", func(t *testing.T) {
+		// Map each original blinded token to its unblinded token and signing key
+		for i, originalBlindedToken := range blindedTokens {
+			t.Logf("Processing token %d/%d...", i+1, len(blindedTokens))
+			originalBlindedTokenBytes, _ := originalBlindedToken.MarshalText()
+			originalBlindedTokenStr := string(originalBlindedTokenBytes)
+			var foundMatch bool
+			for j, result := range signingResultSet.Data {
+				for k, resultBlindedTokenStr := range result.Blinded_tokens {
+					if resultBlindedTokenStr == originalBlindedTokenStr {
+						t.Logf(
+							"Found matching blinded token in result %d at position %d",
+							j+1,
+							k+1,
+						)
+						foundMatch = true
 
-					var blindedToken crypto.BlindedToken
-					_ = blindedToken.UnmarshalText([]byte(resultBlindedTokenStr))
+						// Unmarshal crypto parameters
+						var batchDLEQProof crypto.BatchDLEQProof
+						_ = batchDLEQProof.UnmarshalText([]byte(result.Proof))
+						var issuerPublicKey crypto.PublicKey
+						_ = issuerPublicKey.UnmarshalText([]byte(result.Issuer_public_key))
+						var signedToken crypto.SignedToken
+						_ = signedToken.UnmarshalText([]byte(result.Signed_tokens[k]))
+						var blindedToken crypto.BlindedToken
+						_ = blindedToken.UnmarshalText([]byte(resultBlindedTokenStr))
 
-					t.Log("Verifying and unblinding token...")
-					resultUnblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
-						[]*crypto.Token{tokens[i]},
-						[]*crypto.BlindedToken{&blindedToken},
-						[]*crypto.SignedToken{&signedToken},
-						&issuerPublicKey)
+						// Verify and unblind
+						resultUnblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
+							[]*crypto.Token{tokens[i]},
+							[]*crypto.BlindedToken{&blindedToken},
+							[]*crypto.SignedToken{&signedToken},
+							&issuerPublicKey)
 
-					if err != nil {
-						t.Logf("WARNING: Error verifying and unblinding token: %v", err)
-					} else {
-						t.Log("Successfully verified and unblinded token")
+						require.NoError(t, err, "Should successfully verify and unblind")
+						require.Len(t, resultUnblindedTokens, 1, "Should get exactly one unblinded token")
+
+						allTokenInfos = append(allTokenInfos, tokenInfo{
+							UnblindedToken: resultUnblindedTokens[0],
+							SignedKey:      result.Issuer_public_key,
+						})
+						break
 					}
-
-					require.Len(t, resultUnblindedTokens, 1, "Should get exactly one unblinded token")
-
-					allTokenInfos = append(allTokenInfos, tokenInfo{
-						UnblindedToken: resultUnblindedTokens[0],
-						SignedKey:      result.Issuer_public_key,
-					})
-
+				}
+				if foundMatch {
 					break
 				}
 			}
+			require.True(t, foundMatch, "token %d should have a matching result", i+1)
+		}
+		require.Len(t, allTokenInfos, len(tokens),
+			"Should have the same number of token infos as original tokens")
+	})
 
-			if foundMatch {
-				break
-			}
+	t.Run("redeem_v1_endpoint", func(t *testing.T) {
+		testHTTPRedemption(t, issuerName, RedeemV1, allTokenInfos)
+	})
+
+	t.Run("redeem_v3_endpoint", func(t *testing.T) {
+		testHTTPRedemption(t, issuerName, RedeemV3, allTokenInfos)
+	})
+}
+
+// Create a helper function for HTTP redemption tests
+func testHTTPRedemption(
+	t *testing.T,
+	issuerName string,
+	endpoint RedeemEndpoint,
+	tokenInfos []tokenInfo,
+) {
+	require.NotEmpty(t, tokenInfos, "Must have tokens to redeem")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	// Test regular redemption with first token
+	t.Run("successful_redemption", func(t *testing.T) {
+		ti := tokenInfos[0]
+		payload := "test"
+		signature, err := ti.UnblindedToken.DeriveVerificationKey().Sign(payload)
+		require.NoError(t, err, "Should be able to sign payload")
+
+		redeemRequest := blindedTokenRedeemRequest{
+			Payload:       payload,
+			TokenPreimage: ti.UnblindedToken.Preimage(),
+			Signature:     signature,
 		}
 
-		require.True(t, foundMatch, "token %d should have a matching result", i+1)
-	}
+		jsonData, err := json.Marshal(redeemRequest)
+		require.NoError(t, err, "Should marshal redemption request")
 
-	require.Len(t, allTokenInfos, len(tokens),
-		"Should have the same number of token infos as original tokens")
+		url := fmt.Sprintf(
+			"http://cbp:2416/%s/blindedToken/%s/redemption/",
+			endpoint,
+			issuerName,
+		)
 
-	t.Logf("Successfully mapped %d tokens to their unblinded versions", len(allTokenInfos))
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+		require.NoError(t, err, "Should create HTTP request")
+		req.Header.Set("Content-Type", "application/json")
 
-	t.Log("Step 3: Testing redemption via HTTP v1 endpoint...")
-	doRedemptionHTTPTest(t, issuerName, RedeemV1, allTokenInfos)
+		resp, err := client.Do(req)
+		require.NoError(t, err, "Should make HTTP request")
+		defer resp.Body.Close()
 
-	t.Log("Step 4: Testing redemption via HTTP v3 endpoint...")
-	doRedemptionHTTPTest(t, issuerName, RedeemV3, allTokenInfos)
+		assert.Equal(
+			t,
+			http.StatusOK,
+			resp.StatusCode,
+			"Should successfully redeem token",
+		)
+	})
 
-	t.Log("TOKEN ISSUANCE VIA KAFKA AND REDEMPTION VIA HTTP TEST COMPLETED")
+	// Test duplicate detection with the same token
+	t.Run("duplicate_redemption", func(t *testing.T) {
+		ti := tokenInfos[0]
+		payload := "test"
+		signature, err := ti.UnblindedToken.DeriveVerificationKey().Sign(payload)
+		require.NoError(t, err, "Should be able to sign payload")
+
+		redeemRequest := blindedTokenRedeemRequest{
+			Payload:       payload,
+			TokenPreimage: ti.UnblindedToken.Preimage(),
+			Signature:     signature,
+		}
+
+		jsonData, err := json.Marshal(redeemRequest)
+		require.NoError(t, err, "Should marshal redemption request")
+
+		url := fmt.Sprintf(
+			"http://cbp:2416/%s/blindedToken/%s/redemption/",
+			endpoint,
+			issuerName,
+		)
+
+		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+		require.NoError(t, err, "Should create HTTP request")
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		require.NoError(t, err, "Should make HTTP request")
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusConflict, resp.StatusCode,
+			"Duplicate redemption should be blocked with 409 Conflict")
+	})
 }
 
 func waitForKafka(logger *log.Logger) {
@@ -746,38 +903,11 @@ func initializeLocalStack(logger *log.Logger) {
 	logger.Print("SUCCESS: LocalStack DynamoDB setup completed successfully")
 }
 
-func createTestIssuer(logger *log.Logger, issuerName string, cohort int64) {
-	issuerName := "TestIssuer-" + suffix
-	logger.Printf("Creating test issuer '%s'...", issuerName)
-
-	now := time.Now()
-	expires := now.Add(1 * time.Hour)
-
-	request := issuerV3CreateRequest{
-		Name:      issuerName,
-		Cohort:    1,
-		MaxTokens: 500,
-		ExpiresAt: &expires,
-		ValidFrom: &now,
-		Duration:  "PT1H30M",
-		Overlap:   1,
-		Buffer:    1,
-	}
-
-	logger.Printf(
-		"Issuer configuration: MaxTokens=%d, ValidFrom=%s, ExpiresAt=%s, Duration=%s, Overlap=%d, Buffer=%d",
-		request.MaxTokens,
-		now.Format(time.RFC3339),
-		expires.Format(time.RFC3339),
-		request.Duration,
-		request.Overlap,
-		request.Buffer,
-	)
-
+func createTestIssuer(t *testing.T, request issuerV3CreateRequest) {
 	jsonData, err := json.Marshal(request)
 	require.NoError(t, err, "FATAL: Failed to marshal issuer creation request")
 
-	logger.Print("Sending POST request to create issuer...")
+	t.Log("Sending POST request to create issuer...")
 	req, err := http.NewRequest(
 		"POST",
 		"http://cbp:2416/v3/issuer/",
@@ -791,20 +921,19 @@ func createTestIssuer(logger *log.Logger, issuerName string, cohort int64) {
 	require.NoError(t, err, "FATAL: Failed to make HTTP request")
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	_, err = io.ReadAll(resp.Body)
 	require.NoError(t, err, "FATAL: Failed to read response body")
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		logger.Printf(
+		t.Logf(
 			"SUCCESS: Issuer creation succeeded with status: %s",
 			resp.Status,
 		)
 	} else {
-		logger.Printf("WARNING: Issuer creation returned status: %s", resp.Status)
+		t.Logf("WARNING: Issuer creation returned status: %s", resp.Status)
 	}
 }
 
-// Helper functions
 func validateResponse(t *testing.T, response avroSchema.RedeemResultSet) {
 	t.Logf("Validating redemption result set with %d results...", len(response.Data))
 
@@ -884,9 +1013,10 @@ func validateResponse(t *testing.T, response avroSchema.RedeemResultSet) {
 
 func issueTokensViaKafka(
 	t *testing.T,
-	requestID string,
 	testMetadata []byte,
+	requestID string,
 	testID string,
+	issuer issuerV3CreateRequest,
 ) (
 	[]*crypto.Token,
 	[]*crypto.BlindedToken,
@@ -900,14 +1030,15 @@ func issueTokensViaKafka(
 
 	t.Log("Generating random tokens...")
 	// Number of tokens must be divisible by the sum of Buffer and Overlap of the Issuer
-	for i := range 2 {
-		t.Logf("Generating token %d/2...", i+1)
+	tokenCount := issuer.Buffer + issuer.Overlap
+	for i := range tokenCount {
+		t.Logf("Generating token %d/%d...", i+1, tokenCount)
 
 		token, err := crypto.RandomToken()
 		require.NoError(t, err, "Failed to generate random token %d", i+1)
 		tokens = append(tokens, token)
 
-		t.Logf("Blinding token %d/2...", i+1)
+		t.Logf("Blinding token %d/%d...", i+1, tokenCount)
 		blindedToken := token.Blind()
 		blindedTokens = append(blindedTokens, blindedToken)
 
@@ -920,8 +1051,8 @@ func issueTokensViaKafka(
 	signingRequest1 := avroSchema.SigningRequest{
 		Associated_data: testMetadata,
 		Blinded_tokens:  marshaledBlindedTokens,
-		Issuer_type:     "TestIssuer",
-		Issuer_cohort:   1,
+		Issuer_type:     issuer.Name,
+		Issuer_cohort:   issuer.Cohort,
 	}
 
 	signingRequestSet := &avroSchema.SigningRequestSet{
@@ -982,7 +1113,12 @@ func issueTokensViaKafka(
 		"Request ID in signing response should match the request")
 
 	t.Logf("Received %d signing results", len(signingResultSet.Data))
-	require.Len(t, signingResultSet.Data, 2, "Expected 2 signing results")
+	require.Len(
+		t,
+		signingResultSet.Data,
+		tokenCount,
+		"Expected signing result count to match requested token count",
+	)
 
 	return tokens, blindedTokens, signingResultSet
 }
