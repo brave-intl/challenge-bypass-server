@@ -80,7 +80,6 @@ type blindedTokenRedeemRequest struct {
 	Signature     *crypto.VerificationSignature `json:"signature"`
 }
 
-// TestMain runs setup before all tests
 func TestMain(m *testing.M) {
 	setup()
 	result := m.Run()
@@ -196,10 +195,9 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 				continue
 			}
 
-			// Verify the rest of the test only needs to run once, for a valid token
+			// Verify the rest of the test. This only needs to run once
 			if i == 0 {
 				t.Run("verify_and_redeem_token", func(t *testing.T) {
-					// Process the first signed token for simplicity
 					var signedToken crypto.SignedToken
 					err := signedToken.UnmarshalText([]byte(result.Signed_tokens[0]))
 					require.NoError(t, err, "Should unmarshal signed token")
@@ -216,7 +214,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 					err = batchDLEQProof.UnmarshalText([]byte(result.Proof))
 					require.NoError(t, err, "Should unmarshal batch DLEQ proof")
 
-					// Verify signed token with DLEQ proof
 					verifyResult, err := batchDLEQProof.Verify(
 						[]*crypto.BlindedToken{&blindedToken},
 						[]*crypto.SignedToken{&signedToken},
@@ -225,7 +222,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 					require.NoError(t, err, "Should verify signed token")
 					require.True(t, verifyResult, "DLEQ proof should be valid")
 
-					// Find the token that corresponds to this signed token
 					var specificToken *crypto.Token
 					for j, origBlinded := range blindedTokens {
 						origBlindedText, _ := origBlinded.MarshalText()
@@ -238,7 +234,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 					}
 					require.NotNil(t, specificToken, "Should find the original token")
 
-					// Unblind the token
 					unblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
 						[]*crypto.Token{specificToken},
 						[]*crypto.BlindedToken{&blindedToken},
@@ -250,7 +245,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 					signedUnblindedToken := unblindedTokens[0]
 
-					// Redeem the token via Kafka
 					t.Run("redeem_via_kafka", func(t *testing.T) {
 						tokenPreimage, err := signedUnblindedToken.Preimage().MarshalText()
 						require.NoError(t, err, "Should marshal preimage")
@@ -278,7 +272,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						err = requestSet.Serialize(&requestSetBuffer)
 						require.NoError(t, err, "Should serialize redeem request")
 
-						// Set up Kafka writer and reader
 						writer := kafka.NewWriter(kafka.WriterConfig{
 							Brokers: []string{kafkaHost},
 							Topic:   requestRedeemTopicName,
@@ -296,7 +289,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						})
 						defer reader.Close()
 
-						// Send redemption request
 						err = writer.WriteMessages(context.Background(),
 							kafka.Message{
 								Key:   []byte(requestID),
@@ -305,7 +297,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						)
 						require.NoError(t, err, "Should write redeem request to Kafka")
 
-						// Wait for response
 						ctx, cancel := context.WithTimeout(
 							context.Background(),
 							responseWaitDuration,
@@ -315,7 +306,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						message, err := reader.ReadMessage(ctx)
 						require.NoError(t, err, "Should read redemption response")
 
-						// Deserialize and validate
 						resultSet, err := avroSchema.DeserializeRedeemResultSet(
 							bytes.NewReader(message.Value),
 						)
@@ -326,7 +316,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 						require.NotEmpty(t, resultSet.Data, "Should have redemption results")
 
-						// Validate first result
 						result := resultSet.Data[0]
 						assert.NotEmpty(t, result.Issuer_name, "Should have issuer name")
 						assert.Greater(t, result.Issuer_cohort, int32(-1), "Should have valid cohort")
@@ -339,9 +328,7 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 							"Redemption should succeed")
 					})
 
-					// Test duplicate redemption
 					t.Run("redeem_duplicate", func(t *testing.T) {
-						// Same redemption request as before
 						tokenPreimage, _ := signedUnblindedToken.Preimage().MarshalText()
 						signature, _ := signedUnblindedToken.DeriveVerificationKey().Sign("test")
 						stringSignature, _ := signature.MarshalText()
@@ -630,7 +617,6 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 	})
 
 	t.Run("map_tokens_to_signing_keys", func(t *testing.T) {
-		// Map each original blinded token to its unblinded token and signing key
 		for i, originalBlindedToken := range blindedTokens {
 			t.Logf("Processing token %d/%d...", i+1, len(blindedTokens))
 			originalBlindedTokenBytes, _ := originalBlindedToken.MarshalText()
@@ -641,12 +627,11 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 					if resultBlindedTokenStr == originalBlindedTokenStr {
 						t.Logf(
 							"Found matching blinded token in result %d at position %d",
-							j+1,
-							k+1,
+							j,
+							k,
 						)
 						foundMatch = true
 
-						// Unmarshal crypto parameters
 						var batchDLEQProof crypto.BatchDLEQProof
 						_ = batchDLEQProof.UnmarshalText([]byte(result.Proof))
 						var issuerPublicKey crypto.PublicKey
@@ -656,15 +641,23 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 						var blindedToken crypto.BlindedToken
 						_ = blindedToken.UnmarshalText([]byte(resultBlindedTokenStr))
 
-						// Verify and unblind
 						resultUnblindedTokens, err := batchDLEQProof.VerifyAndUnblind(
 							[]*crypto.Token{tokens[i]},
 							[]*crypto.BlindedToken{&blindedToken},
 							[]*crypto.SignedToken{&signedToken},
 							&issuerPublicKey)
 
-						require.NoError(t, err, "Should successfully verify and unblind")
-						require.Len(t, resultUnblindedTokens, 1, "Should get exactly one unblinded token")
+						require.NoError(
+							t,
+							err,
+							"Should successfully verify and unblind",
+						)
+						require.Len(
+							t,
+							resultUnblindedTokens,
+							1,
+							"Should get exactly one unblinded token",
+						)
 
 						allTokenInfos = append(allTokenInfos, tokenInfo{
 							UnblindedToken: resultUnblindedTokens[0],
@@ -683,96 +676,82 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 			"Should have the same number of token infos as original tokens")
 	})
 
-	t.Run("redeem_v1_endpoint", func(t *testing.T) {
-		testHTTPRedemption(t, issuerName, RedeemV1, allTokenInfos)
-	})
+	for i, token := range allTokenInfos {
+		if i%2 == 0 {
+			t.Run("redeem_v1_endpoint", func(t *testing.T) {
+				testHTTPRedemption(t, issuerName, RedeemV1, token)
+			})
+		} else {
+			t.Run("redeem_v3_endpoint", func(t *testing.T) {
+				testHTTPRedemption(t, issuerName, RedeemV3, token)
+			})
+		}
+	}
 
-	t.Run("redeem_v3_endpoint", func(t *testing.T) {
-		testHTTPRedemption(t, issuerName, RedeemV3, allTokenInfos)
-	})
 }
 
-// Create a helper function for HTTP redemption tests
 func testHTTPRedemption(
 	t *testing.T,
 	issuerName string,
 	endpoint RedeemEndpoint,
-	tokenInfos []tokenInfo,
+	token tokenInfo,
 ) {
-	require.NotEmpty(t, tokenInfos, "Must have tokens to redeem")
-
 	client := &http.Client{Timeout: 30 * time.Second}
+	payload := "test"
+	signature, err := token.UnblindedToken.DeriveVerificationKey().Sign(payload)
+	require.NoError(t, err, "Should be able to sign payload")
 
-	// Test regular redemption with first token
+	redeemRequest := blindedTokenRedeemRequest{
+		Payload:       payload,
+		TokenPreimage: token.UnblindedToken.Preimage(),
+		Signature:     signature,
+	}
+
+	jsonData, err := json.Marshal(redeemRequest)
+	require.NoError(t, err, "Should marshal redemption request")
+
+	url := fmt.Sprintf(
+		"http://cbp:2416/%s/blindedToken/%s/redemption/",
+		endpoint,
+		issuerName,
+	)
+
+	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	require.NoError(t, err, "Should create HTTP request")
+	req.Header.Set("Content-Type", "application/json")
+
 	t.Run("successful_redemption", func(t *testing.T) {
-		ti := tokenInfos[0]
-		payload := "test"
-		signature, err := ti.UnblindedToken.DeriveVerificationKey().Sign(payload)
-		require.NoError(t, err, "Should be able to sign payload")
-
-		redeemRequest := blindedTokenRedeemRequest{
-			Payload:       payload,
-			TokenPreimage: ti.UnblindedToken.Preimage(),
-			Signature:     signature,
-		}
-
-		jsonData, err := json.Marshal(redeemRequest)
-		require.NoError(t, err, "Should marshal redemption request")
-
-		url := fmt.Sprintf(
-			"http://cbp:2416/%s/blindedToken/%s/redemption/",
-			endpoint,
-			issuerName,
-		)
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-		require.NoError(t, err, "Should create HTTP request")
-		req.Header.Set("Content-Type", "application/json")
-
 		resp, err := client.Do(req)
 		require.NoError(t, err, "Should make HTTP request")
 		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
 
 		assert.Equal(
 			t,
 			http.StatusOK,
 			resp.StatusCode,
-			"Should successfully redeem token",
+			"Should successfully redeem token.\nInstead received: %s\nRequest: %s",
+			body,
+			jsonData,
 		)
 	})
 
-	// Test duplicate detection with the same token
 	t.Run("duplicate_redemption", func(t *testing.T) {
-		ti := tokenInfos[0]
-		payload := "test"
-		signature, err := ti.UnblindedToken.DeriveVerificationKey().Sign(payload)
-		require.NoError(t, err, "Should be able to sign payload")
-
-		redeemRequest := blindedTokenRedeemRequest{
-			Payload:       payload,
-			TokenPreimage: ti.UnblindedToken.Preimage(),
-			Signature:     signature,
-		}
-
-		jsonData, err := json.Marshal(redeemRequest)
-		require.NoError(t, err, "Should marshal redemption request")
-
-		url := fmt.Sprintf(
-			"http://cbp:2416/%s/blindedToken/%s/redemption/",
-			endpoint,
-			issuerName,
-		)
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-		require.NoError(t, err, "Should create HTTP request")
-		req.Header.Set("Content-Type", "application/json")
-
 		resp, err := client.Do(req)
 		require.NoError(t, err, "Should make HTTP request")
 		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
 
-		assert.Equal(t, http.StatusConflict, resp.StatusCode,
-			"Duplicate redemption should be blocked with 409 Conflict")
+		assert.Equal(
+			t,
+			http.StatusConflict,
+			resp.StatusCode,
+			"Duplicate redemption should be blocked with 409 Conflict.\nInstead received: %s\nRequest: %s",
+			body,
+			jsonData,
+		)
 	})
 }
 
@@ -934,83 +913,6 @@ func createTestIssuer(t *testing.T, request issuerV3CreateRequest) {
 	}
 }
 
-func validateResponse(t *testing.T, response avroSchema.RedeemResultSet) {
-	t.Logf("Validating redemption result set with %d results...", len(response.Data))
-
-	for i, result := range response.Data {
-		t.Logf("Validating result %d/%d...", i+1, len(response.Data))
-
-		if result.Issuer_name == "" {
-			t.Logf("WARNING: Result %d is missing issuer_name", i+1)
-		} else {
-			t.Logf("Result %d has issuer_name: %s", i+1, result.Issuer_name)
-		}
-		assert.NotEmpty(
-			t,
-			result.Issuer_name,
-			"Result should have an issuer_name",
-		)
-
-		if result.Issuer_cohort < 0 {
-			t.Logf(
-				"WARNING: Result %d has invalid issuer_cohort: %d",
-				i+1,
-				result.Issuer_cohort,
-			)
-		} else {
-			t.Logf(
-				"Result %d has issuer_cohort: %d",
-				i+1,
-				result.Issuer_cohort,
-			)
-		}
-		assert.Greater(
-			t,
-			result.Issuer_cohort,
-			int32(-1),
-			"Issuer cohort should be a valid value",
-		)
-
-		validStatuses := []avroSchema.RedeemResultStatus{
-			avroSchema.RedeemResultStatusOk,
-			avroSchema.RedeemResultStatusDuplicate_redemption,
-			avroSchema.RedeemResultStatusUnverified,
-			avroSchema.RedeemResultStatusError,
-			avroSchema.RedeemResultStatusIdempotent_redemption,
-		}
-
-		t.Logf("Result %d status: %s", i+1, result.Status)
-
-		assert.Contains(
-			t,
-			validStatuses,
-			result.Status,
-			"Status should be a valid redemption status",
-		)
-
-		if result.Associated_data == nil {
-			t.Logf("WARNING: Result %d is missing associated data", i+1)
-		} else {
-			t.Logf("Result %d has associated data present", i+1)
-		}
-		assert.NotNil(
-			t,
-			result.Associated_data,
-			"Associated data should not be nil",
-		)
-
-		if result.Status == avroSchema.RedeemResultStatusOk {
-			t.Logf("SUCCESS: Result %d redemption succeeded (status: OK)", i+1)
-		} else if result.Status == avroSchema.RedeemResultStatusDuplicate_redemption {
-			t.Logf("NOTE: Result %d is a duplicate redemption - this is expected when tokens are reused", i+1)
-		} else if result.Status == avroSchema.RedeemResultStatusIdempotent_redemption {
-			t.Logf("NOTE: Result %d is an idempotent redemption - this is expected for repeated requests", i+1)
-		} else {
-			t.Logf("WARNING: Result %d redemption status: %s (non-fatal, may be expected)", i+1, result.Status)
-		}
-	}
-}
-
 func issueTokensViaKafka(
 	t *testing.T,
 	testMetadata []byte,
@@ -1121,180 +1023,4 @@ func issueTokensViaKafka(
 	)
 
 	return tokens, blindedTokens, signingResultSet
-}
-
-func doRedemptionHTTPTest(
-	t *testing.T,
-	issuerName string,
-	which RedeemEndpoint,
-	tokenInfos []tokenInfo,
-) {
-	t.Logf("TESTING HTTP REDEMPTION VIA %s ENDPOINT", which)
-	t.Logf("Issuer: %s, Token count: %d", issuerName, len(tokenInfos))
-
-	client := &http.Client{Timeout: 30 * time.Second}
-
-	// Get the current active key for logs
-	t.Log("Retrieving current active key from issuer...")
-	issuerReq, err := http.NewRequest(
-		"GET",
-		fmt.Sprintf("http://cbp:2416/v3/issuer/%s", issuerName),
-		nil,
-	)
-	if err != nil {
-		t.Logf("WARNING: Failed to create issuer request: %v", err)
-	}
-
-	issuerResp, err := client.Do(issuerReq)
-	if err != nil {
-		t.Logf("WARNING: Failed to retrieve issuer info: %v", err)
-	} else {
-		defer issuerResp.Body.Close()
-
-		var issuerInfo struct {
-			PublicKey string `json:"public_key"`
-		}
-
-		err = json.NewDecoder(issuerResp.Body).Decode(&issuerInfo)
-		if err != nil {
-			t.Logf("WARNING: Failed to decode issuer response: %v", err)
-		} else {
-			t.Logf("Current active key: %s", issuerInfo.PublicKey)
-		}
-	}
-
-	t.Log("Attempting to redeem each token...")
-	succeeded := 0
-	for i, ti := range tokenInfos {
-		t.Logf("Processing token %d/%d (signed with key: %s)...",
-			i+1, len(tokenInfos), ti.SignedKey)
-
-		payload := "test"
-		signature, err := ti.UnblindedToken.DeriveVerificationKey().Sign(payload)
-		if err != nil {
-			t.Logf(
-				"WARNING: Failed to sign payload for token %d: %v",
-				i+1,
-				err,
-			)
-			continue
-		}
-
-		redeemRequest := blindedTokenRedeemRequest{
-			Payload:       payload,
-			TokenPreimage: ti.UnblindedToken.Preimage(),
-			Signature:     signature,
-		}
-
-		jsonData, err := json.Marshal(redeemRequest)
-		if err != nil {
-			t.Logf(
-				"WARNING: Failed to marshal redemption request for token %d: %v",
-				i+1,
-				err,
-			)
-			continue
-		}
-
-		url := fmt.Sprintf(
-			"http://cbp:2416/%s/blindedToken/%s/redemption/",
-			which,
-			issuerName,
-		)
-		t.Logf("Sending redemption request to: %s", url)
-
-		req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-		if err != nil {
-			t.Logf(
-				"WARNING: Failed to create HTTP request for token %d: %v",
-				i+1,
-				err,
-			)
-			continue
-		}
-
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Logf(
-				"WARNING: Failed to make HTTP request for token %d: %v",
-				i+1,
-				err,
-			)
-			continue
-		}
-
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		if resp.StatusCode == http.StatusOK {
-			t.Logf(
-				"SUCCESS: Token #%d successfully redeemed (status: %s)",
-				i+1,
-				resp.Status,
-			)
-			succeeded++
-
-			t.Logf("Testing duplicate detection for token #%d...", i+1)
-
-			req2, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
-			if err != nil {
-				t.Logf(
-					"WARNING: Failed to create duplicate HTTP request: %v",
-					err,
-				)
-				continue
-			}
-
-			req2.Header.Set("Content-Type", "application/json")
-			resp2, err := client.Do(req2)
-			if err != nil {
-				t.Logf(
-					"WARNING: Failed to make duplicate HTTP request: %v",
-					err,
-				)
-				continue
-			}
-
-			defer resp2.Body.Close()
-
-			if resp2.StatusCode == http.StatusConflict {
-				t.Logf(
-					"SUCCESS: Duplicate correctly detected (status: %s)",
-					resp2.Status,
-				)
-			} else {
-				t.Logf(
-					"ERROR: Duplicate NOT correctly detected (expected 409 Conflict, got %d: %s)",
-					resp2.StatusCode,
-					resp2.Status,
-				)
-			}
-
-			require.Equal(
-				t,
-				http.StatusConflict,
-				resp2.StatusCode,
-				"Duplicate redemption should be blocked with 409 Conflict",
-			)
-		} else {
-			// Some failures are expected, especially for tokens with future keys
-			bodyExcerpt := string(body)
-			if len(bodyExcerpt) > 100 {
-				bodyExcerpt = bodyExcerpt[:100] + "..."
-			}
-			t.Logf("NOTE: Token #%d failed to redeem (status: %s): %s",
-				i+1, resp.Status, bodyExcerpt)
-			t.Logf("This may be expected if the token's key is not currently active")
-		}
-	}
-
-	t.Logf("Successfully redeemed %d/%d tokens", succeeded, len(tokenInfos))
-	require.GreaterOrEqualf(
-		t,
-		succeeded,
-		1,
-		"At least one token must be redeemable! Zero redemptions indicates a critical problem.")
-
-	t.Logf("HTTP REDEMPTION VIA %s ENDPOINT TEST COMPLETED", which)
 }
