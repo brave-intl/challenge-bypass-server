@@ -29,17 +29,15 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 )
 
-// RedeemEndpoint identifies which redemption API to use
 type RedeemEndpoint string
 
 const (
-	RedeemV1 RedeemEndpoint = "v1"
-	RedeemV3 RedeemEndpoint = "v3"
-	// Kafka settings
-	kafkaHost            = "kafka:9092"
-	maxRetries           = 10
-	retryInterval        = 2 * time.Second
-	responseWaitDuration = 30 * time.Second
+	RedeemV1             RedeemEndpoint = "v1"
+	RedeemV3             RedeemEndpoint = "v3"
+	kafkaHost                           = "kafka:9092"
+	maxRetries                          = 10
+	retryInterval                       = 2 * time.Second
+	responseWaitDuration                = 30 * time.Second
 )
 
 var (
@@ -621,7 +619,12 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 					break
 				}
 			}
-			require.True(t, foundMatch, "token %d should have a matching result", i+1)
+			require.True(
+				t,
+				foundMatch,
+				"token %d should have a matching result",
+				i+1,
+			)
 		}
 		require.Len(t, allTokenInfos, len(tokens),
 			"Should have the same number of token infos as original tokens")
@@ -681,7 +684,9 @@ func testHTTPRedemption(
 			t,
 			http.StatusOK,
 			resp.StatusCode,
-			"Should successfully redeem token.\nInstead received: %s\nRequest: %s",
+			`Should successfully redeem token.
+			Instead received: %s
+			Request: %s`,
 			body,
 			jsonData,
 		)
@@ -698,7 +703,9 @@ func testHTTPRedemption(
 			t,
 			http.StatusConflict,
 			resp.StatusCode,
-			"Duplicate redemption should be blocked with 409 Conflict.\nInstead received: %s\nRequest: %s",
+			`Duplicate redemption should be blocked with 409 Conflict.
+			Instead received: %s
+			Request: %s`,
 			body,
 			jsonData,
 		)
@@ -792,7 +799,10 @@ func ensureTopicsExist(logger *log.Logger) {
 		})
 
 		if err != nil {
-			logger.Printf("WARNING: Topic creation error (may already exist): %v", err)
+			logger.Printf(
+				"WARNING: Topic creation error (may already exist): %v",
+				err,
+			)
 		} else {
 			logger.Printf("SUCCESS: Topic created successfully")
 		}
