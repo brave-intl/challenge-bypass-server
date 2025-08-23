@@ -1,0 +1,21 @@
+FROM rust:1.69 AS rust_builder
+RUN rustup target add x86_64-unknown-linux-musl
+RUN apt-get update && apt-get install -y musl-tools
+RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
+WORKDIR /src
+RUN git checkout 1.0.1
+RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
+
+FROM golang:1.24
+WORKDIR /app
+COPY . .
+
+# Copy the Rust FFI library from the rust builder stage
+COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
+
+RUN apt-get update && apt-get install -y postgresql-client
+RUN go mod download
+RUN go get github.com/stretchr/testify/assert
+RUN go get github.com/segmentio/kafka-go
+
+CMD ["go", "test", "-tags", "integration", "./integration-tests", "-v"]

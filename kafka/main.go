@@ -95,14 +95,21 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
-	prometheus.MustRegister(tokenIssuanceRequestTotal)
-	prometheus.MustRegister(tokenIssuanceFailureTotal)
-	prometheus.MustRegister(tokenRedeemRequestTotal)
-	prometheus.MustRegister(tokenRedeemFailureTotal)
-	prometheus.MustRegister(duplicateRedemptionTotal)
-	prometheus.MustRegister(idempotentRedemptionTotal)
-	prometheus.MustRegister(rebootFromPanicTotal)
-	prometheus.MustRegister(kafkaErrorTotal)
+	var prometheusRegistry prometheus.Registerer
+	if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "test" {
+		prometheusRegistry = prometheus.NewRegistry()
+	} else {
+		prometheusRegistry = prometheus.DefaultRegisterer
+	}
+
+	prometheusRegistry.MustRegister(tokenIssuanceRequestTotal)
+	prometheusRegistry.MustRegister(tokenIssuanceFailureTotal)
+	prometheusRegistry.MustRegister(tokenRedeemRequestTotal)
+	prometheusRegistry.MustRegister(tokenRedeemFailureTotal)
+	prometheusRegistry.MustRegister(duplicateRedemptionTotal)
+	prometheusRegistry.MustRegister(idempotentRedemptionTotal)
+	prometheusRegistry.MustRegister(rebootFromPanicTotal)
+	prometheusRegistry.MustRegister(kafkaErrorTotal)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
@@ -354,7 +361,7 @@ func Emit(
 // environments.
 func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error) {
 	env := os.Getenv("ENV")
-	if env != "local" {
+	if env != "local" && env != "test" {
 		logger.Debug("generating TLSDialer")
 		var cfg aws.Config
 		var err error
