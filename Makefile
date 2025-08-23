@@ -49,7 +49,7 @@ integration-test: integration-test-clean
 	@$(INTEGRATION_COMPOSE) up -d
 	
 	@echo "⏳ Waiting for services to be ready..."
-	@for i in $$(seq 1 30); do \
+	@for i in $$(seq 1 10); do \
 		echo -n "$$i... "; \
 		sleep 1; \
 	done; \

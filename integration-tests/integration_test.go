@@ -244,51 +244,46 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 					require.Len(t, unblindedTokens, 1, "Should get exactly one unblinded token")
 
 					signedUnblindedToken := unblindedTokens[0]
+					tokenPreimage, _ := signedUnblindedToken.Preimage().MarshalText()
+					signature, _ := signedUnblindedToken.DeriveVerificationKey().Sign("test")
+					stringSignature, _ := signature.MarshalText()
+
+					redeemRequest := avroSchema.RedeemRequest{
+						Associated_data: testMetadata,
+						Public_key:      result.Issuer_public_key,
+						Token_preimage:  string(tokenPreimage),
+						Binding:         "test",
+						Signature:       string(stringSignature),
+					}
+
+					duplicateRequestID := requestID + "-duplicate"
+					requestSet := &avroSchema.RedeemRequestSet{
+						Request_id: duplicateRequestID,
+						Data:       []avroSchema.RedeemRequest{redeemRequest},
+					}
+
+					var requestSetBuffer bytes.Buffer
+					err = requestSet.Serialize(&requestSetBuffer)
+					require.NoError(t, err, "Should serialize duplicate request")
+
+					writer := kafka.NewWriter(kafka.WriterConfig{
+						Brokers: []string{kafkaHost},
+						Topic:   requestRedeemTopicName,
+					})
+					defer writer.Close()
+
+					reader := kafka.NewReader(kafka.ReaderConfig{
+						Brokers:     []string{kafkaHost},
+						Topic:       responseRedeemTopicName,
+						GroupID:     fmt.Sprintf("test-duplicate-%s", testID),
+						StartOffset: kafka.LastOffset,
+						MinBytes:    1,
+						MaxBytes:    10e6,
+						MaxWait:     100 * time.Millisecond,
+					})
+					defer reader.Close()
 
 					t.Run("redeem_via_kafka", func(t *testing.T) {
-						tokenPreimage, err := signedUnblindedToken.Preimage().MarshalText()
-						require.NoError(t, err, "Should marshal preimage")
-
-						signature, err := signedUnblindedToken.DeriveVerificationKey().Sign("test")
-						require.NoError(t, err, "Should create signature")
-
-						stringSignature, err := signature.MarshalText()
-						require.NoError(t, err, "Should marshal signature")
-
-						redeemRequest := avroSchema.RedeemRequest{
-							Associated_data: testMetadata,
-							Public_key:      result.Issuer_public_key,
-							Token_preimage:  string(tokenPreimage),
-							Binding:         "test",
-							Signature:       string(stringSignature),
-						}
-
-						requestSet := &avroSchema.RedeemRequestSet{
-							Request_id: requestID,
-							Data:       []avroSchema.RedeemRequest{redeemRequest},
-						}
-
-						var requestSetBuffer bytes.Buffer
-						err = requestSet.Serialize(&requestSetBuffer)
-						require.NoError(t, err, "Should serialize redeem request")
-
-						writer := kafka.NewWriter(kafka.WriterConfig{
-							Brokers: []string{kafkaHost},
-							Topic:   requestRedeemTopicName,
-						})
-						defer writer.Close()
-
-						reader := kafka.NewReader(kafka.ReaderConfig{
-							Brokers:     []string{kafkaHost},
-							Topic:       responseRedeemTopicName,
-							GroupID:     fmt.Sprintf("test-redeem-%s", testID),
-							StartOffset: kafka.LastOffset,
-							MinBytes:    1,
-							MaxBytes:    10e6,
-							MaxWait:     100 * time.Millisecond,
-						})
-						defer reader.Close()
-
 						err = writer.WriteMessages(context.Background(),
 							kafka.Message{
 								Key:   []byte(requestID),
@@ -329,47 +324,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 					})
 
 					t.Run("redeem_duplicate", func(t *testing.T) {
-						tokenPreimage, _ := signedUnblindedToken.Preimage().MarshalText()
-						signature, _ := signedUnblindedToken.DeriveVerificationKey().Sign("test")
-						stringSignature, _ := signature.MarshalText()
-
-						redeemRequest := avroSchema.RedeemRequest{
-							Associated_data: testMetadata,
-							Public_key:      result.Issuer_public_key,
-							Token_preimage:  string(tokenPreimage),
-							Binding:         "test",
-							Signature:       string(stringSignature),
-						}
-
-						duplicateRequestID := requestID + "-duplicate"
-						requestSet := &avroSchema.RedeemRequestSet{
-							Request_id: duplicateRequestID,
-							Data:       []avroSchema.RedeemRequest{redeemRequest},
-						}
-
-						var requestSetBuffer bytes.Buffer
-						err = requestSet.Serialize(&requestSetBuffer)
-						require.NoError(t, err, "Should serialize duplicate request")
-
-						// Set up Kafka writer and reader
-						writer := kafka.NewWriter(kafka.WriterConfig{
-							Brokers: []string{kafkaHost},
-							Topic:   requestRedeemTopicName,
-						})
-						defer writer.Close()
-
-						reader := kafka.NewReader(kafka.ReaderConfig{
-							Brokers:     []string{kafkaHost},
-							Topic:       responseRedeemTopicName,
-							GroupID:     fmt.Sprintf("test-duplicate-%s", testID),
-							StartOffset: kafka.LastOffset,
-							MinBytes:    1,
-							MaxBytes:    10e6,
-							MaxWait:     100 * time.Millisecond,
-						})
-						defer reader.Close()
-
-						// Send duplicate request
 						err = writer.WriteMessages(context.Background(),
 							kafka.Message{
 								Key:   []byte(duplicateRequestID),
@@ -378,7 +332,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						)
 						require.NoError(t, err, "Should write duplicate request")
 
-						// Wait for response
 						ctx, cancel := context.WithTimeout(
 							context.Background(),
 							responseWaitDuration,
@@ -388,7 +341,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						message, err := reader.ReadMessage(ctx)
 						require.NoError(t, err, "Should read duplicate response")
 
-						// Deserialize and validate
 						resultSet, err := avroSchema.DeserializeRedeemResultSet(
 							bytes.NewReader(message.Value),
 						)
@@ -399,7 +351,6 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 						require.NotEmpty(t, resultSet.Data, "Should have duplicate results")
 
-						// Validate the result status should be duplicate
 						result := resultSet.Data[0]
 						assert.Equal(t,
 							avroSchema.RedeemResultStatusDuplicate_redemption,
@@ -687,7 +638,6 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 			})
 		}
 	}
-
 }
 
 func testHTTPRedemption(
