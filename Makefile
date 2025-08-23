@@ -59,7 +59,14 @@ integration-test: integration-test-clean
 	@$(INTEGRATION_COMPOSE) --profile test build test-runner
 	
 	@echo "🧪 Running integration tests..."
-	@$(INTEGRATION_COMPOSE) --profile test run --rm test-runner || (echo "❌ Tests failed!"; $(MAKE) integration-test-clean; exit 1)
+	@TEST_NAME="$${TEST_NAME:-}" && \
+	if [ -n "$$TEST_NAME" ]; then \
+		echo "Running specific test: $$TEST_NAME"; \
+		$(INTEGRATION_COMPOSE) --profile test run --rm test-runner go test -v -tags=integration ./... -run=$$TEST_NAME || (echo "❌ Tests failed!"; $(MAKE) integration-test-clean; exit 1); \
+	else \
+		echo "Running all tests"; \
+		$(INTEGRATION_COMPOSE) --profile test run --rm test-runner || (echo "❌ Tests failed!"; $(MAKE) integration-test-clean; exit 1); \
+	fi
 	
 	@echo "🧹 Cleaning up..."
 	@$(MAKE) integration-test-clean

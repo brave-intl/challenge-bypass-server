@@ -50,9 +50,10 @@ The integration tests:
 To run the integration tests, simply use:
 
 ```bash
+# run all integration tests
 make integration-test
-# or
-make docker-integration-test
+# or run a specific integration test
+make integration-test TEST_NAME=TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow
 ```
 
 This command will:
