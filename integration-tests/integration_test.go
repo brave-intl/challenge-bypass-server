@@ -428,64 +428,9 @@ func TestIssuerV1(t *testing.T) {
 		assert.Equal(t, issuerRequest.Name, issuerResp.Name, "issuer name should match")
 		assert.NotNil(t, issuerResp.PublicKey, "public key should not be nil")
 		assert.Equal(t, int32(1), issuerResp.Cohort, "cohort should be 1")
-
-		if issuerResp.ExpiresAt != "" {
-			expiresAt, err := time.Parse(time.RFC3339, issuerResp.ExpiresAt)
-			require.NoError(t, err, "failed to parse expires_at timestamp")
-
-			if expiresAt.After(time.Now()) {
-				t.Logf(
-					"Expiration is correctly set in the future: %s",
-					expiresAt.Format(time.RFC3339),
-				)
-			} else {
-				t.Logf(
-					"WARNING: Expiration is in the past: %s",
-					expiresAt.Format(time.RFC3339),
-				)
-			}
-
-			assert.True(
-				t,
-				expiresAt.After(time.Now()),
-				"expiration should be in the future",
-			)
-		} else {
-			t.Log("Note: Issuer doesn't have an expiration time set")
-		}
+		assert.Equal(t, issuerRequest.ExpiresAt.Format(time.RFC3339), issuerResp.ExpiresAt)
 
 		t.Log("Successfully validated issuer response")
-
-		t.Log("Testing retrieval of non-existent issuer...")
-		req, err = http.NewRequest(
-			"GET",
-			"http://cbp:2416/v1/issuer/NonExistentIssuer",
-			nil,
-		)
-		require.NoError(
-			t,
-			err,
-			"failed to create GET issuer HTTP request for non-existent issuer",
-		)
-
-		resp, err = client.Do(req)
-		require.NoError(
-			t,
-			err,
-			"failed to make GET issuer HTTP request for non-existent issuer",
-		)
-		defer resp.Body.Close()
-
-		t.Logf("Non-existent issuer GET response status: %s", resp.Status)
-		assert.Equal(
-			t,
-			http.StatusNotFound,
-			resp.StatusCode,
-			"non-existent issuer should return 404",
-		)
-		t.Log("Non-existent issuer correctly returned 404 Not Found")
-
-		t.Log("HTTP ISSUER GET ENDPOINT TEST PASSED")
 	})
 
 	t.Run("issuer_not_found", func(t *testing.T) {
