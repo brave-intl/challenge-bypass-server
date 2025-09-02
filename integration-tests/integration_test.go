@@ -19,12 +19,12 @@ import (
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/google/uuid"
 	kafka "github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 )
