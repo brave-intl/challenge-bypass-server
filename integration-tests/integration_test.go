@@ -78,6 +78,10 @@ type blindedTokenRedeemRequest struct {
 	Signature     *crypto.VerificationSignature `json:"signature"`
 }
 
+type blindedTokenRedeemResponse struct {
+	Cohort int32 `json:"cohort"`
+}
+
 func TestMain(m *testing.M) {
 	setup()
 	result := m.Run()
@@ -578,11 +582,23 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 	for i, token := range allTokenInfos {
 		if i%2 == 0 {
 			t.Run("redeem_v1_endpoint", func(t *testing.T) {
-				testHTTPRedemption(t, issuerName, RedeemV1, token)
+				testHTTPRedemption(
+					t,
+					issuerName,
+					issuerRequest.Cohort,
+					RedeemV1,
+					token,
+				)
 			})
 		} else {
 			t.Run("redeem_v3_endpoint", func(t *testing.T) {
-				testHTTPRedemption(t, issuerName, RedeemV3, token)
+				testHTTPRedemption(
+					t,
+					issuerName,
+					issuerRequest.Cohort,
+					RedeemV3,
+					token,
+				)
 			})
 		}
 	}
@@ -591,6 +607,7 @@ func TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow(t *testing.T) {
 func testHTTPRedemption(
 	t *testing.T,
 	issuerName string,
+	issuerCohort int32,
 	endpoint RedeemEndpoint,
 	token tokenInfo,
 ) {
@@ -629,12 +646,13 @@ func testHTTPRedemption(
 			t,
 			http.StatusOK,
 			resp.StatusCode,
-			`Should successfully redeem token.
-			Instead received: %s
-			Request: %s`,
-			body,
-			jsonData,
+			"Should successfully redeem token.",
 		)
+		var actual blindedTokenRedeemResponse
+		err = json.Unmarshal(body, &actual)
+		require.NoError(t, err)
+
+		assert.Equal(t, issuerCohort, actual.Cohort)
 	})
 
 	t.Run("duplicate_redemption", func(t *testing.T) {
