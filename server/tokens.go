@@ -201,6 +201,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	}
 
 	issuer, err := c.fetchIssuerByType(ctx, issuerType)
+	c.Logger.Debug("ISSUER", slog.Any("issuer", issuer))
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
@@ -281,6 +282,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	}
 
 	if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload, skeys); err != nil {
+		c.Logger.Error("failed to verify token", slog.Any("error", err))
 		return &handlers.AppError{
 			Message: "Could not verify that token redemption is valid",
 			Code:    http.StatusBadRequest,
