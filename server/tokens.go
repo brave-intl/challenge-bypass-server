@@ -217,6 +217,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	}
 
 	issuer, err := c.fetchIssuerByType(ctx, issuerType)
+	c.Logger.Debug("ISSUER", slog.Any("issuer", issuer))
 	if err != nil {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):

@@ -133,8 +133,22 @@ func SetupLogger(
 ) *slog.Logger {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
+	var level slog.Level
+	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
+	case "DEBUG":
+		level = slog.LevelDebug
+	case "WARN":
+		level = slog.LevelWarn
+	case "INFO":
+		level = slog.LevelInfo
+	case "ERROR":
+		level = slog.LevelError
+	default:
+		level = slog.LevelWarn
+	}
+
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelWarn,
+		Level: level,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),
