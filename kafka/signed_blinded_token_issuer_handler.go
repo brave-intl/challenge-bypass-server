@@ -161,7 +161,17 @@ OUTER:
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {
 			if len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap) != 0 {
-				reqLogger.Error("error request contains invalid number of blinded tokens")
+				reqLogger.Error(
+					"error request contains invalid number of blinded tokens",
+					"blinded_token_count",
+					len(request.Blinded_tokens),
+					"issuer_buffer",
+					issuer.Buffer,
+					"issuer_overlap",
+					issuer.Overlap,
+					"non_zero_trigger",
+					len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap),
+				)
 				kafkaErrorTotal.Inc()
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,

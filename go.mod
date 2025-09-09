@@ -10,7 +10,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
 	github.com/brave-intl/bat-go/libs v0.0.0-20250515184320-890ea7676fc7
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
-	github.com/getsentry/raven-go v0.2.0
 	github.com/go-chi/chi/v5 v5.2.2
 	github.com/go-chi/httplog/v3 v3.2.2
 	github.com/golang-migrate/migrate/v4 v4.18.3
@@ -23,7 +22,7 @@ require (
 	github.com/satori/go.uuid v1.2.0
 	github.com/segmentio/kafka-go v0.4.38
 	github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2 v0.1.0
-	github.com/stretchr/testify v1.9.0
+	github.com/stretchr/testify v1.10.0
 )
 
 require (
@@ -40,7 +39,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.19 // indirect
 	github.com/aws/smithy-go v1.22.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
-	github.com/certifi/gocertifi v0.0.0-20210507211836-431795d63e8d // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
