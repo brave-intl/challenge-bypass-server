@@ -62,7 +62,6 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 	)
 	if err != nil {
 		if errors.Is(err, errIssuerCohortNotFound) {
-			c.Logger.Error("Issuer with given type and cohort not found")
 			return nil, &handlers.AppError{
 				Message: "Issuer with given type and cohort not found",
 				Code:    404,
