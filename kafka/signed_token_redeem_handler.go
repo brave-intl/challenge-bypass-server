@@ -99,12 +99,14 @@ func SignedTokenRedeemHandler(
 			reqLogger,
 		)
 	}
+	reqLogger.Debug("fetched issuers", "issuers", issuers)
 
 	// Create a lookup for issuers & signing keys based on public key.
 	signedTokens := make(map[string]SignedIssuerToken)
 	now := time.Now()
 
 	for _, issuer := range issuers {
+		reqLogger.Debug("checking issuer for match to request", "issuer", issuer)
 		if issuer.HasExpired(now) {
 			continue
 		}
@@ -120,7 +122,10 @@ func SignedTokenRedeemHandler(
 			marshaledPublicKey, mErr := issuerPublicKey.MarshalText()
 			// Unmarshalling failure is a data issue and is probably permanent.
 			if mErr != nil {
-				message := fmt.Sprintf("request %s: could not unmarshal issuer public key into text", tokenRedeemRequestSet.Request_id)
+				message := fmt.Sprintf(
+					"request %s: could not unmarshal issuer public key into text",
+					tokenRedeemRequestSet.Request_id,
+				)
 				kafkaErrorTotal.Inc()
 				return handlePermanentRedemptionError(
 					ctx,
@@ -225,7 +230,15 @@ func SignedTokenRedeemHandler(
 				verified = true
 				verifiedIssuer = &issuer
 				verifiedCohort = int32(issuer.IssuerCohort)
+			} else {
+				reqLogger.Error("failed to verify", slog.Any("error", err))
 			}
+		} else {
+			reqLogger.Error(
+				"no signed token for the requested public key",
+				slog.Any("signedTokens", signedTokens),
+				"publicKey", request.Public_key,
+			)
 		}
 
 		if !verified {
@@ -418,7 +431,7 @@ func avroRedeemErrorResultFromError(
 		Associated_data: []byte(message),
 	}
 	resultSet := avroSchema.RedeemResultSet{
-		Request_id: "",
+		Request_id: requestID,
 		Data:       []avroSchema.RedeemResult{redeemResult},
 	}
 	var resultSetBuffer bytes.Buffer
@@ -443,7 +456,11 @@ func handlePermanentRedemptionError(
 	redeemResultStatus int32,
 	logger *slog.Logger,
 ) error {
-	logger.Error("encountered permanent redemption failure", slog.Any("error", message))
+	logger.Error(
+		"encountered permanent redemption failure",
+		slog.Any("message", message),
+		slog.Any("error", cause),
+	)
 	kafkaErrorTotal.Inc()
 	toEmit := avroRedeemErrorResultFromError(
 		message,
