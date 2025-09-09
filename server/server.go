@@ -96,6 +96,15 @@ func init() {
 	prometheus.MustRegister(v3IssuerCallTotal)
 }
 
+// Function types for injection durings tests, defaulted normally
+type NowFunc func() time.Time
+type SleepFunc func(time.Duration)
+type TickerFunc func(time.Duration) <-chan time.Time
+
+type RotateIssuersFunc func() error
+type DeleteIssuerKeysFunc func(string) (int64, error)
+type RotateIssuersV3Func func() error
+
 // Server - base server type
 type Server struct {
 	ListenPort   int          `json:"listen_port,omitempty"`
@@ -107,6 +116,14 @@ type Server struct {
 	db           *sqlx.DB
 
 	caches map[string]CacheInterface
+
+	Now       NowFunc
+	Sleep     SleepFunc
+	NewTicker TickerFunc
+
+	RotateIssuers    RotateIssuersFunc
+	DeleteIssuerKeys DeleteIssuerKeysFunc
+	RotateIssuersV3  RotateIssuersV3Func
 }
 
 // DefaultServer on port
