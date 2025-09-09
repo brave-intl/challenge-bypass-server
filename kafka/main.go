@@ -13,7 +13,6 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -96,14 +95,21 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
-	prometheus.MustRegister(tokenIssuanceRequestTotal)
-	prometheus.MustRegister(tokenIssuanceFailureTotal)
-	prometheus.MustRegister(tokenRedeemRequestTotal)
-	prometheus.MustRegister(tokenRedeemFailureTotal)
-	prometheus.MustRegister(duplicateRedemptionTotal)
-	prometheus.MustRegister(idempotentRedemptionTotal)
-	prometheus.MustRegister(rebootFromPanicTotal)
-	prometheus.MustRegister(kafkaErrorTotal)
+	var prometheusRegistry prometheus.Registerer
+	if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "test" {
+		prometheusRegistry = prometheus.NewRegistry()
+	} else {
+		prometheusRegistry = prometheus.DefaultRegisterer
+	}
+
+	prometheusRegistry.MustRegister(tokenIssuanceRequestTotal)
+	prometheusRegistry.MustRegister(tokenIssuanceFailureTotal)
+	prometheusRegistry.MustRegister(tokenRedeemRequestTotal)
+	prometheusRegistry.MustRegister(tokenRedeemFailureTotal)
+	prometheusRegistry.MustRegister(duplicateRedemptionTotal)
+	prometheusRegistry.MustRegister(idempotentRedemptionTotal)
+	prometheusRegistry.MustRegister(rebootFromPanicTotal)
+	prometheusRegistry.MustRegister(kafkaErrorTotal)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
@@ -354,9 +360,8 @@ func Emit(
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
 func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error) {
-	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
-	if env != "local" {
+	if env != "local" && env != "test" {
 		logger.Debug("generating TLSDialer")
 		var cfg aws.Config
 		var err error
@@ -375,21 +380,16 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 
-		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
-		tlsDialer, _, err := batgo_kafka.TLSDialer()
-		dialer = tlsDialer
-		dialer.SASLMechanism = mechanism
-
-		if err != nil {
-			kafkaErrorTotal.Inc()
-			return nil, fmt.Errorf("failed to initialize TLS dialer: %w", err)
-		}
+		return &kafkaGo.Dialer{
+			Timeout:       10 * time.Second,
+			DualStack:     true,
+			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
+		}, nil
 	} else {
 		logger.Debug("generating Dialer")
-		dialer = &kafkaGo.Dialer{
+		return &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
-		}
+		}, nil
 	}
-	return dialer, nil
 }

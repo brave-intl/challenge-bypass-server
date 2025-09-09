@@ -12,7 +12,6 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
-	raven "github.com/getsentry/raven-go"
 )
 
 func main() {
@@ -92,8 +91,6 @@ func main() {
 	logger.Debug("Initializing API server")
 	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
-		logger.Error("listenandserve", slog.Any("error", err))
-		raven.CaptureErrorAndWait(err, nil)
 		logger.Error("listenandserve", slog.Any("error", err))
 		panic(err)
 	}
