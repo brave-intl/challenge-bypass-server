@@ -6,78 +6,80 @@ import (
 )
 
 // SetupCronTasks run two functions every hour
-func (c *Server) SetupCronTasks() {
-	// Determine cadence duration
+func (s *Server) SetupCronTasks() {
+	s.ensureCronDefaults()
+
 	cadence := 1 * time.Hour
 	startMinute := 0
 	if os.Getenv("ENV") == "production" {
 		startMinute = 1
 	}
-
-	// Calculate time until the next hour at the specified minute
-	now := time.Now()
+	now := s.Now()
 	nextHour := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, startMinute, 0, 0, now.Location())
 	if nextHour.Before(now) {
 		nextHour = nextHour.Add(time.Hour)
 	}
 	timeUntilNextHour := nextHour.Sub(now)
 
-	// Set up the hourly tasks
 	go func() {
-		// Wait until the next hour at the specified minute before starting the ticker
-		time.Sleep(timeUntilNextHour)
-
-		// Execute immediately after initial wait
-		if err := c.rotateIssuers(); err != nil {
+		s.Sleep(timeUntilNextHour)
+		if err := s.RotateIssuers(); err != nil {
 			panic(err)
 		}
-
-		rows, err := c.deleteIssuerKeys("P1M")
+		rows, err := s.DeleteIssuerKeys("P1M")
 		if err != nil {
 			panic(err)
 		}
-		c.Logger.Info("cron", "delete issuers keys removed", rows)
-
-		// Create a ticker that fires every hour
-		ticker := time.NewTicker(cadence)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			if err := c.rotateIssuers(); err != nil {
+		s.Logger.Info("cron", "delete issuers keys removed", rows)
+		tickerC := s.NewTicker(cadence)
+		for range tickerC {
+			if err := s.RotateIssuers(); err != nil {
 				panic(err)
 			}
-
-			rows, err := c.deleteIssuerKeys("P1M")
+			rows, err := s.DeleteIssuerKeys("P1M")
 			if err != nil {
 				panic(err)
 			}
-			c.Logger.Info("cron", "delete issuers keys removed", rows)
+			s.Logger.Info("cron", "delete issuers keys removed", rows)
 		}
 	}()
 
-	// Set up the minute task
 	go func() {
-		// Calculate time until the next minute
-		now := time.Now()
+		now := s.Now()
 		nextMinute := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()+1, 0, 0, now.Location())
 		timeUntilNextMinute := nextMinute.Sub(now)
-
-		// Wait until the next minute before starting the ticker
-		time.Sleep(timeUntilNextMinute)
-
-		// Execute immediately after initial wait
-		if err := c.rotateIssuersV3(); err != nil {
+		s.Sleep(timeUntilNextMinute)
+		if err := s.RotateIssuersV3(); err != nil {
 			panic(err)
 		}
-
-		// Create a ticker that fires every minute
-		ticker := time.NewTicker(1 * time.Minute)
-		defer ticker.Stop()
-
-		for range ticker.C {
-			if err := c.rotateIssuersV3(); err != nil {
+		tickerC := s.NewTicker(1 * time.Minute)
+		for range tickerC {
+			if err := s.RotateIssuersV3(); err != nil {
 				panic(err)
 			}
 		}
 	}()
+}
+
+func (s *Server) ensureCronDefaults() {
+	if s.Now == nil {
+		s.Now = time.Now
+	}
+	if s.Sleep == nil {
+		s.Sleep = time.Sleep
+	}
+	if s.NewTicker == nil {
+		s.NewTicker = func(d time.Duration) <-chan time.Time {
+			return time.NewTicker(d).C
+		}
+	}
+	if s.RotateIssuers == nil {
+		s.RotateIssuers = s.rotateIssuers
+	}
+	if s.DeleteIssuerKeys == nil {
+		s.DeleteIssuerKeys = s.deleteIssuerKeys
+	}
+	if s.RotateIssuersV3 == nil {
+		s.RotateIssuersV3 = s.rotateIssuersV3
+	}
 }
