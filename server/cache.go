@@ -13,9 +13,9 @@ type CachingConfig struct {
 
 // CacheInterface cache functions
 type CacheInterface interface {
-	Get(k string) (interface{}, bool)
+	Get(k string) (any, bool)
 	Delete(k string)
-	SetDefault(k string, x interface{})
+	SetDefault(k string, x any)
 }
 
 // SimpleCache implements CacheInterface using standard library
@@ -27,7 +27,7 @@ type SimpleCache struct {
 }
 
 type cacheItem struct {
-	value      interface{}
+	value      any
 	expiration int64 // Unix timestamp for expiration
 }
 
@@ -65,7 +65,7 @@ func (c *SimpleCache) startCleanupTimer() {
 // deleteExpired deletes expired items from the cache
 func (c *SimpleCache) deleteExpired() {
 	now := time.Now().UnixNano()
-	c.items.Range(func(key, value interface{}) bool {
+	c.items.Range(func(key, value any) bool {
 		item, ok := value.(cacheItem)
 		if ok && item.expiration > 0 && item.expiration < now {
 			c.items.Delete(key)
@@ -75,7 +75,7 @@ func (c *SimpleCache) deleteExpired() {
 }
 
 // Get retrieves an item from the cache
-func (c *SimpleCache) Get(k string) (interface{}, bool) {
+func (c *SimpleCache) Get(k string) (any, bool) {
 	value, found := c.items.Load(k)
 	if !found {
 		return nil, false
@@ -101,7 +101,7 @@ func (c *SimpleCache) Delete(k string) {
 }
 
 // SetDefault adds an item to the cache with the default expiration time
-func (c *SimpleCache) SetDefault(k string, x interface{}) {
+func (c *SimpleCache) SetDefault(k string, x any) {
 	var expiration int64 = 0
 	if c.defaultExpiration > 0 {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
@@ -117,7 +117,7 @@ func retrieveFromCache(
 	caches map[string]CacheInterface,
 	cacheName string,
 	key string,
-) interface{} {
+) any {
 	if caches != nil {
 		if cached, found := caches[cacheName].Get(key); found {
 			return cached
