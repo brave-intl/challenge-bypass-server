@@ -85,7 +85,8 @@ func main() {
 
 	if os.Getenv("KAFKA_ENABLED") != "false" {
 		logger.Debug("Spawning Kafka goroutine")
-		go startKafka(srv, logger)
+		server.ServeMetrics()
+		startKafka(srv, logger)
 	}
 
 	logger.Debug("Initializing API server")
