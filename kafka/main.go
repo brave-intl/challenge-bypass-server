@@ -15,7 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/brave-intl/challenge-bypass-server/server"
-	uuid "github.com/google/uuid"
+	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	kafkaGo "github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2"
@@ -96,21 +96,21 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
-	var prometheusRegistry prometheus.Registerer
-	if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "test" {
-		prometheusRegistry = prometheus.NewRegistry()
-	} else {
-		prometheusRegistry = prometheus.DefaultRegisterer
-	}
+	//var prometheusRegistry prometheus.Registerer
+	//if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "test" {
+	//	prometheusRegistry = prometheus.NewRegistry()
+	//} else {
+	//	prometheusRegistry = prometheus.DefaultRegisterer
+	//}
 
-	prometheusRegistry.MustRegister(tokenIssuanceRequestTotal)
-	prometheusRegistry.MustRegister(tokenIssuanceFailureTotal)
-	prometheusRegistry.MustRegister(tokenRedeemRequestTotal)
-	prometheusRegistry.MustRegister(tokenRedeemFailureTotal)
-	prometheusRegistry.MustRegister(duplicateRedemptionTotal)
-	prometheusRegistry.MustRegister(idempotentRedemptionTotal)
-	prometheusRegistry.MustRegister(rebootFromPanicTotal)
-	prometheusRegistry.MustRegister(kafkaErrorTotal)
+	//prometheusRegistry.MustRegister(tokenIssuanceRequestTotal)
+	//prometheusRegistry.MustRegister(tokenIssuanceFailureTotal)
+	//prometheusRegistry.MustRegister(tokenRedeemRequestTotal)
+	//prometheusRegistry.MustRegister(tokenRedeemFailureTotal)
+	//prometheusRegistry.MustRegister(duplicateRedemptionTotal)
+	//prometheusRegistry.MustRegister(idempotentRedemptionTotal)
+	//prometheusRegistry.MustRegister(rebootFromPanicTotal)
+	//prometheusRegistry.MustRegister(kafkaErrorTotal)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
@@ -386,8 +386,8 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			DualStack:     true,
 			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
 			TLS: &tls.Config{
-			    MinVersion: tls.VersionTLS12,
-		    },
+				MinVersion: tls.VersionTLS12,
+			},
 		}, nil
 	} else {
 		logger.Debug("generating Dialer")
