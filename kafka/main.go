@@ -15,6 +15,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	kafkaGo "github.com/segmentio/kafka-go"
@@ -103,14 +104,17 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		prometheusRegistry = prometheus.DefaultRegisterer
 	}
 
-	prometheusRegistry.MustRegister(tokenIssuanceRequestTotal)
-	prometheusRegistry.MustRegister(tokenIssuanceFailureTotal)
-	prometheusRegistry.MustRegister(tokenRedeemRequestTotal)
-	prometheusRegistry.MustRegister(tokenRedeemFailureTotal)
-	prometheusRegistry.MustRegister(duplicateRedemptionTotal)
-	prometheusRegistry.MustRegister(idempotentRedemptionTotal)
-	prometheusRegistry.MustRegister(rebootFromPanicTotal)
-	prometheusRegistry.MustRegister(kafkaErrorTotal)
+	metrics.MustRegisterIfNotRegistered(
+		prometheusRegistry,
+		tokenIssuanceRequestTotal,
+		tokenIssuanceFailureTotal,
+		tokenRedeemRequestTotal,
+		tokenRedeemFailureTotal,
+		duplicateRedemptionTotal,
+		idempotentRedemptionTotal,
+		rebootFromPanicTotal,
+		kafkaErrorTotal,
+	)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
