@@ -14,6 +14,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/bat-go/libs/middleware"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
@@ -77,23 +78,26 @@ var (
 
 // init - Register Metrics for Server
 func init() {
-	// DB
-	prometheus.MustRegister(fetchIssuerTotal)
-	prometheus.MustRegister(createIssuerTotal)
-	prometheus.MustRegister(redeemTokenTotal)
-	prometheus.MustRegister(fetchRedemptionTotal)
-	// DB latency
-	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
-	prometheus.MustRegister(createIssuerDBDuration)
-	prometheus.MustRegister(createRedemptionDBDuration)
-	prometheus.MustRegister(fetchRedemptionDBDuration)
-	// API Calls
-	prometheus.MustRegister(v1BlindedTokenCallTotal)
-	prometheus.MustRegister(v1IssuerCallTotal)
-	prometheus.MustRegister(v2BlindedTokenCallTotal)
-	prometheus.MustRegister(v2IssuerCallTotal)
-	prometheus.MustRegister(v3BlindedTokenCallTotal)
-	prometheus.MustRegister(v3IssuerCallTotal)
+	metrics.MustRegisterIfNotRegistered(
+		prometheus.DefaultRegisterer,
+		// DB
+		fetchIssuerTotal,
+		createIssuerTotal,
+		redeemTokenTotal,
+		fetchRedemptionTotal,
+		// DB latency
+		fetchIssuerByTypeDBDuration,
+		createIssuerDBDuration,
+		createRedemptionDBDuration,
+		fetchRedemptionDBDuration,
+		// API Calls
+		v1BlindedTokenCallTotal,
+		v1IssuerCallTotal,
+		v2BlindedTokenCallTotal,
+		v2IssuerCallTotal,
+		v3BlindedTokenCallTotal,
+		v3IssuerCallTotal,
+	)
 }
 
 // Server - base server type
