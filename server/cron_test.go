@@ -20,7 +20,7 @@ func TestSetupCronTasks_function_injection(t *testing.T) {
 	initialTime := time.Date(2025, 6, 10, 12, 30, 0, 0, time.UTC)
 
 	// Add debugging
-	debug := func(format string, args ...interface{}) {
+	debug := func(format string, args ...any) {
 		fmt.Printf("DEBUG: "+format+"\n", args...)
 	}
 

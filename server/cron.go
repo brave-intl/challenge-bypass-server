@@ -15,7 +15,16 @@ func (s *Server) SetupCronTasks() {
 		startMinute = 1
 	}
 	now := s.Now()
-	nextHour := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()+1, startMinute, 0, 0, now.Location())
+	nextHour := time.Date(
+		now.Year(),
+		now.Month(),
+		now.Day(),
+		now.Hour()+1,
+		startMinute,
+		0,
+		0,
+		now.Location(),
+	)
 	if nextHour.Before(now) {
 		nextHour = nextHour.Add(time.Hour)
 	}
@@ -46,7 +55,16 @@ func (s *Server) SetupCronTasks() {
 
 	go func() {
 		now := s.Now()
-		nextMinute := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), now.Minute()+1, 0, 0, now.Location())
+		nextMinute := time.Date(
+			now.Year(),
+			now.Month(),
+			now.Day(),
+			now.Hour(),
+			now.Minute()+1,
+			0,
+			0,
+			now.Location(),
+		)
 		timeUntilNextMinute := nextMinute.Sub(now)
 		s.Sleep(timeUntilNextMinute)
 		if err := s.RotateIssuersV3(); err != nil {
