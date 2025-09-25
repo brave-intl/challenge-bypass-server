@@ -254,7 +254,6 @@ func scanIssuer(row *sql.Row, issuer *model.Issuer) error {
 		return err
 	}
 
-	// Convert string to UUID if not null
 	if issuerID.Valid {
 		id, err := uuid.Parse(issuerID.String)
 		if err != nil {
@@ -553,7 +552,7 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer,
 				&key.CreatedAt,
 			)
 			if err != nil {
-				rows.Close()
+				rows.Close() //nolint:sqlclosecheck // Intentionally not using defer in loop
 				return nil, err
 			}
 
@@ -564,7 +563,7 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer,
 			if issuerIDStr.Valid {
 				id, err := uuid.Parse(issuerIDStr.String)
 				if err != nil {
-					rows.Close()
+					rows.Close() //nolint:sqlclosecheck // Intentionally not using defer in loop
 					return nil, err
 				}
 				key.IssuerID = &id
@@ -673,6 +672,10 @@ func (c *Server) rotateIssuersV3() error {
 		err = tx.Commit()
 	}()
 
+	// we need to get all the v3 issuers that are
+	// 1. not expired
+	// 2. now is after valid_from
+	// 3. have max(issuer_v3.end_at) < buffer
 	// Use column names without alias prefix since we're selecting from a single table
 	query := fmt.Sprintf(`
         SELECT %s
@@ -738,7 +741,7 @@ func (c *Server) rotateIssuersV3() error {
 				&key.CreatedAt,
 			)
 			if err != nil {
-				keyRows.Close()
+				keyRows.Close() //nolint:sqlclosecheck // Intentionally not using defer in loop
 				return err
 			}
 
@@ -749,7 +752,7 @@ func (c *Server) rotateIssuersV3() error {
 			if keyIssuerIDStr.Valid {
 				id, err := uuid.Parse(keyIssuerIDStr.String)
 				if err != nil {
-					keyRows.Close()
+					keyRows.Close() //nolint:sqlclosecheck // Intentionally not using defer in loop
 					return err
 				}
 				key.IssuerID = &id
