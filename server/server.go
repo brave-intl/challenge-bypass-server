@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
-	"github.com/jmoiron/sqlx"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -108,7 +108,7 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sqlx.DB
+	db           *sql.DB
 
 	caches map[string]CacheInterface
 }
