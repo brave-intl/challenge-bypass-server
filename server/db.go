@@ -208,7 +208,7 @@ func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	var fetchedIssuer model.Issuer
 	err := scanIssuer(row, &fetchedIssuer)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, utils.ProcessingErrorFromError(errIssuerNotFound, false)
 		}
 		return nil, utils.ProcessingErrorFromError(err, true)
