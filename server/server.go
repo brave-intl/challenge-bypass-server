@@ -108,7 +108,8 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sql.DB
+	db           *sql.DB // Database writer instance
+	dbr          *sql.DB // Database reader instance
 
 	caches map[string]CacheInterface
 }
