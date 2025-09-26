@@ -108,7 +108,8 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sql.DB
+	db           *sql.DB // Database writer instance
+	dbr          *sql.DB // Database reader instance
 
 	caches map[string]CacheInterface
 }
@@ -143,6 +144,10 @@ func (c *Server) InitDBConfig() error {
 	// Heroku style
 	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
 		conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	}
+
+	if connectionURIReader := os.Getenv("DATABASE_READER_URL"); connectionURIReader != "" {
+		conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
 	}
 
 	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {

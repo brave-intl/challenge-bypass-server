@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -59,7 +60,7 @@ func (suite *ServerTestSuite) SetupSuite() {
 	err = suite.srv.InitDBConfig()
 	suite.Require().NoError(err, "Failed to setup db conn")
 
-	suite.srv.InitDB()
+	suite.srv.InitDB(slog.New(slog.DiscardHandler))
 	suite.srv.InitDynamo()
 
 	_, suite.handler = suite.srv.setupRouter(
