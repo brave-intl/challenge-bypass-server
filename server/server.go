@@ -146,6 +146,10 @@ func (c *Server) InitDBConfig() error {
 		conf.ConnectionURI = os.Getenv("DATABASE_URL")
 	}
 
+	if connectionURIReader := os.Getenv("DATABASE_READER_URL"); connectionURIReader != "" {
+		conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
+	}
+
 	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
 		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 	}
