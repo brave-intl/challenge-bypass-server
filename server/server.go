@@ -74,6 +74,13 @@ var (
 		},
 		[]string{"action"},
 	)
+	cronTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_cron_total",
+			Help: "Count of cron runs and their outcomes",
+		},
+		[]string{"action"},
+	)
 )
 
 // init - Register Metrics for Server
@@ -97,17 +104,10 @@ func init() {
 		v2IssuerCallTotal,
 		v3BlindedTokenCallTotal,
 		v3IssuerCallTotal,
+		// Cron
+		cronTotal,
 	)
 }
-
-// Function types for injection durings tests, defaulted normally
-type NowFunc func() time.Time
-type SleepFunc func(time.Duration)
-type TickerFunc func(time.Duration) <-chan time.Time
-
-type RotateIssuersFunc func() error
-type DeleteIssuerKeysFunc func(string) (int64, error)
-type RotateIssuersV3Func func() error
 
 // Server - base server type
 type Server struct {
@@ -120,14 +120,6 @@ type Server struct {
 	db           *sql.DB
 
 	caches map[string]CacheInterface
-
-	Now       NowFunc
-	Sleep     SleepFunc
-	NewTicker TickerFunc
-
-	RotateIssuers    RotateIssuersFunc
-	DeleteIssuerKeys DeleteIssuerKeysFunc
-	RotateIssuersV3  RotateIssuersV3Func
 }
 
 // DefaultServer on port

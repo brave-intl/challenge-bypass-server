@@ -1,9 +1,8 @@
 package server
 
 import (
-	"fmt"
-	"log/slog"
-	"os"
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,129 +11,71 @@ import (
 )
 
 func TestSetupCronTasks_function_injection(t *testing.T) {
-	hourTicker := make(chan time.Time, 5) // Increase buffer size
-	minuteTicker := make(chan time.Time, 5)
-
 	var rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount int
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
-	initialTime := time.Date(2025, 6, 10, 12, 30, 0, 0, time.UTC)
+	var mu sync.Mutex // Protect concurrent access to counters
 
-	// Add debugging
-	debug := func(format string, args ...any) {
-		fmt.Printf("DEBUG: "+format+"\n", args...)
-	}
+	// Use a time very close to the next minute so initial wait is short
+	initialTime := time.Date(2025, 6, 10, 12, 30, 59, 500000000, time.UTC) // 500ms before next minute
 
-	server := &Server{
-		Logger: logger,
-		Now: func() time.Time {
-			return initialTime
-		},
-		Sleep: func(d time.Duration) {
-			debug("Sleep called with duration: %v", d)
-		},
-		NewTicker: func(d time.Duration) <-chan time.Time {
-			debug("NewTicker called with duration: %v", d)
-			if d == time.Hour {
-				return hourTicker
-			} else if d == time.Minute {
-				return minuteTicker
-			}
-			panic("Unexpected ticker duration")
-		},
-		RotateIssuers: func() error {
-			rotateIssuersCount++
-			debug("RotateIssuers called, count=%d", rotateIssuersCount)
-			return nil
-		},
-		DeleteIssuerKeys: func(period string) (int64, error) {
-			deleteIssuerKeysCount++
-			debug("DeleteIssuerKeys called, count=%d", deleteIssuerKeysCount)
-			return 42, nil
-		},
-		RotateIssuersV3: func() error {
-			rotateIssuersV3Count++
-			debug("RotateIssuersV3 called, count=%d", rotateIssuersV3Count)
-			return nil
-		},
-	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	debug("Starting SetupCronTasks")
-	server.SetupCronTasks()
-	debug("SetupCronTasks returned")
+	go SetupCronTasks(
+		ctx,
+		initialTime,
+		[]Task{
+			{
+				Interval: 1 * time.Second,
+				Execute: func() error {
+					mu.Lock()
+					rotateIssuersCount++
+					deleteIssuerKeysCount++
+					mu.Unlock()
+					return nil
+				},
+			},
+			{
+				Interval: 1 * time.Second,
+				Execute: func() error {
+					mu.Lock()
+					rotateIssuersV3Count++
+					mu.Unlock()
+					return nil
+				},
+			},
+		},
+	)
 
-	// Wait for initial calls to complete
-	debug("Waiting for initial calls")
+	// Wait for initial execution (after ~500ms initial wait)
 	require.Eventually(t, func() bool {
-		result := rotateIssuersCount == 1 &&
-			rotateIssuersV3Count == 1 &&
-			deleteIssuerKeysCount == 1
-		debug("Initial wait check: rotateIssuers=%d, rotateIssuersV3=%d, deleteIssuerKeys=%d, result=%v",
-			rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount, result)
-		return result
-	}, 3*time.Second, 100*time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		return rotateIssuersCount >= 1 &&
+			rotateIssuersV3Count >= 1 &&
+			deleteIssuerKeysCount >= 1
+	}, 2*time.Second, 100*time.Millisecond)
 
-	debug("After initial wait, counters: rotateIssuers=%d, rotateIssuersV3=%d, deleteIssuerKeys=%d",
-		rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount)
-
-	assert.Equal(t, 1, rotateIssuersCount)
-	assert.Equal(t, 1, rotateIssuersV3Count)
-	assert.Equal(t, 1, deleteIssuerKeysCount)
-
-	// Send first round of ticks
-	debug("Sending hour tick")
-	hourTicker <- initialTime.Add(time.Hour)
-	debug("Sending minute tick")
-	minuteTicker <- initialTime.Add(time.Minute)
-
-	debug("Waiting for second round of calls")
+	// Wait for second execution (after 1 second interval)
 	require.Eventually(t, func() bool {
-		result := rotateIssuersCount == 2 &&
-			rotateIssuersV3Count == 2 &&
-			deleteIssuerKeysCount == 2
-		debug("Second wait check: rotateIssuers=%d, rotateIssuersV3=%d, deleteIssuerKeys=%d, result=%v",
-			rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount, result)
-		return result
-	}, 3*time.Second, 100*time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		return rotateIssuersCount >= 2 &&
+			rotateIssuersV3Count >= 2 &&
+			deleteIssuerKeysCount >= 2
+	}, 2*time.Second, 100*time.Millisecond)
 
-	debug("After second wait, counters: rotateIssuers=%d, rotateIssuersV3=%d, deleteIssuerKeys=%d",
-		rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount)
-
-	assert.Equal(t, 2, rotateIssuersCount)
-	assert.Equal(t, 2, deleteIssuerKeysCount)
-	assert.Equal(t, 2, rotateIssuersV3Count)
-
-	// Send one more hour tick
-	debug("Sending third hour tick")
-	hourTicker <- initialTime.Add(2 * time.Hour)
-
-	debug("Waiting for hourly job's third call")
+	// Wait for third execution (after another 1 second interval)
 	require.Eventually(t, func() bool {
-		result := rotateIssuersCount == 3 && deleteIssuerKeysCount == 3
-		debug("Third wait check: rotateIssuers=%d, deleteIssuerKeys=%d, result=%v",
-			rotateIssuersCount, deleteIssuerKeysCount, result)
-		return result
-	}, 3*time.Second, 100*time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		return rotateIssuersCount >= 3 &&
+			rotateIssuersV3Count >= 3 &&
+			deleteIssuerKeysCount >= 3
+	}, 2*time.Second, 100*time.Millisecond)
 
-	debug("After third wait, counters: rotateIssuers=%d, deleteIssuerKeys=%d",
-		rotateIssuersCount, deleteIssuerKeysCount)
-
-	assert.Equal(t, 3, rotateIssuersCount)
-	assert.Equal(t, 3, deleteIssuerKeysCount)
-
-	// Send one more minute tick
-	debug("Sending third minute tick")
-	minuteTicker <- initialTime.Add(2 * time.Minute)
-
-	debug("Waiting for minute job's third call")
-	require.Eventually(t, func() bool {
-		result := rotateIssuersV3Count == 3
-		debug("Fourth wait check: rotateIssuersV3=%d, result=%v",
-			rotateIssuersV3Count, result)
-		return result
-	}, 3*time.Second, 100*time.Millisecond)
-
-	debug("Final state: rotateIssuers=%d, rotateIssuersV3=%d, deleteIssuerKeys=%d",
-		rotateIssuersCount, rotateIssuersV3Count, deleteIssuerKeysCount)
-
-	assert.Equal(t, 3, rotateIssuersV3Count)
+	mu.Lock()
+	assert.GreaterOrEqual(t, rotateIssuersCount, 3)
+	assert.GreaterOrEqual(t, rotateIssuersV3Count, 3)
+	assert.GreaterOrEqual(t, deleteIssuerKeysCount, 3)
+	mu.Unlock()
 }

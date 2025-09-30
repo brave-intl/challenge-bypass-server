@@ -1,103 +1,115 @@
 package server
 
 import (
-	"os"
+	"context"
+	"fmt"
+	"sync"
 	"time"
 )
 
-// SetupCronTasks run two functions every hour
-func (s *Server) SetupCronTasks() {
-	s.ensureCronDefaults()
-
-	cadence := 1 * time.Hour
-	startMinute := 0
-	if os.Getenv("ENV") == "production" {
-		startMinute = 1
-	}
-	now := s.Now()
-	nextHour := time.Date(
-		now.Year(),
-		now.Month(),
-		now.Day(),
-		now.Hour()+1,
-		startMinute,
-		0,
-		0,
-		now.Location(),
-	)
-	if nextHour.Before(now) {
-		nextHour = nextHour.Add(time.Hour)
-	}
-	timeUntilNextHour := nextHour.Sub(now)
-
-	go func() {
-		s.Sleep(timeUntilNextHour)
-		if err := s.RotateIssuers(); err != nil {
-			panic(err)
-		}
-		rows, err := s.DeleteIssuerKeys("P1M")
-		if err != nil {
-			panic(err)
-		}
-		s.Logger.Info("cron", "delete issuers keys removed", rows)
-		tickerC := s.NewTicker(cadence)
-		for range tickerC {
-			if err := s.RotateIssuers(); err != nil {
-				panic(err)
-			}
-			rows, err := s.DeleteIssuerKeys("P1M")
-			if err != nil {
-				panic(err)
-			}
-			s.Logger.Info("cron", "delete issuers keys removed", rows)
-		}
-	}()
-
-	go func() {
-		now := s.Now()
-		nextMinute := time.Date(
-			now.Year(),
-			now.Month(),
-			now.Day(),
-			now.Hour(),
-			now.Minute()+1,
-			0,
-			0,
-			now.Location(),
-		)
-		timeUntilNextMinute := nextMinute.Sub(now)
-		s.Sleep(timeUntilNextMinute)
-		if err := s.RotateIssuersV3(); err != nil {
-			panic(err)
-		}
-		tickerC := s.NewTicker(1 * time.Minute)
-		for range tickerC {
-			if err := s.RotateIssuersV3(); err != nil {
-				panic(err)
-			}
-		}
-	}()
+type Task struct {
+	Interval time.Duration
+	Execute  func() error
 }
 
-func (s *Server) ensureCronDefaults() {
-	if s.Now == nil {
-		s.Now = time.Now
+// SetupCronTasks runs scheduled tasks and monitors for errors
+func SetupCronTasks(ctx context.Context, now time.Time, tasks []Task) error {
+	errChan := make(chan error, len(tasks))
+	var wg sync.WaitGroup
+
+	for _, task := range tasks {
+		wg.Add(1)
+		go runTask(ctx, &wg, task, now, errChan)
 	}
-	if s.Sleep == nil {
-		s.Sleep = time.Sleep
+
+	// Monitor goroutines and handle cleanup
+	go func() {
+		wg.Wait()
+		close(errChan)
+	}()
+
+	// Wait for either an error from a goroutine or context cancellation
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
 	}
-	if s.NewTicker == nil {
-		s.NewTicker = func(d time.Duration) <-chan time.Time {
-			return time.NewTicker(d).C
+}
+
+func initialWait(now time.Time) time.Duration {
+	nextMinute := time.Date(
+		now.Year(), now.Month(), now.Day(),
+		now.Hour(), now.Minute()+1, 0, 0,
+		now.Location(),
+	)
+	return nextMinute.Sub(now)
+}
+
+// runTask executes a scheduled task on the specified interval
+func runTask(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	task Task,
+	now time.Time,
+	errChan chan<- error,
+) {
+	defer wg.Done()
+
+	// Wait until the first scheduled run
+	initialWait := initialWait(now)
+
+	select {
+	case <-time.After(initialWait):
+		// Continue to first execution
+	case <-ctx.Done():
+		return
+	}
+
+	// First execution
+	if err := task.Execute(); err != nil {
+		errChan <- fmt.Errorf("%s task error: %w", task.Interval, err)
+		return
+	}
+
+	// Setup ticker for subsequent executions
+	ticker := time.NewTicker(task.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := task.Execute(); err != nil {
+				errChan <- fmt.Errorf("%s task error: %w", task.Interval, err)
+				return
+			}
+		case <-ctx.Done():
+			return
 		}
 	}
-	if s.RotateIssuers == nil {
-		s.RotateIssuers = s.rotateIssuers
+}
+
+func (s *Server) DefaultHourlyJob() error {
+	if err := s.rotateIssuers(); err != nil {
+		cronTotal.WithLabelValues("hourlyRotationFailure").Inc()
+		return fmt.Errorf("RotateIssuers failed: %w", err)
 	}
-	if s.DeleteIssuerKeys == nil {
-		s.DeleteIssuerKeys = s.deleteIssuerKeys
+
+	_, err := s.deleteIssuerKeys("P1M")
+	if err != nil {
+		cronTotal.WithLabelValues("hourlyRotationPartialFailure").Inc()
+		return fmt.Errorf("DeleteIssuerKeys failed: %w", err)
 	}
-	if s.RotateIssuersV3 == nil {
-		s.RotateIssuersV3 = s.rotateIssuersV3
+
+	cronTotal.WithLabelValues("hourlyRotationSuccess").Inc()
+	return nil
+}
+
+func (s *Server) DefaultMinutelyJob() error {
+	if err := s.rotateIssuersV3(); err != nil {
+		cronTotal.WithLabelValues("minutelyRotationFailure").Inc()
+		return err
 	}
+	cronTotal.WithLabelValues("minutelyRotationSuccess").Inc()
+	return nil
 }
