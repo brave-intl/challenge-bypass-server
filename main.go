@@ -63,20 +63,16 @@ func main() {
 	srv.InitDynamo()
 	// Run the cron jobs unless explicitly disabled.
 	if os.Getenv("CRON_ENABLED") != "false" {
-		server.SetupCronTasks(
-			serverCtx,
-			time.Now(),
-			[]server.Task{
-				{
-					Interval: 1 * time.Hour,
-					Execute:  srv.DefaultHourlyJob,
-				},
-				{
-					Interval: 1 * time.Minute,
-					Execute:  srv.DefaultMinutelyJob,
-				},
-			},
-		)
+		scheduler := server.NewCronScheduler(serverCtx)
+		scheduler.AddTask(server.Task{
+			Interval: time.Hour,
+			Execute:  srv.DefaultHourlyJob,
+		})
+		scheduler.AddTask(server.Task{
+			Interval: time.Minute,
+			Execute:  srv.DefaultMinutelyJob,
+		})
+		scheduler.Start()
 	}
 
 	logger.Debug("Persistence and cron jobs initialized")
