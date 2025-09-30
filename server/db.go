@@ -101,36 +101,35 @@ func makeDBConnection(uri string, maxConnection int) (*sql.DB, error) {
 
 // InitDB initialzes the database connection based on a server's configuration
 func (c *Server) InitDB(logger *slog.Logger) {
-	var (
-		dbw *sql.DB // Database writer connection
-		dbr *sql.DB // Database reader connection
-	)
 	cfg := c.dbConfig
-	dbw, err := makeDBConnection(cfg.ConnectionURI, cfg.MaxConnection)
+
+	writer, err := makeDBConnection(cfg.ConnectionURI, cfg.MaxConnection)
 	if err != nil {
 		panic(err)
 	}
+
+	var reader *sql.DB
 	if cfg.ConnectionURIReader != "" {
-		dbr, err = makeDBConnection(cfg.ConnectionURIReader, cfg.MaxConnection)
+		reader, err = makeDBConnection(cfg.ConnectionURIReader, cfg.MaxConnection)
 		if err != nil {
-			logger.Warn("database reader instance not connected")
+			logger.Warn("database reader instance not connected", "error", err)
 		}
 	}
 
-	c.db = dbw
+	c.db = writer
 	// Use the writer for the reader as well if the reader connection is missing
-	if dbr != nil {
-		c.dbr = dbr
+	if reader != nil {
+		c.dbr = reader
 	} else {
-		c.dbr = dbw
+		c.dbr = writer
 	}
 
 	// Database Telemetry
-	collector := metrics.NewStatsCollector("challenge_bypass_db", dbw)
+	collector := metrics.NewStatsCollector("challenge_bypass_db", writer)
 	err = prometheus.Register(collector)
 	if ae, ok := err.(prometheus.AlreadyRegisteredError); ok {
 		if sc, ok := ae.ExistingCollector.(*metrics.StatsCollector); ok {
-			sc.AddStatsGetter("challenge_bypass_db", dbw)
+			sc.AddStatsGetter("challenge_bypass_db", writer)
 		}
 	}
 
@@ -138,7 +137,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 		time.Sleep(10 * time.Second)
 	}
 
-	driver, err := postgres.WithInstance(dbw, &postgres.Config{})
+	driver, err := postgres.WithInstance(writer, &postgres.Config{})
 	if err != nil {
 		panic(err)
 	}
