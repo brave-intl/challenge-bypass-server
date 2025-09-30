@@ -141,18 +141,9 @@ func (c *Server) InitDBConfig() error {
 		MaxConnection:           100,
 	}
 
-	// Heroku style
-	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
-		conf.ConnectionURI = os.Getenv("DATABASE_URL")
-	}
-
-	if connectionURIReader := os.Getenv("DATABASE_READER_URL"); connectionURIReader != "" {
-		conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
-	}
-
-	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
-		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
-	}
+	conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
+	conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 
 	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
 		if count, err := strconv.Atoi(maxConnection); err == nil {

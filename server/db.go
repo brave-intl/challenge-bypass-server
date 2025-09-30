@@ -111,7 +111,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 		panic(err)
 	}
 	if cfg.ConnectionURIReader != "" {
-		dbr, err = makeDBConnection(cfg.ConnectionURI, cfg.MaxConnection)
+		dbr, err = makeDBConnection(cfg.ConnectionURIReader, cfg.MaxConnection)
 		if err != nil {
 			logger.Warn("database reader instance not connected")
 		}
