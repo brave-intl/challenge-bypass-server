@@ -7,25 +7,33 @@ import (
 	"time"
 )
 
+// IssuerManager defines the interface for issuer operations
+type IssuerManager interface {
+	RotateIssuers() error
+	RotateIssuersV3() error
+	DeleteIssuerKeys(duration string) (int64, error)
+}
+
 type CronScheduler struct {
-	tasks  []Task
-	wg     sync.WaitGroup
-	ctx    context.Context
-	cancel context.CancelFunc
+	tasks   []Task
+	wg      sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	manager IssuerManager
 }
 
 type Task struct {
 	Interval time.Duration
-	Execute  func() error
-	OnError  func(error)
+	Execute  func(IssuerManager) error
 }
 
 // NewCronScheduler creates a new scheduler
-func NewCronScheduler(ctx context.Context) *CronScheduler {
+func NewCronScheduler(ctx context.Context, im IssuerManager) *CronScheduler {
 	ctx, cancel := context.WithCancel(ctx)
 	return &CronScheduler{
-		ctx:    ctx,
-		cancel: cancel,
+		ctx:     ctx,
+		cancel:  cancel,
+		manager: im,
 	}
 }
 
@@ -43,13 +51,13 @@ func (s *CronScheduler) Start() {
 }
 
 // Stop gracefully stops all tasks
-func (s *CronScheduler) Stop() {
-	s.cancel()
-	s.wg.Wait()
+func (cs *CronScheduler) Stop() {
+	cs.cancel()
+	cs.wg.Wait()
 }
 
-func (s *CronScheduler) runTask(task Task) {
-	defer s.wg.Done()
+func (cs *CronScheduler) runTask(task Task) {
+	defer cs.wg.Done()
 
 	ticker := time.NewTicker(task.Interval)
 	defer ticker.Stop()
@@ -57,28 +65,22 @@ func (s *CronScheduler) runTask(task Task) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := task.Execute(); err != nil {
-				s.handleError(task, err)
+			if err := task.Execute(cs.manager); err != nil {
+				// @TODO: Alert here
+				fmt.Printf("Task execution failed: %v\n", err)
 			}
-		case <-s.ctx.Done():
+		case <-cs.ctx.Done():
 			return
 		}
 	}
 }
 
-func (s *CronScheduler) handleError(task Task, err error) {
-	if task.OnError != nil {
-		task.OnError(fmt.Errorf("task %s: %w", task.Interval, err))
-	}
-}
-
-// DefaultHourlyJob rotates v2 issuers and deletes unneeded keys
-func (s *Server) DefaultHourlyJob() error {
-	if err := s.rotateIssuers(); err != nil {
+func defaultHourlyJob(im IssuerManager) error {
+	if err := im.RotateIssuers(); err != nil {
 		cronTotal.WithLabelValues("hourlyRotationFailure").Inc()
 		return fmt.Errorf("RotateIssuers failed: %w", err)
 	}
-	_, err := s.deleteIssuerKeys("P1M")
+	_, err := im.DeleteIssuerKeys("P1M")
 	if err != nil {
 		cronTotal.WithLabelValues("hourlyRotationPartialFailure").Inc()
 		return fmt.Errorf("DeleteIssuerKeys failed: %w", err)
@@ -87,12 +89,31 @@ func (s *Server) DefaultHourlyJob() error {
 	return nil
 }
 
-// DefaultMinutelyJob roates v3 issuers
-func (s *Server) DefaultMinutelyJob() error {
-	if err := s.rotateIssuersV3(); err != nil {
+func defaultMinutelyJob(im IssuerManager) error {
+	if err := im.RotateIssuersV3(); err != nil {
 		cronTotal.WithLabelValues("minutelyRotationFailure").Inc()
 		return err
 	}
 	cronTotal.WithLabelValues("minutelyRotationSuccess").Inc()
 	return nil
+}
+
+// SetupCronJobs creates and starts the cron scheduler with default jobs
+func (s *Server) SetupCronJobs(ctx context.Context) *CronScheduler {
+	scheduler := NewCronScheduler(ctx, s)
+
+	// Hourly job
+	scheduler.AddTask(Task{
+		Interval: time.Hour,
+		Execute:  defaultHourlyJob,
+	})
+
+	// Minutely job
+	scheduler.AddTask(Task{
+		Interval: time.Minute,
+		Execute:  defaultMinutelyJob,
+	})
+
+	scheduler.Start()
+	return scheduler
 }

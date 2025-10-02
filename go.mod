@@ -63,6 +63,7 @@ require (
 	github.com/rs/zerolog v1.29.0 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
 	github.com/shengdoushi/base58 v1.0.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/throttled/throttled/v2 v2.12.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	golang.org/x/crypto v0.36.0 // indirect
