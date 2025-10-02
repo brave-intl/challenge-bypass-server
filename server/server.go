@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +19,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
-	"github.com/jmoiron/sqlx"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -108,7 +108,8 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sqlx.DB
+	db           *sql.DB // Database writer instance
+	dbr          *sql.DB // Database reader instance
 
 	caches map[string]CacheInterface
 }
@@ -140,14 +141,9 @@ func (c *Server) InitDBConfig() error {
 		MaxConnection:           100,
 	}
 
-	// Heroku style
-	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
-		conf.ConnectionURI = os.Getenv("DATABASE_URL")
-	}
-
-	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
-		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
-	}
+	conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
+	conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 
 	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
 		if count, err := strconv.Atoi(maxConnection); err == nil {
