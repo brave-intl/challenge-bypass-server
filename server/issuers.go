@@ -264,12 +264,14 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 				}
 			}
 		}
+
 		return &AppError{
 			Cause:   err,
 			Message: "Could not create new issuer",
 			Code:    500,
 		}
 	}
+
 	w.WriteHeader(http.StatusCreated)
 	return nil
 }
@@ -303,6 +305,7 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 	if req.ExpiresAt == nil {
 		req.ExpiresAt = &time.Time{}
 	}
+
 	if err := c.createIssuerV2(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		// if this is a duplicate on a constraint we already inserted it
 		c.Logger.Error("issuercreatehandlerv2", slog.Any("error", err))

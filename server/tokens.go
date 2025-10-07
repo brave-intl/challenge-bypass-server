@@ -204,6 +204,7 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Request) *AppError {
 	v3BlindedTokenCallTotal.WithLabelValues("redeemTokens").Inc()
 	ctx := r.Context()
+
 	issuerType := URLParam(r, "type")
 	if issuerType == "" {
 		if err := RenderContent(blindedTokenRedeemResponse{}, w, http.StatusOK); err != nil {
@@ -312,6 +313,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 				Code:    http.StatusConflict,
 			}
 		}
+
 		return &AppError{
 			Cause:   err,
 			Message: "Could not mark token redemption",
@@ -393,6 +395,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				break
 			}
 		}
+
 		if !verified {
 			c.Logger.Error("Could not verify that the token redemption is valid")
 			return &AppError{
