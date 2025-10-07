@@ -2,6 +2,7 @@ package alert
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -142,7 +143,7 @@ func TestAlert(t *testing.T) {
 
 			// Call the Alert function
 			testErr := errors.New(tt.wantMessage)
-			Alert(logger, testErr, tt.alertType)
+			Alert(context.Background(), logger, testErr, tt.alertType)
 
 			// Parse the JSON log entry
 			var logEntry map[string]any
@@ -185,7 +186,7 @@ func TestAlertNilLogger(t *testing.T) {
 			t.Errorf("Expected panic with nil logger, but did not")
 		}
 	}()
-	Alert(nil, errors.New("test"), Crash)
+	Alert(context.Background(), nil, errors.New("test"), Crash)
 }
 
 // Edge case: Test Alert with nil error (expects panic on err.Error())
@@ -199,5 +200,5 @@ func TestAlertNilError(t *testing.T) {
 			t.Errorf("Expected panic with nil error, but did not")
 		}
 	}()
-	Alert(logger, nil, Generic) // This will panic on nil.Error()
+	Alert(context.Background(), logger, nil, Generic) // This will panic on nil.Error()
 }

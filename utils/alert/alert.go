@@ -8,8 +8,8 @@ import (
 
 // Alert formats a special log entry to be detected by a log filter to trigger a Slack
 // alert.
-func Alert(logger *slog.Logger, err error, alertType AlertType) {
-	logger.Log(context.Background(), slog.LevelError, "",
+func Alert(ctx context.Context, logger *slog.Logger, err error, alertType AlertType) {
+	logger.Log(ctx, slog.LevelError, "",
 		slog.String("code", alertType.String()),
 		slog.String("message", err.Error()),
 	)

@@ -41,7 +41,7 @@ func main() {
 		srv, err = server.LoadConfigFile(configFile)
 		if err != nil {
 			logger.Error("loadconfigfile", slog.Any("error", err))
-			alert.Alert(logger, err, alert.Crash)
+			alert.Alert(serverCtx, logger, err, alert.Crash)
 			panic(err)
 		}
 	}
@@ -55,7 +55,7 @@ func main() {
 	err = srv.InitDBConfig()
 	if err != nil {
 		logger.Error("initdbconfig", slog.Any("error", err))
-		alert.Alert(logger, err, alert.Crash)
+		alert.Alert(serverCtx, logger, err, alert.Crash)
 		panic(err)
 	}
 
@@ -95,7 +95,7 @@ func main() {
 	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
 		logger.Error("listenandserve", slog.Any("error", err))
-		alert.Alert(logger, err, alert.Crash)
+		alert.Alert(serverCtx, logger, err, alert.Crash)
 		panic(err)
 	}
 }
@@ -107,7 +107,7 @@ func startKafka(srv server.Server, logger *slog.Logger) {
 
 	if err != nil {
 		logger.Error("startkafka", slog.Any("error", err))
-		alert.Alert(logger, err, alert.Outage)
+		alert.Alert(ctx, logger, err, alert.Outage)
 		// If err is something then start consumer again
 		time.Sleep(10 * time.Second)
 		startKafka(srv, logger)

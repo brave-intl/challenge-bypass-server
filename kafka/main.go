@@ -209,7 +209,7 @@ func readAndCommitBatchPipelineResults(
 
 	if msgCtx.err != nil {
 		kafkaErrorTotal.Inc()
-		alert.Alert(logger, msgCtx.err, alert.Outage)
+		alert.Alert(ctx, logger, msgCtx.err, alert.Outage)
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
 	logger.Debug("committing offset", "offset", msgCtx.msg.Offset)
@@ -247,7 +247,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 				logger.Debug("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				kafkaErrorTotal.Inc()
-				alert.Alert(logger, err, alert.Crash)
+				alert.Alert(ctx, logger, err, alert.Crash)
 				panic("failed to fetch kafka messages and closed channel")
 			}
 			// There are other possible errors, but the underlying consumer
