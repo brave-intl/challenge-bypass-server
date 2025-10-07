@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,12 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/jmoiron/sqlx"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -74,23 +76,26 @@ var (
 
 // init - Register Metrics for Server
 func init() {
-	// DB
-	prometheus.MustRegister(fetchIssuerTotal)
-	prometheus.MustRegister(createIssuerTotal)
-	prometheus.MustRegister(redeemTokenTotal)
-	prometheus.MustRegister(fetchRedemptionTotal)
-	// DB latency
-	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
-	prometheus.MustRegister(createIssuerDBDuration)
-	prometheus.MustRegister(createRedemptionDBDuration)
-	prometheus.MustRegister(fetchRedemptionDBDuration)
-	// API Calls
-	prometheus.MustRegister(v1BlindedTokenCallTotal)
-	prometheus.MustRegister(v1IssuerCallTotal)
-	prometheus.MustRegister(v2BlindedTokenCallTotal)
-	prometheus.MustRegister(v2IssuerCallTotal)
-	prometheus.MustRegister(v3BlindedTokenCallTotal)
-	prometheus.MustRegister(v3IssuerCallTotal)
+	metrics.MustRegisterIfNotRegistered(
+		prometheus.DefaultRegisterer,
+		// DB
+		fetchIssuerTotal,
+		createIssuerTotal,
+		redeemTokenTotal,
+		fetchRedemptionTotal,
+		// DB latency
+		fetchIssuerByTypeDBDuration,
+		createIssuerDBDuration,
+		createRedemptionDBDuration,
+		fetchRedemptionDBDuration,
+		// API Calls
+		v1BlindedTokenCallTotal,
+		v1IssuerCallTotal,
+		v2BlindedTokenCallTotal,
+		v2IssuerCallTotal,
+		v3BlindedTokenCallTotal,
+		v3IssuerCallTotal,
+	)
 }
 
 // Server - base server type
@@ -101,9 +106,10 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sqlx.DB
-	caches       map[string]CacheInterface
-	router       *CustomServeMux
+	db           *sql.DB // Database writer instance
+	dbr          *sql.DB // Database reader instance
+
+	caches map[string]CacheInterface
 }
 
 // DefaultServer on port
@@ -123,6 +129,54 @@ func LoadConfigFile(filePath string) (Server, error) {
 		return conf, err
 	}
 	return conf, nil
+}
+
+// InitDBConfig reads os environment and update conf
+func (c *Server) InitDBConfig() error {
+	conf := DBConfig{
+		DefaultDaysBeforeExpiry: 7,
+		DefaultIssuerValidDays:  30,
+		MaxConnection:           100,
+	}
+
+	conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
+	conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
+
+	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
+		if count, err := strconv.Atoi(maxConnection); err == nil {
+			conf.MaxConnection = count
+		}
+	}
+
+	if defaultDaysBeforeExpiry := os.Getenv("DEFAULT_DAYS_BEFORE_EXPIRY"); defaultDaysBeforeExpiry != "" {
+		if count, err := strconv.Atoi(defaultDaysBeforeExpiry); err == nil {
+			conf.DefaultDaysBeforeExpiry = count
+		}
+	}
+
+	if defaultIssuerValidDays := os.Getenv("DEFAULT_ISSUER_VALID_DAYS"); defaultIssuerValidDays != "" {
+		if count, err := strconv.Atoi(defaultIssuerValidDays); err == nil {
+			conf.DefaultIssuerValidDays = count
+		}
+	}
+
+	if cacheEnabled := os.Getenv("CACHE_ENABLED"); cacheEnabled == "true" {
+		cachingConfig := CachingConfig{
+			Enabled:       true,
+			ExpirationSec: 10,
+		}
+		if cacheDurationSecs := os.Getenv("CACHE_DURATION_SECS"); cacheDurationSecs != "" {
+			if secs, err := strconv.Atoi(cacheDurationSecs); err == nil {
+				cachingConfig.ExpirationSec = secs
+			}
+		}
+		conf.CachingConfig = cachingConfig
+	}
+
+	c.LoadDBConfig(conf)
+
+	return nil
 }
 
 // SetupLogger creates a logger to use
@@ -417,7 +471,6 @@ func (c *Server) setupRouter(logger *slog.Logger) *CustomServeMux {
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(logger *slog.Logger) error {
 	router := c.setupRouter(logger)
-	c.router = router
 	ServeMetrics()
 	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), router)
 }
