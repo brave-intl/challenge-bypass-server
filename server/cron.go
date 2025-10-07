@@ -7,13 +7,15 @@ import (
 	"time"
 )
 
-// IssuerManager defines the interface for issuer operations
+// IssuerManager defines the interface for issuer operations. For now, this interface
+// is specific to cron jobs.
 type IssuerManager interface {
 	RotateIssuers() error
 	RotateIssuersV3() error
 	DeleteIssuerKeys(duration string) (int64, error)
 }
 
+// CronScheduler collects the components needed to execute cron tasks.
 type CronScheduler struct {
 	tasks   []Task
 	wg      sync.WaitGroup
@@ -22,6 +24,7 @@ type CronScheduler struct {
 	manager IssuerManager
 }
 
+// Task is a job that will run at an interval.
 type Task struct {
 	Interval time.Duration
 	Execute  func(IssuerManager) error
@@ -66,7 +69,7 @@ func (cs *CronScheduler) runTask(task Task) {
 		select {
 		case <-ticker.C:
 			if err := task.Execute(cs.manager); err != nil {
-				// @TODO: Alert here
+				// @TODO: Alert here once alert is merged
 				fmt.Printf("Task execution failed: %v\n", err)
 			}
 		case <-cs.ctx.Done():

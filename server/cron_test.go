@@ -334,7 +334,7 @@ func BenchmarkCronScheduler_RunTask(b *testing.B) {
 	}
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		scheduler.AddTask(task)
 	}
 
