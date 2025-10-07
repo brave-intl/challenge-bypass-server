@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	_ "net/http/pprof"
@@ -42,6 +41,7 @@ func main() {
 		srv, err = server.LoadConfigFile(configFile)
 		if err != nil {
 			logger.Error("loadconfigfile", slog.Any("error", err))
+			alert.Alert(logger, err, alert.Crash)
 			panic(err)
 		}
 	}
@@ -55,15 +55,11 @@ func main() {
 	err = srv.InitDBConfig()
 	if err != nil {
 		logger.Error("initdbconfig", slog.Any("error", err))
+		alert.Alert(logger, err, alert.Crash)
 		panic(err)
 	}
 
 	logger.Debug("Initializing persistence and cron jobs")
-	alert.Alert(
-		logger,
-		fmt.Errorf("This is a test error emitted on service initialization."),
-		"unknown",
-	)
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
 	srv.InitDB(logger)
@@ -99,6 +95,7 @@ func main() {
 	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
 		logger.Error("listenandserve", slog.Any("error", err))
+		alert.Alert(logger, err, alert.Crash)
 		panic(err)
 	}
 }
@@ -110,6 +107,7 @@ func startKafka(srv server.Server, logger *slog.Logger) {
 
 	if err != nil {
 		logger.Error("startkafka", slog.Any("error", err))
+		alert.Alert(logger, err, alert.Outage)
 		// If err is something then start consumer again
 		time.Sleep(10 * time.Second)
 		startKafka(srv, logger)
