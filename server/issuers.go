@@ -114,7 +114,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *App
 	v1IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
 
-	if issuerType := URLParam(r, "type"); issuerType != "" {
+	if issuerType := r.PathValue("type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
@@ -135,7 +135,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *App
 
 func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *AppError {
 	v3IssuerCallTotal.WithLabelValues("getIssuer").Inc()
-	issuerType := URLParam(r, "type")
+	issuerType := r.PathValue("type")
 
 	if issuerType == "" {
 		// need an issuer type, 404 otherwise
@@ -172,7 +172,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *AppErr
 		return WrapError(err, "Could not parse the request body", 400)
 	}
 
-	if issuerType := URLParam(r, "type"); issuerType != "" {
+	if issuerType := r.PathValue("type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, req.Cohort)
 		if appErr != nil {
 			return appErr

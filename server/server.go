@@ -2,7 +2,6 @@
 package server
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -215,258 +213,95 @@ func SetupLogger(
 	return logger
 }
 
-// CustomServeMux is a custom HTTP router that supports URL parameters
-type CustomServeMux struct {
-	routes     map[string]http.Handler
-	patterns   []*regexp.Regexp
-	handlers   []http.Handler
-	middleware []func(http.Handler) http.Handler
-}
-
-// NewCustomServeMux creates a new custom HTTP router
-func NewCustomServeMux() *CustomServeMux {
-	return &CustomServeMux{
-		routes:     make(map[string]http.Handler),
-		patterns:   make([]*regexp.Regexp, 0),
-		handlers:   make([]http.Handler, 0),
-		middleware: make([]func(http.Handler) http.Handler, 0),
-	}
-}
-
-// Use adds middleware to the router
-func (m *CustomServeMux) Use(middleware ...func(http.Handler) http.Handler) {
-	m.middleware = append(m.middleware, middleware...)
-}
-
-// Handle registers a handler for a specific path
-func (m *CustomServeMux) Handle(pattern string, handler http.Handler) {
-	// If it's a static route without parameters
-	if !strings.Contains(pattern, "{") && !strings.Contains(pattern, "}") {
-		// Apply all middleware to the handler
-		for i := len(m.middleware) - 1; i >= 0; i-- {
-			handler = m.middleware[i](handler)
-		}
-		m.routes[pattern] = handler
-		return
-	}
-	// Convert Chi-style URL params to regexp
-	// Convert {param} to (?P<param>[^/]+)
-	regexPattern := pattern
-	regexPattern = strings.Replace(regexPattern, "/", "\\/", -1)
-	re := regexp.MustCompile(`\{([^}]+)\}`)
-	regexPattern = re.ReplaceAllString(regexPattern, `(?P<$1>[^/]+)`)
-	regexPattern = "^" + regexPattern + "$"
-	// Compile the regexp pattern
-	r, err := regexp.Compile(regexPattern)
-	if err != nil {
-		panic(err)
-	}
-	// Apply all middleware to the handler
-	for i := len(m.middleware) - 1; i >= 0; i-- {
-		handler = m.middleware[i](handler)
-	}
-	// Store the pattern and handler
-	m.patterns = append(m.patterns, r)
-	m.handlers = append(m.handlers, handler)
-}
-
-// HandleFunc registers a handler function for a specific path
-func (m *CustomServeMux) HandleFunc(pattern string, handlerFunc func(http.ResponseWriter, *http.Request)) {
-	m.Handle(pattern, http.HandlerFunc(handlerFunc))
-}
-
-// ServeHTTP handles HTTP requests
-func (m *CustomServeMux) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Check for exact routes first
-	if handler, ok := m.routes[r.URL.Path]; ok {
-		handler.ServeHTTP(w, r)
-		return
-	}
-	// Check for pattern matches
-	for i, pattern := range m.patterns {
-		matches := pattern.FindStringSubmatch(r.URL.Path)
-		if len(matches) > 0 {
-			// Create a context with URL parameters
-			ctx := r.Context()
-			// Add params to the context
-			for j, name := range pattern.SubexpNames() {
-				if j != 0 && name != "" {
-					ctx = context.WithValue(ctx, name, matches[j])
-				}
-			}
-			// Update the request with the new context
-			r = r.WithContext(ctx)
-			// Call the handler
-			m.handlers[i].ServeHTTP(w, r)
-			return
-		}
-	}
-	// If no route matches, return 404
-	http.NotFound(w, r)
-}
-
-// URLParam retrieves the URL parameter from the request context
-func URLParam(r *http.Request, key string) string {
-	if value, ok := r.Context().Value(key).(string); ok {
-		return value
-	}
-	return ""
-}
-
 // setupRouter sets up all routes for the server
-func (c *Server) setupRouter(logger *slog.Logger) *CustomServeMux {
-	r := NewCustomServeMux()
+func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
 	c.Logger = logger
-	// Setup common middleware
-	r.Use(
-		RequestIDMiddleware,
-		TimeoutMiddleware(60*time.Second),
-		BearerTokenMiddleware,
-		LoggingMiddleware(logger),
-	)
-	// kick rotate v3 issuers on start
+
+	// Kick rotate v3 issuers on start
 	if err := c.rotateIssuersV3(); err != nil {
+		// @TODO: Alert here once merged
 		panic(err)
 	}
-	// Get the auth middleware based on environment
-	var authMiddleware func(http.Handler) http.Handler
-	if os.Getenv("ENV") == "production" {
-		authMiddleware = SimpleTokenAuthorizedOnly
-	} else {
-		// No-op middleware for non-production
-		authMiddleware = func(next http.Handler) http.Handler {
-			return next
-		}
+
+	// Create middleware chain wrapper
+	wrap := func(h http.Handler) http.Handler {
+		h = LoggingMiddleware(logger)(h)
+		h = BearerTokenMiddleware(h)
+		h = TimeoutMiddleware(60 * time.Second)(h)
+		h = RequestIDMiddleware(h)
+		return h
 	}
-	// Replace the heartbeat middleware with a simple route
-	r.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+
+	// Get auth middleware based on environment
+	authWrap := func(h http.Handler) http.Handler {
+		if os.Getenv("ENV") == "production" {
+			h = SimpleTokenAuthorizedOnly(h)
+		}
+		return wrap(h)
+	}
+
+	// Root health check endpoint
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Length", "1")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("."))
 	})
 
-	// =========== V1 API Routes ===========
+	// =========== V1 API Routes (no duplicate trailing slash routes needed) ===========
+
 	// V1 Token Routes
-	r.Handle(
-		"/v1/blindedToken/{type}",
-		authMiddleware(AppHandler(c.blindedTokenIssuerHandler)),
-	)
-	r.Handle(
-		"/v1/blindedToken/{type}/redemption/",
-		authMiddleware(AppHandler(c.blindedTokenRedeemHandler)),
-	)
-	r.Handle(
-		"/v1/blindedToken/{id}/redemption/{tokenId}",
-		authMiddleware(AppHandler(c.blindedTokenRedemptionHandler)),
-	)
-	r.Handle(
-		"/v1/blindedToken/bulk/redemption/",
-		authMiddleware(AppHandler(c.blindedTokenBulkRedeemHandler)),
-	)
+	mux.Handle("GET /v1/blindedToken/{type}",
+		authWrap(AppHandler(c.blindedTokenIssuerHandler)))
+	mux.Handle("POST /v1/blindedToken/{type}",
+		authWrap(AppHandler(c.blindedTokenIssuerHandler)))
+	mux.Handle("POST /v1/blindedToken/{type}/redemption",
+		authWrap(AppHandler(c.blindedTokenRedeemHandler)))
+	mux.Handle("GET /v1/blindedToken/{id}/redemption/{tokenId}",
+		authWrap(AppHandler(c.blindedTokenRedemptionHandler)))
+	mux.Handle("POST /v1/blindedToken/bulk/redemption",
+		authWrap(AppHandler(c.blindedTokenBulkRedeemHandler)))
 
-	// V1 Issuer Routes - Modified to be method-specific
-	// GET /v1/issuer/{type} - Get a specific issuer
-	r.Handle("/v1/issuer/{type}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			authMiddleware(AppHandler(c.issuerGetHandlerV1)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// POST /v1/issuer - Create a new issuer
-	r.Handle("/v1/issuer/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerCreateHandlerV1)).ServeHTTP(w, r)
-		} else if r.Method == http.MethodGet {
-			authMiddleware(AppHandler(c.issuerGetAllHandler)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// Handle bare URL with no trailing slash for POST requests
-	r.Handle("/v1/issuer", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerCreateHandlerV1)).ServeHTTP(w, r)
-		} else if r.Method == http.MethodGet {
-			authMiddleware(AppHandler(c.issuerGetAllHandler)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
+	// V1 Issuer Routes
+	mux.Handle("GET /v1/issuer/{type}",
+		authWrap(AppHandler(c.issuerGetHandlerV1)))
+	mux.Handle("POST /v1/issuer",
+		authWrap(AppHandler(c.issuerCreateHandlerV1)))
+	mux.Handle("GET /v1/issuer",
+		authWrap(AppHandler(c.issuerGetAllHandler)))
 
 	// =========== V2 API Routes ===========
+
 	// V2 Token Routes
-	r.Handle("/v2/blindedToken/{type}", authMiddleware(AppHandler(c.BlindedTokenIssuerHandlerV2)))
+	mux.Handle("GET /v2/blindedToken/{type}",
+		authWrap(AppHandler(c.BlindedTokenIssuerHandlerV2)))
+	mux.Handle("POST /v2/blindedToken/{type}",
+		authWrap(AppHandler(c.BlindedTokenIssuerHandlerV2)))
 
-	// V2 Issuer Routes - Also method-specific
-	// GET /v2/issuer/{type} - Get a specific issuer
-	r.Handle("/v2/issuer/{type}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			authMiddleware(AppHandler(c.issuerHandlerV2)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// POST /v2/issuer - Create a new issuer
-	r.Handle("/v2/issuer/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerCreateHandlerV2)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// Handle bare URL with no trailing slash for POST requests
-	r.Handle("/v2/issuer", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerCreateHandlerV2)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
+	// V2 Issuer Routes
+	mux.Handle("GET /v2/issuer/{type}",
+		authWrap(AppHandler(c.issuerHandlerV2)))
+	mux.Handle("POST /v2/issuer",
+		authWrap(AppHandler(c.issuerCreateHandlerV2)))
 
 	// =========== V3 API Routes ===========
+
 	// V3 Token Routes
-	r.Handle(
-		"/v3/blindedToken/{type}/redemption/",
-		authMiddleware(AppHandler(c.blindedTokenRedeemHandlerV3)),
-	)
+	mux.Handle("POST /v3/blindedToken/{type}/redemption",
+		authWrap(AppHandler(c.blindedTokenRedeemHandlerV3)))
 
-	// V3 Issuer Routes - Also method-specific
-	// GET /v3/issuer/{type} - Get a specific issuer
-	r.Handle("/v3/issuer/{type}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			authMiddleware(AppHandler(c.issuerHandlerV3)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// POST /v3/issuer - Create a new issuer
-	r.Handle("/v3/issuer/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerV3CreateHandler)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
-
-	// Handle bare URL with no trailing slash for POST requests
-	r.Handle("/v3/issuer", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			authMiddleware(AppHandler(c.issuerV3CreateHandler)).ServeHTTP(w, r)
-		} else {
-			http.NotFound(w, r)
-		}
-	}))
+	// V3 Issuer Routes
+	mux.Handle("GET /v3/issuer/{type}",
+		authWrap(AppHandler(c.issuerHandlerV3)))
+	mux.Handle("POST /v3/issuer",
+		authWrap(AppHandler(c.issuerV3CreateHandler)))
 
 	// Metrics endpoint
-	r.Handle("/metrics", promhttp.Handler().(http.HandlerFunc))
-	return r
+	mux.Handle("GET /metrics", wrap(promhttp.Handler()))
+
+	// Wrap the entire mux with StripTrailingSlash middleware
+	return StripTrailingSlash(mux)
 }
 
 // ListenAndServe listen to ports and mount handlers
