@@ -23,7 +23,7 @@ const (
 	Generic
 )
 
-// String returns the string representation of a Severity
+// String returns the string representation of an AlertType
 func (s AlertType) String() string {
 	switch s {
 	case Crash:
@@ -37,7 +37,7 @@ func (s AlertType) String() string {
 	}
 }
 
-// ParseSeverity converts a string to a Severity
+// ParseAlertType converts a string to a AlertType
 func ParseAlertType(s string) AlertType {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "alert_crash":
