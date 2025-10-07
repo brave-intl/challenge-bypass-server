@@ -70,6 +70,7 @@ func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.
 			Code:    500,
 		}
 	}
+
 	return &issuer[0], nil
 }
 
@@ -86,6 +87,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*m
 	if err != nil {
 		return nil, err
 	}
+
 	return &issuer[0], nil
 }
 
@@ -111,6 +113,7 @@ func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Iss
 func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *AppError {
 	v1IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
+
 	if issuerType := URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
@@ -133,6 +136,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *App
 func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *AppError {
 	v3IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	issuerType := URLParam(r, "type")
+
 	if issuerType == "" {
 		// need an issuer type, 404 otherwise
 		return &AppError{
@@ -140,6 +144,7 @@ func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *AppErr
 			Code:    http.StatusNotFound,
 		}
 	}
+
 	issuer, appErr := c.GetLatestIssuer(issuerType, v3Cohort)
 	if appErr != nil {
 		return appErr
@@ -159,12 +164,14 @@ func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *AppErr
 func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *AppError {
 	v2IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
+
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerFetchRequestV2
 	if err := decoder.Decode(&req); err != nil {
 		c.Logger.Error("issuerHandlerV2: Could not parse the request body")
 		return WrapError(err, "Could not parse the request body", 400)
 	}
+
 	if issuerType := URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, req.Cohort)
 		if appErr != nil {
@@ -187,6 +194,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *AppErr
 func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	v1IssuerCallTotal.WithLabelValues("getAllIssuers").Inc()
 	defer closers.Panic(r.Context(), r.Body)
+
 	issuers, appErr := c.FetchAllIssuers()
 	if appErr != nil {
 		return &AppError{
@@ -195,6 +203,7 @@ func (c *Server) issuerGetAllHandler(w http.ResponseWriter, r *http.Request) *Ap
 			Code:    500,
 		}
 	}
+
 	respIssuers := make([]issuerResponse, len(issuers))
 	for idx, currIssuer := range issuers {
 		respIssuers[idx] = makeIssuerResponse(&currIssuer)
@@ -220,6 +229,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		c.Logger.Error("issuerV3CreateHandler: Could not parse the request body")
 		return WrapError(err, "Could not parse the request body", 400)
 	}
+
 	if req.ExpiresAt != nil {
 		if req.ExpiresAt.Before(time.Now()) {
 			c.Logger.Error("Expiration time has past")
@@ -232,6 +242,7 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		// default ExpiresAt
 		req.ExpiresAt = new(time.Time)
 	}
+
 	if err := c.createV3Issuer(model.Issuer{
 		Version:      3,
 		IssuerType:   req.Name,
@@ -265,12 +276,14 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 
 func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *AppError {
 	v2IssuerCallTotal.WithLabelValues("createIssuer").Inc()
+
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
 	if err := decoder.Decode(&req); err != nil {
 		c.Logger.Error("issuerCreateHandlerV2: Could not parse the request body")
 		return WrapError(err, "Could not parse the request body", 400)
 	}
+
 	if req.ExpiresAt != nil {
 		if req.ExpiresAt.Before(time.Now()) {
 			c.Logger.Error("Expiration time has past")
@@ -280,10 +293,12 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 			}
 		}
 	}
+
 	// set the default cohort for v1 clients
 	if req.Cohort == 0 {
 		req.Cohort = v1Cohort
 	}
+
 	// set expires at if nil
 	if req.ExpiresAt == nil {
 		req.ExpiresAt = &time.Time{}
@@ -291,6 +306,7 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 	if err := c.createIssuerV2(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		// if this is a duplicate on a constraint we already inserted it
 		c.Logger.Error("issuercreatehandlerv2", slog.Any("error", err))
+
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
 			if pqErr.Code == "23505" { // unique violation
@@ -301,18 +317,21 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 				}
 			}
 		}
+
 		return &AppError{
 			Cause:   err,
 			Message: "Could not create new issuer",
 			Code:    500,
 		}
 	}
+
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
 
 func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *AppError {
 	v1IssuerCallTotal.WithLabelValues("createIssuer").Inc()
+
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req issuerCreateRequest
 	if err := decoder.Decode(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -322,6 +341,7 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 		)
 		return WrapError(err, "Could not parse the request body", 400)
 	}
+
 	c.Logger.Error("issuerCreateRequest", "request", req)
 	if req.ExpiresAt != nil {
 		if req.ExpiresAt.Before(time.Now()) {
@@ -332,16 +352,20 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 			}
 		}
 	}
+
 	// set the default cohort for v1 clients
 	if req.Cohort == 0 {
 		req.Cohort = v1Cohort
 	}
+
 	// set expires at if nil
 	if req.ExpiresAt == nil {
 		req.ExpiresAt = &time.Time{}
 	}
+
 	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		c.Logger.Error("issuercreatehandlerv1", slog.Any("error", err))
+
 		var pqErr *pq.Error
 		if errors.As(err, &pqErr) {
 			if pqErr.Code == "23505" { // unique violation
@@ -352,12 +376,14 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 				}
 			}
 		}
+
 		return &AppError{
 			Cause:   err,
 			Message: "Could not create new issuer",
 			Code:    500,
 		}
 	}
+
 	w.WriteHeader(http.StatusOK)
 	return nil
 }
@@ -367,11 +393,13 @@ func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 	if expt := iss.ExpiresAtTime(); !expt.IsZero() {
 		expiresAt = expt.Format(time.RFC3339)
 	}
+
 	// Last key in array is the valid one
 	var publicKey *crypto.PublicKey
 	if len(iss.Keys) > 0 {
 		publicKey = iss.Keys[len(iss.Keys)-1].CryptoSigningKey().PublicKey()
 	}
+
 	return issuerResponse{
 		iss.ID.String(),
 		iss.IssuerType,

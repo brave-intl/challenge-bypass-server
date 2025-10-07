@@ -23,6 +23,7 @@ import (
 
 var (
 	maxRequestSize = int64(1024 * 1024) // 1MiB
+
 	// ErrNoSecretKey - configuration error, no secret key
 	ErrNoSecretKey = errors.New("server config does not contain a key")
 	// ErrRequestTooLarge - processing error, request is too big
@@ -471,7 +472,9 @@ func (c *Server) setupRouter(logger *slog.Logger) *CustomServeMux {
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(logger *slog.Logger) error {
 	router := c.setupRouter(logger)
+
 	ServeMetrics()
+
 	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), router)
 }
 
