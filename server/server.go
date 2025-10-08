@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,10 +15,10 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/bat-go/libs/middleware"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
-	"github.com/jmoiron/sqlx"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -77,23 +78,26 @@ var (
 
 // init - Register Metrics for Server
 func init() {
-	// DB
-	prometheus.MustRegister(fetchIssuerTotal)
-	prometheus.MustRegister(createIssuerTotal)
-	prometheus.MustRegister(redeemTokenTotal)
-	prometheus.MustRegister(fetchRedemptionTotal)
-	// DB latency
-	prometheus.MustRegister(fetchIssuerByTypeDBDuration)
-	prometheus.MustRegister(createIssuerDBDuration)
-	prometheus.MustRegister(createRedemptionDBDuration)
-	prometheus.MustRegister(fetchRedemptionDBDuration)
-	// API Calls
-	prometheus.MustRegister(v1BlindedTokenCallTotal)
-	prometheus.MustRegister(v1IssuerCallTotal)
-	prometheus.MustRegister(v2BlindedTokenCallTotal)
-	prometheus.MustRegister(v2IssuerCallTotal)
-	prometheus.MustRegister(v3BlindedTokenCallTotal)
-	prometheus.MustRegister(v3IssuerCallTotal)
+	metrics.MustRegisterIfNotRegistered(
+		prometheus.DefaultRegisterer,
+		// DB
+		fetchIssuerTotal,
+		createIssuerTotal,
+		redeemTokenTotal,
+		fetchRedemptionTotal,
+		// DB latency
+		fetchIssuerByTypeDBDuration,
+		createIssuerDBDuration,
+		createRedemptionDBDuration,
+		fetchRedemptionDBDuration,
+		// API Calls
+		v1BlindedTokenCallTotal,
+		v1IssuerCallTotal,
+		v2BlindedTokenCallTotal,
+		v2IssuerCallTotal,
+		v3BlindedTokenCallTotal,
+		v3IssuerCallTotal,
+	)
 }
 
 // Server - base server type
@@ -104,7 +108,8 @@ type Server struct {
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB
 	dbConfig     DBConfig
-	db           *sqlx.DB
+	db           *sql.DB // Database writer instance
+	dbr          *sql.DB // Database reader instance
 
 	caches map[string]CacheInterface
 }
@@ -136,14 +141,9 @@ func (c *Server) InitDBConfig() error {
 		MaxConnection:           100,
 	}
 
-	// Heroku style
-	if connectionURI := os.Getenv("DATABASE_URL"); connectionURI != "" {
-		conf.ConnectionURI = os.Getenv("DATABASE_URL")
-	}
-
-	if dynamodbEndpoint := os.Getenv("DYNAMODB_ENDPOINT"); dynamodbEndpoint != "" {
-		conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
-	}
+	conf.ConnectionURI = os.Getenv("DATABASE_URL")
+	conf.ConnectionURIReader = os.Getenv("DATABASE_READER_URL")
+	conf.DynamodbEndpoint = os.Getenv("DYNAMODB_ENDPOINT")
 
 	if maxConnection := os.Getenv("MAX_DB_CONNECTION"); maxConnection != "" {
 		if count, err := strconv.Atoi(maxConnection); err == nil {
