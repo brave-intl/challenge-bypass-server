@@ -5,20 +5,20 @@ import (
 	"time"
 )
 
-// CachingConfig is how long data is cached
+// Configuration types
 type CachingConfig struct {
 	Enabled       bool `json:"enabled"`
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-// CacheInterface cache functions
+// Cache interface
 type CacheInterface interface {
 	Get(k string) (any, bool)
 	Delete(k string)
 	SetDefault(k string, x any)
 }
 
-// SimpleCache implements CacheInterface using standard library
+// SimpleCache implementation
 type SimpleCache struct {
 	items             sync.Map
 	defaultExpiration time.Duration
@@ -38,12 +38,10 @@ func NewSimpleCache(defaultExpiration, cleanupInterval time.Duration) *SimpleCac
 		cleanupInterval:   cleanupInterval,
 		stopCleanup:       make(chan bool),
 	}
-
 	// Start cleanup routine if cleanup interval > 0
 	if cleanupInterval > 0 {
 		go cache.startCleanupTimer()
 	}
-
 	return cache
 }
 
@@ -51,7 +49,6 @@ func NewSimpleCache(defaultExpiration, cleanupInterval time.Duration) *SimpleCac
 func (c *SimpleCache) startCleanupTimer() {
 	ticker := time.NewTicker(c.cleanupInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -80,18 +77,15 @@ func (c *SimpleCache) Get(k string) (any, bool) {
 	if !found {
 		return nil, false
 	}
-
 	item, ok := value.(cacheItem)
 	if !ok {
 		return nil, false
 	}
-
 	// Check if item has expired
 	if item.expiration > 0 && item.expiration < time.Now().UnixNano() {
 		c.items.Delete(k)
 		return nil, false
 	}
-
 	return item.value, true
 }
 
@@ -106,27 +100,39 @@ func (c *SimpleCache) SetDefault(k string, x any) {
 	if c.defaultExpiration > 0 {
 		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
 	}
-
 	c.items.Store(k, cacheItem{
 		value:      x,
 		expiration: expiration,
 	})
 }
 
+// Close stops the cleanup timer
+func (c *SimpleCache) Close() {
+	close(c.stopCleanup)
+}
+
+// retrieveFromCache safely retrieves a value from a named cache
 func retrieveFromCache(
 	caches map[string]CacheInterface,
 	cacheName string,
 	key string,
 ) any {
 	if caches != nil {
-		if cached, found := caches[cacheName].Get(key); found {
-			return cached
+		if cache, exists := caches[cacheName]; exists {
+			if cached, found := cache.Get(key); found {
+				return cached
+			}
 		}
 	}
 	return nil
 }
 
+// bootstrapCache creates all the caches
 func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
+	if !cfg.CachingConfig.Enabled {
+		return nil
+	}
+
 	caches := make(map[string]CacheInterface)
 	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
 	cleanupInterval := defaultDuration * 2
