@@ -13,6 +13,15 @@ import (
 	"time"
 )
 
+// Chain takes middlewares and applies them in reverse order
+func Chain(h http.Handler, middlewares ...func(http.Handler) http.Handler) http.Handler {
+	// Apply middlewares in reverse order (last middleware is outermost)
+	for i := len(middlewares) - 1; i >= 0; i-- {
+		h = middlewares[i](h)
+	}
+	return h
+}
+
 // RequestIDMiddleware adds a request ID to the context and response headers
 func RequestIDMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

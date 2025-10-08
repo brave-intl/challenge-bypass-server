@@ -224,21 +224,14 @@ func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
 		panic(err)
 	}
 
-	// Create middleware chain wrapper
-	wrap := func(h http.Handler) http.Handler {
-		h = LoggingMiddleware(logger)(h)
-		h = BearerTokenMiddleware(h)
-		h = TimeoutMiddleware(60 * time.Second)(h)
-		h = RequestIDMiddleware(h)
-		return h
+	// Helper to register authenticated routes
+	registerAuth := func(pattern string, handler func(http.ResponseWriter, *http.Request) *AppError) {
+		mux.Handle(pattern, c.withAuth(AppHandler(handler)))
 	}
 
-	// Get auth middleware based on environment
-	authWrap := func(h http.Handler) http.Handler {
-		if os.Getenv("ENV") == "production" {
-			h = SimpleTokenAuthorizedOnly(h)
-		}
-		return wrap(h)
+	// Helper to register public routes with base middleware
+	registerPublic := func(pattern string, handler http.Handler) {
+		mux.Handle(pattern, c.withBase(handler))
 	}
 
 	// Root health check endpoint
@@ -249,59 +242,62 @@ func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
 		w.Write([]byte("."))
 	})
 
-	// =========== V1 API Routes (no duplicate trailing slash routes needed) ===========
-
+	// =========== V1 API Routes ===========
 	// V1 Token Routes
-	mux.Handle("GET /v1/blindedToken/{type}",
-		authWrap(AppHandler(c.blindedTokenIssuerHandler)))
-	mux.Handle("POST /v1/blindedToken/{type}",
-		authWrap(AppHandler(c.blindedTokenIssuerHandler)))
-	mux.Handle("POST /v1/blindedToken/{type}/redemption",
-		authWrap(AppHandler(c.blindedTokenRedeemHandler)))
-	mux.Handle("GET /v1/blindedToken/{id}/redemption/{tokenId}",
-		authWrap(AppHandler(c.blindedTokenRedemptionHandler)))
-	mux.Handle("POST /v1/blindedToken/bulk/redemption",
-		authWrap(AppHandler(c.blindedTokenBulkRedeemHandler)))
+	registerAuth("GET /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
+	registerAuth("POST /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
+	registerAuth("POST /v1/blindedToken/{type}/redemption", c.blindedTokenRedeemHandler)
+	registerAuth("GET /v1/blindedToken/{id}/redemption/{tokenId}", c.blindedTokenRedemptionHandler)
+	registerAuth("POST /v1/blindedToken/bulk/redemption", c.blindedTokenBulkRedeemHandler)
 
 	// V1 Issuer Routes
-	mux.Handle("GET /v1/issuer/{type}",
-		authWrap(AppHandler(c.issuerGetHandlerV1)))
-	mux.Handle("POST /v1/issuer",
-		authWrap(AppHandler(c.issuerCreateHandlerV1)))
-	mux.Handle("GET /v1/issuer",
-		authWrap(AppHandler(c.issuerGetAllHandler)))
+	registerAuth("GET /v1/issuer/{type}", c.issuerGetHandlerV1)
+	registerAuth("POST /v1/issuer", c.issuerCreateHandlerV1)
+	registerAuth("GET /v1/issuer", c.issuerGetAllHandler)
 
 	// =========== V2 API Routes ===========
-
 	// V2 Token Routes
-	mux.Handle("GET /v2/blindedToken/{type}",
-		authWrap(AppHandler(c.BlindedTokenIssuerHandlerV2)))
-	mux.Handle("POST /v2/blindedToken/{type}",
-		authWrap(AppHandler(c.BlindedTokenIssuerHandlerV2)))
+	registerAuth("GET /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
+	registerAuth("POST /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
 
 	// V2 Issuer Routes
-	mux.Handle("GET /v2/issuer/{type}",
-		authWrap(AppHandler(c.issuerHandlerV2)))
-	mux.Handle("POST /v2/issuer",
-		authWrap(AppHandler(c.issuerCreateHandlerV2)))
+	registerAuth("GET /v2/issuer/{type}", c.issuerHandlerV2)
+	registerAuth("POST /v2/issuer", c.issuerCreateHandlerV2)
 
 	// =========== V3 API Routes ===========
-
 	// V3 Token Routes
-	mux.Handle("POST /v3/blindedToken/{type}/redemption",
-		authWrap(AppHandler(c.blindedTokenRedeemHandlerV3)))
+	registerAuth("POST /v3/blindedToken/{type}/redemption", c.blindedTokenRedeemHandlerV3)
 
 	// V3 Issuer Routes
-	mux.Handle("GET /v3/issuer/{type}",
-		authWrap(AppHandler(c.issuerHandlerV3)))
-	mux.Handle("POST /v3/issuer",
-		authWrap(AppHandler(c.issuerV3CreateHandler)))
+	registerAuth("GET /v3/issuer/{type}", c.issuerHandlerV3)
+	registerAuth("POST /v3/issuer", c.issuerV3CreateHandler)
 
 	// Metrics endpoint
-	mux.Handle("GET /metrics", wrap(promhttp.Handler()))
+	registerPublic("GET /metrics", promhttp.Handler())
 
 	// Wrap the entire mux with StripTrailingSlash middleware
 	return StripTrailingSlash(mux)
+}
+
+func (c *Server) withBase(h http.Handler) http.Handler {
+	return Chain(h,
+		RequestIDMiddleware,
+		TimeoutMiddleware(60*time.Second),
+		BearerTokenMiddleware,
+		LoggingMiddleware(c.Logger),
+	)
+}
+
+func (c *Server) withAuth(h http.Handler) http.Handler {
+	// Start with base middleware chain
+	h = c.withBase(h)
+
+	// Add auth middleware in production
+	if os.Getenv("ENV") == "production" {
+		h = SimpleTokenAuthorizedOnly(h)
+	}
+
+	return h
 }
 
 // ListenAndServe listen to ports and mount handlers
