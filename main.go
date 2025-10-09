@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"flag"
-	"fmt"
 	"log/slog"
 	"net/http"
 	_ "net/http/pprof"
@@ -69,11 +68,6 @@ func main() {
 	}
 
 	logger.Debug("Initializing persistence and cron jobs")
-	alert.Alert(
-		logger,
-		fmt.Errorf("This is a test error emitted on service initialization."),
-		"unknown",
-	)
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
 	srv.InitDB(logger)
