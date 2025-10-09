@@ -19,8 +19,6 @@ type IssuerManager interface {
 type CronScheduler struct {
 	tasks   []Task
 	wg      sync.WaitGroup
-	ctx     context.Context
-	cancel  context.CancelFunc
 	manager IssuerManager
 }
 
@@ -30,36 +28,20 @@ type Task struct {
 	Execute  func(IssuerManager) error
 }
 
-// NewCronScheduler creates a new scheduler
-func NewCronScheduler(ctx context.Context, im IssuerManager) *CronScheduler {
-	ctx, cancel := context.WithCancel(ctx)
-	return &CronScheduler{
-		ctx:     ctx,
-		cancel:  cancel,
-		manager: im,
-	}
-}
-
 // AddTask adds a task to the scheduler
-func (s *CronScheduler) AddTask(task Task) {
-	s.tasks = append(s.tasks, task)
+func (cs *CronScheduler) AddTask(task Task) {
+	cs.tasks = append(cs.tasks, task)
 }
 
 // Start begins executing all tasks (non-blocking)
-func (s *CronScheduler) Start() {
-	for _, task := range s.tasks {
-		s.wg.Add(1)
-		go s.runTask(task)
+func (cs *CronScheduler) Start(ctx context.Context) {
+	for _, task := range cs.tasks {
+		cs.wg.Add(1)
+		go cs.runTask(ctx, task)
 	}
 }
 
-// Stop gracefully stops all tasks
-func (cs *CronScheduler) Stop() {
-	cs.cancel()
-	cs.wg.Wait()
-}
-
-func (cs *CronScheduler) runTask(task Task) {
+func (cs *CronScheduler) runTask(ctx context.Context, task Task) {
 	defer cs.wg.Done()
 
 	ticker := time.NewTicker(task.Interval)
@@ -72,7 +54,7 @@ func (cs *CronScheduler) runTask(task Task) {
 				// @TODO: Alert here once alert is merged
 				fmt.Printf("Task execution failed: %v\n", err)
 			}
-		case <-cs.ctx.Done():
+		case <-ctx.Done():
 			return
 		}
 	}
@@ -83,8 +65,7 @@ func defaultHourlyJob(im IssuerManager) error {
 		cronTotal.WithLabelValues("hourlyRotationFailure").Inc()
 		return fmt.Errorf("RotateIssuers failed: %w", err)
 	}
-	_, err := im.DeleteIssuerKeys("P1M")
-	if err != nil {
+	if _, err := im.DeleteIssuerKeys("P1M"); err != nil {
 		cronTotal.WithLabelValues("hourlyRotationPartialFailure").Inc()
 		return fmt.Errorf("DeleteIssuerKeys failed: %w", err)
 	}
@@ -101,9 +82,11 @@ func defaultMinutelyJob(im IssuerManager) error {
 	return nil
 }
 
-// SetupCronJobs creates and starts the cron scheduler with default jobs
-func (s *Server) SetupCronJobs(ctx context.Context) *CronScheduler {
-	scheduler := NewCronScheduler(ctx, s)
+// StartCronJobs creates and starts the cron scheduler with default jobs
+func (s *Server) StartCronJobs(ctx context.Context) {
+	scheduler := &CronScheduler{
+		manager: s,
+	}
 
 	// Hourly job
 	scheduler.AddTask(Task{
@@ -117,6 +100,5 @@ func (s *Server) SetupCronJobs(ctx context.Context) *CronScheduler {
 		Execute:  defaultMinutelyJob,
 	})
 
-	scheduler.Start()
-	return scheduler
+	scheduler.Start(ctx)
 }

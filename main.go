@@ -63,7 +63,7 @@ func main() {
 	srv.InitDynamo()
 	// Run the cron jobs unless explicitly disabled.
 	if os.Getenv("CRON_ENABLED") != "false" {
-		srv.SetupCronJobs(serverCtx)
+		srv.StartCronJobs(serverCtx)
 	}
 
 	logger.Debug("Persistence and cron jobs initialized")

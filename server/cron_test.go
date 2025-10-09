@@ -46,26 +46,9 @@ func init() {
 	prometheus.MustRegister(cronTotal)
 }
 
-func TestNewCronScheduler(t *testing.T) {
-	ctx := context.Background()
-	mockManager := &MockIssuerManager{}
-
-	scheduler := NewCronScheduler(ctx, mockManager)
-
-	assert.NotNil(t, scheduler)
-	assert.NotNil(t, scheduler.ctx)
-	assert.NotNil(t, scheduler.cancel)
-	assert.Equal(t, mockManager, scheduler.manager)
-	assert.Empty(t, scheduler.tasks)
-
-	// Clean up
-	scheduler.Stop()
-}
-
 func TestCronScheduler_AddTask(t *testing.T) {
-	ctx := context.Background()
 	mockManager := &MockIssuerManager{}
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	task1 := Task{
 		Interval: time.Second,
@@ -86,15 +69,12 @@ func TestCronScheduler_AddTask(t *testing.T) {
 
 	scheduler.AddTask(task2)
 	assert.Len(t, scheduler.tasks, 2)
-
-	// Clean up
-	scheduler.Stop()
 }
 
-func TestCronScheduler_StartAndStop(t *testing.T) {
+func TestCronScheduler_Start(t *testing.T) {
 	ctx := context.Background()
 	mockManager := &MockIssuerManager{}
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	var counter int32
 	task := Task{
@@ -106,27 +86,20 @@ func TestCronScheduler_StartAndStop(t *testing.T) {
 	}
 
 	scheduler.AddTask(task)
-	scheduler.Start()
+	scheduler.Start(ctx)
 
 	// Wait for task to execute at least twice
 	time.Sleep(150 * time.Millisecond)
 
-	scheduler.Stop()
-
 	// Check that task was executed
 	count := atomic.LoadInt32(&counter)
 	assert.GreaterOrEqual(t, count, int32(2))
-
-	// Verify that tasks stop after Stop() is called
-	countAfterStop := atomic.LoadInt32(&counter)
-	time.Sleep(100 * time.Millisecond)
-	assert.Equal(t, countAfterStop, atomic.LoadInt32(&counter))
 }
 
 func TestCronScheduler_TaskExecutionError(t *testing.T) {
 	ctx := context.Background()
 	mockManager := &MockIssuerManager{}
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	errorCount := 0
 	var mu sync.Mutex
@@ -142,12 +115,10 @@ func TestCronScheduler_TaskExecutionError(t *testing.T) {
 	}
 
 	scheduler.AddTask(task)
-	scheduler.Start()
+	scheduler.Start(ctx)
 
 	// Wait for task to execute at least once
 	time.Sleep(100 * time.Millisecond)
-
-	scheduler.Stop()
 
 	// Verify error occurred but didn't stop the scheduler
 	mu.Lock()
@@ -158,7 +129,7 @@ func TestCronScheduler_TaskExecutionError(t *testing.T) {
 func TestCronScheduler_MultipleTasksConcurrent(t *testing.T) {
 	ctx := context.Background()
 	mockManager := &MockIssuerManager{}
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	var counter1, counter2 int32
 
@@ -180,12 +151,10 @@ func TestCronScheduler_MultipleTasksConcurrent(t *testing.T) {
 
 	scheduler.AddTask(task1)
 	scheduler.AddTask(task2)
-	scheduler.Start()
+	scheduler.Start(ctx)
 
 	// Wait for tasks to execute
 	time.Sleep(200 * time.Millisecond)
-
-	scheduler.Stop()
 
 	// Verify both tasks executed
 	assert.GreaterOrEqual(t, atomic.LoadInt32(&counter1), int32(3))
@@ -277,29 +246,13 @@ func TestDefaultMinutelyJob_Failure(t *testing.T) {
 	assert.Equal(t, float64(1), testutil.ToFloat64(cronTotal.WithLabelValues("minutelyRotationFailure")))
 }
 
-func TestServer_SetupCronJobs(t *testing.T) {
-	// Mock Server that implements IssuerManager
-	server := &MockServer{}
-	ctx := context.Background()
-
-	scheduler := server.SetupCronJobs(ctx)
-
-	assert.NotNil(t, scheduler)
-	assert.Len(t, scheduler.tasks, 2)
-	assert.Equal(t, time.Hour, scheduler.tasks[0].Interval)
-	assert.Equal(t, time.Minute, scheduler.tasks[1].Interval)
-
-	// Clean up
-	scheduler.Stop()
-}
-
 // MockServer for testing SetupCronJobs
 type MockServer struct {
 	MockIssuerManager
 }
 
-func (s *MockServer) SetupCronJobs(ctx context.Context) *CronScheduler {
-	scheduler := NewCronScheduler(ctx, s)
+func (s *MockServer) StartCronJobs(ctx context.Context) {
+	scheduler := CronScheduler{manager: s}
 
 	// Hourly job
 	scheduler.AddTask(Task{
@@ -313,8 +266,7 @@ func (s *MockServer) SetupCronJobs(ctx context.Context) *CronScheduler {
 		Execute:  defaultMinutelyJob,
 	})
 
-	scheduler.Start()
-	return scheduler
+	scheduler.Start(ctx)
 }
 
 // Benchmark test
@@ -324,7 +276,7 @@ func BenchmarkCronScheduler_RunTask(b *testing.B) {
 	mockManager.On("RotateIssuers").Return(nil)
 	mockManager.On("DeleteIssuerKeys", mock.Anything).Return(int64(5), nil)
 
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	task := Task{
 		Interval: time.Millisecond,
@@ -338,16 +290,15 @@ func BenchmarkCronScheduler_RunTask(b *testing.B) {
 		scheduler.AddTask(task)
 	}
 
-	scheduler.Start()
+	scheduler.Start(ctx)
 	time.Sleep(10 * time.Millisecond)
-	scheduler.Stop()
 }
 
 // Test for context cancellation
 func TestCronScheduler_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	mockManager := &MockIssuerManager{}
-	scheduler := NewCronScheduler(ctx, mockManager)
+	scheduler := CronScheduler{manager: mockManager}
 
 	var executed int32
 	task := Task{
@@ -359,7 +310,7 @@ func TestCronScheduler_ContextCancellation(t *testing.T) {
 	}
 
 	scheduler.AddTask(task)
-	scheduler.Start()
+	scheduler.Start(ctx)
 
 	// Cancel context
 	cancel()
@@ -371,6 +322,4 @@ func TestCronScheduler_ContextCancellation(t *testing.T) {
 	count := atomic.LoadInt32(&executed)
 	time.Sleep(100 * time.Millisecond)
 	assert.Equal(t, count, atomic.LoadInt32(&executed))
-
-	scheduler.Stop()
 }
