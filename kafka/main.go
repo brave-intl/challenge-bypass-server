@@ -15,7 +15,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/brave-intl/challenge-bypass-server/server"
-	"github.com/brave-intl/challenge-bypass-server/utils/alert"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
@@ -46,6 +45,12 @@ type MessageContext struct {
 	done chan struct{}
 	err  error
 	msg  kafkaGo.Message
+}
+
+type alerter interface {
+	Outage(ctx context.Context, err error)
+	Crash(ctx context.Context, err error)
+	Generic(ctx context.Context, err error)
 }
 
 var (
@@ -91,7 +96,12 @@ var (
 )
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
-func StartConsumers(ctx context.Context, providedServer *server.Server, logger *slog.Logger) error {
+func StartConsumers(
+	ctx context.Context,
+	providedServer *server.Server,
+	logger *slog.Logger,
+	a alerter,
+) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
 	adsResultRedeemV1Topic := os.Getenv("REDEEM_PRODUCER_TOPIC")
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
@@ -180,9 +190,9 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	}
 
 	batchPipeline := make(chan *MessageContext, 400)
-	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger)
+	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger, a)
 	for {
-		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
+		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger, a)
 		if err != nil {
 			logger.Error("failed to process batch pipeline", slog.Any("error", err))
 			// If readAndCommitBatchPipelineResults returns an error.
@@ -203,13 +213,14 @@ func readAndCommitBatchPipelineResults(
 	reader *kafkaGo.Reader,
 	batchPipeline chan *MessageContext,
 	logger *slog.Logger,
+	a alerter,
 ) error {
 	msgCtx := <-batchPipeline
 	<-msgCtx.done
 
 	if msgCtx.err != nil {
 		kafkaErrorTotal.Inc()
-		alert.Alert(ctx, logger, msgCtx.err, alert.Outage)
+		a.Outage(ctx, msgCtx.err)
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
 	logger.Debug("committing offset", "offset", msgCtx.msg.Offset)
@@ -229,6 +240,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 	reader messageReader,
 	batchPipeline chan *MessageContext,
 	logger *slog.Logger,
+	a alerter,
 ) {
 	// Catch the panic cases in order to count them, but continue to panic.
 	defer func() {
@@ -247,7 +259,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 				logger.Debug("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				kafkaErrorTotal.Inc()
-				alert.Alert(ctx, logger, err, alert.Crash)
+				a.Crash(ctx, err)
 				panic("failed to fetch kafka messages and closed channel")
 			}
 			// There are other possible errors, but the underlying consumer

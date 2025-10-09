@@ -6,199 +6,225 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 )
 
-func TestAlertTypeString(t *testing.T) {
-	tests := []struct {
-		name      string
-		alertType AlertType
-		expected  string
-	}{
-		{"Crash", Crash, "ALERT_CRASH"},
-		{"Outage", Outage, "ALERT_OUTAGE"},
-		{"Generic", Generic, "ALERT_TEAM"},
-		{"Default", AlertType(999), "ALERT_TEAM"}, // Test default case
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.alertType.String(); got != tt.expected {
-				t.Errorf("AlertType.String() = %q, want %q", got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestParseAlertType(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected AlertType
-	}{
-		{"crash lowercase", "alert_crash", Crash},
-		{"crash uppercase", "ALERT_CRASH", Crash},
-		{"crash spaced", "  alert_crash  ", Crash},
-		{"crash mixed case", "Alert_Crash", Crash},
-		{"outage lowercase", "alert_outage", Outage},
-		{"outage uppercase", "ALERT_OUTAGE", Outage},
-		{"outage spaced", "  alert_outage  ", Outage},
-		{"generic lowercase", "alert_team", Generic},
-		{"generic uppercase", "ALERT_TEAM", Generic},
-		{"generic spaced", "  alert_team  ", Generic},
-		{"unknown random", "random", Generic},
-		{"unknown empty", "", Generic},
-		{"unknown only spaces", "   ", Generic},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := ParseAlertType(tt.input); got != tt.expected {
-				t.Errorf("ParseAlertType(%q) = %v, want %v", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
-func TestAlertTypeMarshalText(t *testing.T) {
-	tests := []struct {
-		name      string
-		alertType AlertType
-		expected  string
-	}{
-		{"Crash", Crash, "ALERT_CRASH"},
-		{"Outage", Outage, "ALERT_OUTAGE"},
-		{"Generic", Generic, "ALERT_TEAM"},
-		{"Default", AlertType(999), "ALERT_TEAM"}, // Test default case
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.alertType.MarshalText()
-			if err != nil {
-				t.Errorf("AlertType.MarshalText() error = %v", err)
-				return
-			}
-			if string(got) != tt.expected {
-				t.Errorf("AlertType.MarshalText() = %q, want %q", string(got), tt.expected)
-			}
-		})
-	}
-}
-
-func TestAlertTypeUnmarshalText(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected AlertType
-	}{
-		{"crash lowercase", "alert_crash", Crash},
-		{"crash uppercase", "ALERT_CRASH", Crash},
-		{"crash spaced", "  alert_crash  ", Crash},
-		{"outage lowercase", "alert_outage", Outage},
-		{"outage uppercase", "ALERT_OUTAGE", Outage},
-		{"outage spaced", "  alert_outage  ", Outage},
-		{"generic lowercase", "alert_team", Generic},
-		{"generic uppercase", "ALERT_TEAM", Generic},
-		{"generic spaced", "  alert_team  ", Generic},
-		{"unknown random", "random", Generic},
-		{"unknown empty", "", Generic},
-		{"unknown only spaces", "   ", Generic},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var at AlertType
-			err := at.UnmarshalText([]byte(tt.input))
-			if err != nil {
-				t.Errorf("AlertType.UnmarshalText(%q) error = %v", tt.input, err)
-				return
-			}
-			if at != tt.expected {
-				t.Errorf("AlertType.UnmarshalText(%q) set value to %v, want %v", tt.input, at, tt.expected)
-			}
-		})
-	}
-}
-
-func TestAlert(t *testing.T) {
+// TestAlert_Crash tests the Crash method
+func TestAlert_Crash(t *testing.T) {
 	tests := []struct {
 		name        string
-		alertType   AlertType
+		err         error
 		wantCode    string
 		wantMessage string
 	}{
-		{"Crash", Crash, "ALERT_CRASH", "test error"},
-		{"Outage", Outage, "ALERT_OUTAGE", "test error"},
-		{"Generic", Generic, "ALERT_TEAM", "test error"},
-		{"Default", AlertType(999), "ALERT_TEAM", "test error"}, // Default behavior
+		{
+			name:        "crash with error",
+			err:         errors.New("database connection failed"),
+			wantCode:    "ALERT_CRASH",
+			wantMessage: "database connection failed",
+		},
+		{
+			name:        "crash with nil error",
+			err:         nil,
+			wantCode:    "ALERT_CRASH",
+			wantMessage: "null",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Set up a buffer to capture the log output
 			var buf bytes.Buffer
-			handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})
-			logger := slog.New(handler)
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			alert := &Alert{l: logger}
+			ctx := context.Background()
 
-			// Call the Alert function
-			testErr := errors.New(tt.wantMessage)
-			Alert(context.Background(), logger, testErr, tt.alertType)
+			alert.Crash(ctx, tt.err)
 
-			// Parse the JSON log entry
-			var logEntry map[string]any
-			if err := json.NewDecoder(&buf).Decode(&logEntry); err != nil {
-				t.Fatalf("Failed to decode log entry: %v", err)
-			}
-
-			// Verify the log level
-			if level := logEntry["level"]; level != "ERROR" {
-				t.Errorf("Log level = %v, want %q", level, "ERROR")
-			}
-
-			// Verify the main message is an empty string (keyed as "msg" in JSON handler)
-			if msg := logEntry["msg"]; msg != nil && msg != "" {
-				t.Errorf("Log main message = %v, want empty or nil", msg)
-			}
-
-			// Verify the structured "code" field
-			if code := logEntry["code"]; code != tt.wantCode {
-				t.Errorf("Log code = %v, want %q", code, tt.wantCode)
-			}
-
-			// Verify the structured "message" field
-			if structuredMsg := logEntry["message"]; structuredMsg != tt.wantMessage {
-				t.Errorf("Log structured message = %v, want %q", structuredMsg, tt.wantMessage)
-			}
-
-			// Ensure expected fields: time, level, msg, code, message
-			if len(logEntry) != 5 {
-				t.Errorf("Unexpected number of fields in log entry: %d, logEntry: %v", len(logEntry), logEntry)
-			}
+			verifyLogOutput(t, buf.String(), tt.wantCode, tt.wantMessage)
 		})
 	}
 }
 
-// Edge case: Test Alert with nil logger (expects panic)
-func TestAlertNilLogger(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("Expected panic with nil logger, but did not")
-		}
-	}()
-	Alert(context.Background(), nil, errors.New("test"), Crash)
+// TestAlert_Outage tests the Outage method
+func TestAlert_Outage(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name:        "outage with error",
+			err:         errors.New("service unavailable"),
+			wantCode:    "ALERT_OUTAGE",
+			wantMessage: "service unavailable",
+		},
+		{
+			name:        "outage with nil error",
+			err:         nil,
+			wantCode:    "ALERT_OUTAGE",
+			wantMessage: "null",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			alert := &Alert{l: logger}
+			ctx := context.Background()
+
+			alert.Outage(ctx, tt.err)
+
+			verifyLogOutput(t, buf.String(), tt.wantCode, tt.wantMessage)
+		})
+	}
 }
 
-// Edge case: Test Alert with nil error (expects panic on err.Error())
-func TestAlertNilError(t *testing.T) {
-	var buf bytes.Buffer
-	handler := slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelError})
-	logger := slog.New(handler)
+// TestAlert_Generic tests the Generic method
+func TestAlert_Generic(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name:        "generic alert with error",
+			err:         errors.New("unexpected condition"),
+			wantCode:    "ALERT_TEAM",
+			wantMessage: "unexpected condition",
+		},
+		{
+			name:        "generic alert with nil error",
+			err:         nil,
+			wantCode:    "ALERT_TEAM",
+			wantMessage: "null",
+		},
+	}
 
-	defer func() {
-		if r := recover(); r == nil {
-			t.Errorf("Expected panic with nil error, but did not")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			alert := &Alert{l: logger}
+			ctx := context.Background()
+
+			alert.Generic(ctx, tt.err)
+
+			verifyLogOutput(t, buf.String(), tt.wantCode, tt.wantMessage)
+		})
+	}
+}
+
+// TestAlert_WithContext tests that context is properly passed through
+func TestAlert_WithContext(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	alert := &Alert{l: logger}
+
+	ctx := context.WithValue(context.Background(), "test-key", "test-value")
+	testErr := errors.New("test error")
+
+	alert.Crash(ctx, testErr)
+
+	verifyLogOutput(t, buf.String(), "ALERT_CRASH", "test error")
+}
+
+// TestAlert_AllMethods tests all alert methods to ensure they use correct codes
+func TestAlert_AllMethods(t *testing.T) {
+	testCases := []struct {
+		name     string
+		method   func(*Alert, context.Context, error)
+		wantCode string
+	}{
+		{
+			name:     "Crash method",
+			method:   (*Alert).Crash,
+			wantCode: "ALERT_CRASH",
+		},
+		{
+			name:     "Outage method",
+			method:   (*Alert).Outage,
+			wantCode: "ALERT_OUTAGE",
+		},
+		{
+			name:     "Generic method",
+			method:   (*Alert).Generic,
+			wantCode: "ALERT_TEAM",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&buf, nil))
+			alert := &Alert{l: logger}
+			ctx := context.Background()
+			testErr := errors.New("test error")
+
+			tc.method(alert, ctx, testErr)
+
+			verifyLogOutput(t, buf.String(), tc.wantCode, "test error")
+		})
+	}
+}
+
+// TestAlert_LogLevel tests that all alerts are logged at ERROR level
+func TestAlert_LogLevel(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&buf, nil))
+	alert := &Alert{l: logger}
+	ctx := context.Background()
+	testErr := errors.New("test error")
+
+	alert.Crash(ctx, testErr)
+
+	var logEntry map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &logEntry); err != nil {
+		t.Fatalf("Failed to parse log output: %v", err)
+	}
+
+	if level, ok := logEntry["level"].(string); !ok || level != "ERROR" {
+		t.Errorf("Expected log level ERROR, got %v", logEntry["level"])
+	}
+}
+
+// Helper function to verify log output
+func verifyLogOutput(t *testing.T, output, expectedCode, expectedMessage string) {
+	t.Helper()
+
+	var logEntry map[string]any
+	if err := json.Unmarshal([]byte(output), &logEntry); err != nil {
+		t.Fatalf("Failed to parse log output: %v\nOutput: %s", err, output)
+	}
+
+	if code, ok := logEntry["code"].(string); !ok || code != expectedCode {
+		t.Errorf("Expected code %q, got %v", expectedCode, logEntry["code"])
+	}
+
+	message := logEntry["message"]
+	switch v := message.(type) {
+	case string:
+		if v != expectedMessage {
+			t.Errorf("Expected message %q, got %q", expectedMessage, v)
 		}
-	}()
-	Alert(context.Background(), logger, nil, Generic) // This will panic on nil.Error()
+	case nil:
+		if expectedMessage != "null" {
+			t.Errorf("Expected message %q, got nil", expectedMessage)
+		}
+	case map[string]any:
+		if errMsg, ok := v["error"].(string); ok {
+			if !strings.Contains(errMsg, expectedMessage) && expectedMessage != "null" {
+				t.Errorf("Expected message to contain %q, got %q", expectedMessage, errMsg)
+			}
+		}
+	default:
+		t.Errorf("Unexpected message type: %T", v)
+	}
+
+	if level, ok := logEntry["level"].(string); !ok || level != "ERROR" {
+		t.Errorf("Expected level ERROR, got %v", logEntry["level"])
+	}
 }

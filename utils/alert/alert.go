@@ -3,61 +3,28 @@ package alert
 import (
 	"context"
 	"log/slog"
-	"strings"
 )
 
-// Alert formats a special log entry to be detected by a log filter to trigger a Slack
-// alert.
-func Alert(ctx context.Context, logger *slog.Logger, err error, alertType AlertType) {
-	logger.Log(ctx, slog.LevelError, "",
-		slog.String("code", alertType.String()),
-		slog.String("message", err.Error()),
-	)
+type Alert struct {
+	l *slog.Logger
 }
 
-type AlertType int
-
-const (
-	Outage AlertType = iota
-	Crash
-	Generic
-)
-
-// String returns the string representation of an AlertType
-func (s AlertType) String() string {
-	switch s {
-	case Crash:
-		return "ALERT_CRASH"
-	case Outage:
-		return "ALERT_OUTAGE"
-	case Generic:
-		return "ALERT_TEAM"
-	default:
-		return "ALERT_TEAM"
-	}
+func New(l *slog.Logger) *Alert {
+	return &Alert{l: l}
 }
 
-// ParseAlertType converts a string to a AlertType
-func ParseAlertType(s string) AlertType {
-	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "alert_crash":
-		return Crash
-	case "alert_outage":
-		return Outage
-	case "alert_team":
-		return Generic
-	default:
-		return Generic
-	}
+func (a *Alert) Crash(ctx context.Context, err error) {
+	a.log(ctx, "ALERT_CRASH", err)
 }
 
-// MarshalText implements the encoding.TextMarshaler interface
-func (s AlertType) MarshalText() ([]byte, error) {
-	return []byte(s.String()), nil
+func (a *Alert) Outage(ctx context.Context, err error) {
+	a.log(ctx, "ALERT_OUTAGE", err)
 }
 
-// UnmarshalText implements the encoding.TextUnmarshaler interface
-func (s *AlertType) UnmarshalText(text []byte) error {
-	*s = ParseAlertType(string(text))
-	return nil
+func (a *Alert) Generic(ctx context.Context, err error) {
+	a.log(ctx, "ALERT_TEAM", err)
+}
+
+func (a *Alert) log(ctx context.Context, code string, err error) {
+	a.l.Log(ctx, slog.LevelError, "", slog.String("code", code), slog.Any("message", err))
 }
