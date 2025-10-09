@@ -61,9 +61,9 @@ func main() {
 	// Initialize databases and cron tasks before the Kafka processors and server start
 	srv.InitDB(logger)
 	srv.InitDynamo()
-	// Run the cron job unless it's explicitly disabled.
+	// Run the cron jobs unless explicitly disabled.
 	if os.Getenv("CRON_ENABLED") != "false" {
-		srv.SetupCronTasks()
+		srv.StartCronJobs(serverCtx)
 	}
 
 	logger.Debug("Persistence and cron jobs initialized")
