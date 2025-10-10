@@ -35,6 +35,7 @@ type CachingConfig struct {
 // DBConfig defines app configurations
 type DBConfig struct {
 	ConnectionURI           string        `json:"connectionURI"`
+	ConnectionURIReader     string        `json:"connectionURIReader"`
 	CachingConfig           CachingConfig `json:"caching"`
 	MaxConnection           int           `json:"maxConnection"`
 	DefaultDaysBeforeExpiry int           `json:"DefaultDaysBeforeExpiry"`
@@ -84,28 +85,51 @@ func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
 }
 
+func makeDBConnection(uri string, maxConnection int) (*sql.DB, error) {
+	db, err := sql.Open("postgres", uri)
+	if err != nil {
+		return nil, err
+	}
+
+	db.SetMaxOpenConns(maxConnection)
+	db.SetMaxIdleConns(maxConnection / 2)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(90 * time.Second)
+
+	return db, nil
+}
+
 // InitDB initialzes the database connection based on a server's configuration
-func (c *Server) InitDB() {
+func (c *Server) InitDB(logger *slog.Logger) {
 	cfg := c.dbConfig
-	db, err := sql.Open("postgres", cfg.ConnectionURI)
+
+	writer, err := makeDBConnection(cfg.ConnectionURI, cfg.MaxConnection)
 	if err != nil {
 		panic(err)
 	}
 
-	// Connection pool settings
-	db.SetMaxOpenConns(cfg.MaxConnection)
-	db.SetMaxIdleConns(cfg.MaxConnection / 2)
-	db.SetConnMaxLifetime(5 * time.Minute)
-	db.SetConnMaxIdleTime(90 * time.Second)
+	var reader *sql.DB
+	if cfg.ConnectionURIReader != "" {
+		reader, err = makeDBConnection(cfg.ConnectionURIReader, cfg.MaxConnection)
+		if err != nil {
+			logger.Warn("database reader instance not connected", "error", err)
+		}
+	}
 
-	c.db = db
+	c.db = writer
+	// Use the writer for the reader as well if the reader connection is missing
+	if reader != nil {
+		c.dbr = reader
+	} else {
+		c.dbr = writer
+	}
 
 	// Database Telemetry
-	collector := metrics.NewStatsCollector("challenge_bypass_db", db)
+	collector := metrics.NewStatsCollector("challenge_bypass_db", writer)
 	err = prometheus.Register(collector)
 	if ae, ok := err.(prometheus.AlreadyRegisteredError); ok {
 		if sc, ok := ae.ExistingCollector.(*metrics.StatsCollector); ok {
-			sc.AddStatsGetter("challenge_bypass_db", db)
+			sc.AddStatsGetter("challenge_bypass_db", writer)
 		}
 	}
 
@@ -113,7 +137,7 @@ func (c *Server) InitDB() {
 		time.Sleep(10 * time.Second)
 	}
 
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	driver, err := postgres.WithInstance(writer, &postgres.Config{})
 	if err != nil {
 		panic(err)
 	}
@@ -203,7 +227,7 @@ func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers WHERE issuer_id=$1`, issuerColumns)
 
-	row := c.db.QueryRow(query, issuerID)
+	row := c.dbr.QueryRow(query, issuerID)
 
 	var fetchedIssuer model.Issuer
 	err := scanIssuer(row, &fetchedIssuer)
@@ -334,7 +358,7 @@ func (c *Server) fetchIssuersByCohort(
 		}
 	}
 
-	rows, err := c.db.Query(queryTemplate, issuerType, issuerCohort)
+	rows, err := c.dbr.Query(queryTemplate, issuerType, issuerCohort)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		return nil, utils.ProcessingErrorFromError(err, true)
@@ -383,7 +407,7 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
               ORDER BY expires_at DESC NULLS LAST, created_at DESC
               LIMIT 1`, issuerColumns)
 
-	row := c.db.QueryRowContext(ctx, query, issuerType)
+	row := c.dbr.QueryRowContext(ctx, query, issuerType)
 
 	var issuerV3 model.Issuer
 	err := scanIssuer(row, &issuerV3)
@@ -416,7 +440,7 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers 
               ORDER BY expires_at DESC NULLS LAST, created_at DESC`, issuerColumns)
 
-	rows, err := c.db.Query(query)
+	rows, err := c.dbr.Query(query)
 	if err != nil {
 		c.Logger.Error("Failed to extract issuers from DB")
 		return nil, utils.ProcessingErrorFromError(err, true)
@@ -467,7 +491,7 @@ func (c *Server) fetchIssuerKeysForIssuer(issuerID string) ([]model.IssuerKeys, 
                 AND (start_at <= now() OR start_at IS NULL)
               ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
 
-	rows, err := c.db.Query(query, issuerID)
+	rows, err := c.dbr.Query(query, issuerID)
 	if err != nil {
 		return nil, err
 	}
@@ -527,7 +551,7 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer,
                     AND ($2 OR end_at > now())
                   ORDER BY end_at ASC NULLS FIRST, start_at ASC`
 
-		rows, err := c.db.Query(query, issuerIDStr, lteVersionTwo)
+		rows, err := c.dbr.Query(query, issuerIDStr, lteVersionTwo)
 		if err != nil {
 			isNotPostgresNotFoundError := !isPostgresNotFoundError(err)
 			if isNotPostgresNotFoundError {
@@ -655,6 +679,16 @@ func (c *Server) rotateIssuers() error {
 // RotateIssuersV3 is the function that rotates time aware issuers
 func (c *Server) RotateIssuersV3() error {
 	return c.rotateIssuersV3()
+}
+
+// RotateIssuers is the function that rotates issuer version 1 and 2 (where supported)
+func (c *Server) RotateIssuers() error {
+	return c.rotateIssuers()
+}
+
+// DeleteIssuerKeys deletes v3 issuers keys that have ended more than the duration ago.
+func (c *Server) DeleteIssuerKeys(duration string) (int64, error) {
+	return c.deleteIssuerKeys(duration)
 }
 
 // rotateIssuersV3 is the function implementation that rotates time aware issuers
@@ -1097,7 +1131,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
-	rows, err := c.db.Query(
+	rows, err := c.dbr.Query(
 		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
 	queryTimer.ObserveDuration()
 
