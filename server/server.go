@@ -74,6 +74,13 @@ var (
 		},
 		[]string{"action"},
 	)
+	cronTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_cron_total",
+			Help: "Count of cron runs and their outcomes",
+		},
+		[]string{"action"},
+	)
 )
 
 // init - Register Metrics for Server
@@ -97,6 +104,8 @@ func init() {
 		v2IssuerCallTotal,
 		v3BlindedTokenCallTotal,
 		v3IssuerCallTotal,
+		// Cron
+		cronTotal,
 	)
 }
 

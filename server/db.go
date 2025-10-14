@@ -667,6 +667,16 @@ func (c *Server) RotateIssuersV3() error {
 	return c.rotateIssuersV3()
 }
 
+// RotateIssuers is the function that rotates issuer version 1 and 2 (where supported)
+func (c *Server) RotateIssuers() error {
+	return c.rotateIssuers()
+}
+
+// DeleteIssuerKeys deletes v3 issuers keys that have ended more than the duration ago.
+func (c *Server) DeleteIssuerKeys(duration string) (int64, error) {
+	return c.deleteIssuerKeys(duration)
+}
+
 // rotateIssuersV3 is the function implementation that rotates time aware issuers
 func (c *Server) rotateIssuersV3() error {
 	tx, err := c.db.Begin()
