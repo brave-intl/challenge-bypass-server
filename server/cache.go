@@ -16,11 +16,24 @@ type Cache interface {
 	SetDefault(k string, x any)
 }
 
+// Clock interface allows us to mock time in tests
+type Clock interface {
+	Now() time.Time
+}
+
+// RealClock uses actual system time
+type RealClock struct{}
+
+func (RealClock) Now() time.Time {
+	return time.Now()
+}
+
 type SimpleCache struct {
 	items             sync.Map
 	defaultExpiration time.Duration
 	cleanupInterval   time.Duration
 	stopCleanup       chan bool
+	clock             Clock
 }
 
 type cacheItem struct {
@@ -30,10 +43,16 @@ type cacheItem struct {
 
 // NewSimpleCache creates a new cache with the given default expiration and cleanup interval
 func NewSimpleCache(defaultExpiration, cleanupInterval time.Duration) *SimpleCache {
+	return newSimpleCacheWithClock(defaultExpiration, cleanupInterval, RealClock{})
+}
+
+// NewSimpleCacheWithClock creates a new cache with a custom clock (useful for testing)
+func newSimpleCacheWithClock(defaultExpiration, cleanupInterval time.Duration, clock Clock) *SimpleCache {
 	cache := &SimpleCache{
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
 		stopCleanup:       make(chan bool),
+		clock:             clock,
 	}
 	// Start cleanup routine if cleanup interval > 0
 	if cleanupInterval > 0 {
@@ -58,7 +77,7 @@ func (c *SimpleCache) startCleanupTimer() {
 
 // deleteExpired deletes expired items from the cache
 func (c *SimpleCache) deleteExpired() {
-	now := time.Now().UnixNano()
+	now := c.clock.Now().UnixNano()
 	c.items.Range(func(key, value any) bool {
 		item, ok := value.(cacheItem)
 		if ok && item.expiration > 0 && item.expiration < now {
@@ -79,7 +98,7 @@ func (c *SimpleCache) Get(k string) (any, bool) {
 		return nil, false
 	}
 	// Check if item has expired
-	if item.expiration > 0 && item.expiration < time.Now().UnixNano() {
+	if item.expiration > 0 && item.expiration < c.clock.Now().UnixNano() {
 		c.items.Delete(k)
 		return nil, false
 	}
@@ -95,17 +114,12 @@ func (c *SimpleCache) Delete(k string) {
 func (c *SimpleCache) SetDefault(k string, x any) {
 	var expiration int64 = 0
 	if c.defaultExpiration > 0 {
-		expiration = time.Now().Add(c.defaultExpiration).UnixNano()
+		expiration = c.clock.Now().Add(c.defaultExpiration).UnixNano()
 	}
 	c.items.Store(k, cacheItem{
 		value:      x,
 		expiration: expiration,
 	})
-}
-
-// Close stops the cleanup timer
-func (c *SimpleCache) Close() {
-	close(c.stopCleanup)
 }
 
 // retrieveFromCache safely retrieves a value from a named cache
@@ -115,22 +129,18 @@ func retrieveFromCache[T any](
 	key string,
 ) (T, bool) {
 	var zero T
-
 	cache, exists := caches[cacheName]
 	if !exists {
 		return zero, false
 	}
-
 	cached, found := cache.Get(key)
 	if !found {
 		return zero, false
 	}
-
 	value, ok := cached.(T)
 	if !ok {
 		return zero, false
 	}
-
 	return value, true
 }
 
@@ -139,15 +149,12 @@ func bootstrapCache(cfg DBConfig) map[string]Cache {
 	if !cfg.CachingConfig.Enabled {
 		return nil
 	}
-
 	caches := make(map[string]Cache)
 	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
 	cleanupInterval := defaultDuration * 2
-
 	caches["issuers"] = NewSimpleCache(defaultDuration, cleanupInterval)
 	caches["issuer"] = NewSimpleCache(defaultDuration, cleanupInterval)
 	caches["redemptions"] = NewSimpleCache(defaultDuration, cleanupInterval)
 	caches["issuercohort"] = NewSimpleCache(defaultDuration, cleanupInterval)
-
 	return caches
 }
