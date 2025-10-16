@@ -9,11 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type testStruct struct {
-	A int
-	B string
-}
-
 func TestSetGetDelete(t *testing.T) {
 	cache := NewSimpleCache(5*time.Second, 0)
 	key := "testkey"
@@ -64,6 +59,11 @@ func TestCleanupRoutine(t *testing.T) {
 }
 
 func TestMultipleTypes(t *testing.T) {
+	type testStruct struct {
+		A int
+		B string
+	}
+
 	cache := NewSimpleCache(0, 0)
 	cache.SetDefault("str", "hello")
 	cache.SetDefault("int", 123)
@@ -85,20 +85,23 @@ func TestMultipleTypes(t *testing.T) {
 func TestRetrieveFromCacheFound(t *testing.T) {
 	cache := NewSimpleCache(5*time.Second, 0)
 	cache.SetDefault("key", 100)
-	caches := map[string]CacheInterface{"mycache": cache}
-	res := retrieveFromCache(caches, "mycache", "key")
+	caches := map[string]Cache{"mycache": cache}
+	res, ok := retrieveFromCache[int](caches, "mycache", "key")
+	assert.True(t, ok, "Expected to find value in cache")
 	assert.Equal(t, 100, res, "Expected retrieved value from cache")
 }
 
 func TestRetrieveFromCacheNotFound(t *testing.T) {
 	cache := NewSimpleCache(5*time.Second, 0)
-	caches := map[string]CacheInterface{"mycache": cache}
-	res := retrieveFromCache(caches, "mycache", "missing")
+	caches := map[string]Cache{"mycache": cache}
+	res, ok := retrieveFromCache[any](caches, "mycache", "missing")
+	assert.False(t, ok, "Expected no value in cache")
 	assert.Nil(t, res, "Expected nil for missing key")
 }
 
 func TestRetrieveFromCacheNilCaches(t *testing.T) {
-	res := retrieveFromCache(nil, "any", "any")
+	res, ok := retrieveFromCache[any](nil, "any", "any")
+	assert.False(t, ok, "Expected no value when cache is nil")
 	assert.Nil(t, res, "Expected nil when caches is nil")
 }
 

@@ -2,10 +2,11 @@ package server
 
 import (
 	"fmt"
-	"github.com/brave-intl/challenge-bypass-server/model"
-	"github.com/lib/pq"
 	"testing"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/lib/pq"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -57,19 +58,14 @@ func TestIssuerCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuer"].SetDefault(issuerID.String(), &issuerToCache)
 
-	cached := retrieveFromCache(caches, "issuer", issuerID.String())
-	cacheMiss := retrieveFromCache(caches, "issuer", "test")
+	cached, ok := retrieveFromCache[*model.Issuer](caches, "issuer", issuerID.String())
+	assert.True(t, ok, "Expected an issuer to be found in the cache")
+	cacheMiss, ok := retrieveFromCache[*model.Issuer](caches, "issuer", "test")
+	assert.False(t, ok, "Expected a cache miss for test issuer")
 
-	assert.Equal(t, cached.(*model.Issuer), &issuerToCache)
+	assert.Equal(t, cached, &issuerToCache)
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &issuerToCache)
-	assert.Panics(t, func() {
-		_, ok := cacheMiss.(*model.Issuer)
-		if ok != true {
-			// Satisfy linter
-			panic("Bad assertion")
-		}
-	})
 }
 
 // TestIssuersCacheRetrieval tests that getting values from the cache works
@@ -77,19 +73,14 @@ func TestIssuersCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuers"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
 
-	cached := retrieveFromCache(caches, "issuers", issuerToCache.IssuerType)
-	cacheMiss := retrieveFromCache(caches, "issuers", "test")
+	cached, ok := retrieveFromCache[[]model.Issuer](caches, "issuers", issuerToCache.IssuerType)
+	assert.True(t, ok, "Expected issuers to be found in the cache")
+	cacheMiss, ok := retrieveFromCache[[]model.Issuer](caches, "issuers", "test")
+	assert.False(t, ok, "Expected a cache miss for the test issuers")
 
-	assert.Equal(t, cached.([]model.Issuer), []model.Issuer{issuerToCache})
+	assert.Equal(t, cached, []model.Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
-	assert.Panics(t, func() {
-		_, ok := cacheMiss.([]model.Issuer)
-		if ok != true {
-			// Satisfy linter
-			panic("Bad assertion")
-		}
-	})
 }
 
 // TestRedemptionsCacheRetrieval tests that getting values from the cache works
@@ -103,19 +94,14 @@ func TestRedemCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), &redemption)
 
-	cached := retrieveFromCache(caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
-	cacheMiss := retrieveFromCache(caches, "redemptions", "test")
+	cached, ok := retrieveFromCache[*Redemption](caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
+	assert.True(t, ok, "Expected a redemption to be found in the cache")
+	cacheMiss, ok := retrieveFromCache[*Redemption](caches, "redemptions", "test")
+	assert.False(t, ok, "Expected a cache miss for the test redemption")
 
-	assert.Equal(t, cached.(*Redemption), &redemption)
+	assert.Equal(t, cached, &redemption)
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, &redemption)
-	assert.Panics(t, func() {
-		_, ok := cacheMiss.(*Redemption)
-		if ok != true {
-			// Satisfy linter
-			panic("Bad assertion")
-		}
-	})
 }
 
 // TestIssuerCohortCacheRetrieval tests that getting values from the cache works
@@ -123,17 +109,12 @@ func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
 
-	cached := retrieveFromCache(caches, "issuercohort", issuerToCache.IssuerType)
-	cacheMiss := retrieveFromCache(caches, "issuercohort", "test")
+	cached, ok := retrieveFromCache[[]model.Issuer](caches, "issuercohort", issuerToCache.IssuerType)
+	assert.True(t, ok, "Expected redemptions to be found in the cache")
+	cacheMiss, ok := retrieveFromCache[[]model.Issuer](caches, "issuercohort", "test")
+	assert.False(t, ok, "Expected a cache miss for the test redemptions")
 
-	assert.Equal(t, cached.([]model.Issuer), []model.Issuer{issuerToCache})
+	assert.Equal(t, cached, []model.Issuer{issuerToCache})
 	assert.Nil(t, cacheMiss)
 	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
-	assert.Panics(t, func() {
-		_, ok := cacheMiss.([]model.Issuer)
-		if ok != true {
-			// Satisfy linter
-			panic("Bad assertion")
-		}
-	})
 }

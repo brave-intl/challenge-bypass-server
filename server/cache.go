@@ -5,20 +5,17 @@ import (
 	"time"
 )
 
-// Configuration types
 type CachingConfig struct {
 	Enabled       bool `json:"enabled"`
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-// Cache interface
-type CacheInterface interface {
+type Cache interface {
 	Get(k string) (any, bool)
 	Delete(k string)
 	SetDefault(k string, x any)
 }
 
-// SimpleCache implementation
 type SimpleCache struct {
 	items             sync.Map
 	defaultExpiration time.Duration
@@ -112,28 +109,38 @@ func (c *SimpleCache) Close() {
 }
 
 // retrieveFromCache safely retrieves a value from a named cache
-func retrieveFromCache(
-	caches map[string]CacheInterface,
+func retrieveFromCache[T any](
+	caches map[string]Cache,
 	cacheName string,
 	key string,
-) any {
-	if caches != nil {
-		if cache, exists := caches[cacheName]; exists {
-			if cached, found := cache.Get(key); found {
-				return cached
-			}
-		}
+) (T, bool) {
+	var zero T
+
+	cache, exists := caches[cacheName]
+	if !exists {
+		return zero, false
 	}
-	return nil
+
+	cached, found := cache.Get(key)
+	if !found {
+		return zero, false
+	}
+
+	value, ok := cached.(T)
+	if !ok {
+		return zero, false
+	}
+
+	return value, true
 }
 
 // bootstrapCache creates all the caches
-func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
+func bootstrapCache(cfg DBConfig) map[string]Cache {
 	if !cfg.CachingConfig.Enabled {
 		return nil
 	}
 
-	caches := make(map[string]CacheInterface)
+	caches := make(map[string]Cache)
 	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
 	cleanupInterval := defaultDuration * 2
 

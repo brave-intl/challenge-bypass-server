@@ -205,10 +205,9 @@ func incrementTotal(c prometheus.Counter) {
 func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	defer incrementTotal(fetchIssuerTotal)
 
-	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
-		if issuer, ok := cached.(*model.Issuer); ok {
-			return issuer, nil
-		}
+	issuer, ok := retrieveFromCache[*model.Issuer](c.caches, "issuer", issuerID)
+	if ok {
+		return issuer, nil
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers WHERE issuer_id=$1`, issuerColumns)
@@ -338,10 +337,9 @@ func (c *Server) fetchIssuersByCohort(
 	issuerCohort int16,
 	queryTemplate string,
 ) ([]model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
-		if issuers, ok := cached.([]model.Issuer); ok {
-			return issuers, nil
-		}
+	issuers, ok := retrieveFromCache[[]model.Issuer](c.caches, "issuercohort", issuerType)
+	if ok {
+		return issuers, nil
 	}
 
 	rows, err := c.dbr.Query(queryTemplate, issuerType, issuerCohort)
@@ -382,10 +380,9 @@ func (c *Server) fetchIssuersByCohort(
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
-		if issuer, ok := cached.(*model.Issuer); ok {
-			return issuer, nil
-		}
+	issuer, ok := retrieveFromCache[*model.Issuer](c.caches, "issuer", issuerType)
+	if ok {
+		return issuer, nil
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers
@@ -417,10 +414,9 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
 // FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
-		if issuers, ok := cached.([]model.Issuer); ok {
-			return issuers, nil
-		}
+	issuers, ok := retrieveFromCache[[]model.Issuer](c.caches, "issuers", "all")
+	if ok {
+		return issuers, nil
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers 
@@ -1110,10 +1106,9 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementTotal(fetchRedemptionTotal)
 
-	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
-		if redemption, ok := cached.(*Redemption); ok {
-			return redemption, nil
-		}
+	redemption, ok := retrieveFromCache[*Redemption](c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id))
+	if ok {
+		return redemption, nil
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
