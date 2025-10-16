@@ -45,7 +45,7 @@ var (
 	}
 )
 
-func TestBootstrapCache(t *testing.T) {
+func TestBootstrapDBCache(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
 	assert.Contains(t, caches, "issuers")
 	assert.Contains(t, caches, "issuer")
