@@ -22,15 +22,8 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lib/pq"
-	cache "github.com/patrickmn/go-cache"
 	"github.com/prometheus/client_golang/prometheus"
 )
-
-// CachingConfig is how long data is cached
-type CachingConfig struct {
-	Enabled       bool `json:"enabled"`
-	ExpirationSec int  `json:"expirationSec"`
-}
 
 // DBConfig defines app configurations
 type DBConfig struct {
@@ -60,13 +53,6 @@ type RedemptionV2 struct {
 	Payload   string    `json:"payload"`
 	TTL       int64     `json:"TTL"`
 	Offset    int64     `json:"offset"`
-}
-
-// CacheInterface cache functions
-type CacheInterface interface {
-	Get(k string) (any, bool)
-	Delete(k string)
-	SetDefault(k string, x any)
 }
 
 var (
@@ -219,8 +205,9 @@ func incrementTotal(c prometheus.Counter) {
 func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	defer incrementTotal(fetchIssuerTotal)
 
-	if cached := retrieveFromCache(c.caches, "issuer", issuerID); cached != nil {
-		if issuer, ok := cached.(*model.Issuer); ok {
+	if c.caches != nil {
+		issuer, ok := c.caches.Issuer.Get(issuerID)
+		if ok {
 			return issuer, nil
 		}
 	}
@@ -244,8 +231,9 @@ func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	}
 
 	convertedIssuer := &fetchedKeys[0]
+
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerID, convertedIssuer)
+		c.caches.Issuer.SetDefault(issuerID, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
@@ -352,8 +340,9 @@ func (c *Server) fetchIssuersByCohort(
 	issuerCohort int16,
 	queryTemplate string,
 ) ([]model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuercohort", issuerType); cached != nil {
-		if issuers, ok := cached.([]model.Issuer); ok {
+	if c.caches != nil {
+		issuers, ok := c.caches.IssuerCohort.Get(issuerType)
+		if ok {
 			return issuers, nil
 		}
 	}
@@ -389,15 +378,16 @@ func (c *Server) fetchIssuersByCohort(
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(issuerType, issuersWithKey)
+		c.caches.IssuerCohort.SetDefault(issuerType, issuersWithKey)
 	}
 
 	return issuersWithKey, nil
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuer", issuerType); cached != nil {
-		if issuer, ok := cached.(*model.Issuer); ok {
+	if c.caches != nil {
+		issuer, ok := c.caches.Issuer.Get(issuerType)
+		if ok {
 			return issuer, nil
 		}
 	}
@@ -421,8 +411,9 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
 	}
 
 	convertedIssuer := &fetchedKeys[0]
+
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerType, convertedIssuer)
+		c.caches.Issuer.SetDefault(issuerType, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
@@ -431,8 +422,9 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
 // FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
-	if cached := retrieveFromCache(c.caches, "issuers", "all"); cached != nil {
-		if issuers, ok := cached.([]model.Issuer); ok {
+	if c.caches != nil {
+		issuers, ok := c.caches.Issuers.Get("all")
+		if ok {
 			return issuers, nil
 		}
 	}
@@ -477,7 +469,7 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault("all", results)
+		c.caches.Issuers.SetDefault("all", results)
 	}
 
 	return results, nil
@@ -1124,8 +1116,9 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementTotal(fetchRedemptionTotal)
 
-	if cached := retrieveFromCache(c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id)); cached != nil {
-		if redemption, ok := cached.(*Redemption); ok {
+	if c.caches != nil {
+		redemption, ok := c.caches.Redemptions.Get(fmt.Sprintf("%s:%s", issuerType, id))
+		if ok {
 			return redemption, nil
 		}
 	}
@@ -1149,7 +1142,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
+			c.caches.Redemptions.SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
 		}
 
 		return &redemption, nil
@@ -1176,27 +1169,4 @@ func isPostgresNotFoundError(err error) bool {
 		return true
 	}
 	return false
-}
-
-func retrieveFromCache(
-	caches map[string]CacheInterface,
-	cacheName string,
-	key string,
-) any {
-	if caches != nil {
-		if cached, found := caches[cacheName].Get(key); found {
-			return cached
-		}
-	}
-	return nil
-}
-
-func bootstrapCache(cfg DBConfig) map[string]CacheInterface {
-	caches := make(map[string]CacheInterface)
-	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
-	caches["issuers"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["issuer"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["redemptions"] = cache.New(defaultDuration, 2*defaultDuration)
-	caches["issuercohort"] = cache.New(defaultDuration, 2*defaultDuration)
-	return caches
 }
