@@ -107,7 +107,6 @@ func (c *SimpleCache[T]) Get(k string) (T, bool) {
 	return item.value, true
 }
 
-// Delete removes an item from the cache
 func (c *SimpleCache[T]) Delete(k string) {
 	c.items.Delete(k)
 }
@@ -125,21 +124,13 @@ func (c *SimpleCache[T]) SetDefault(k string, x T) {
 	})
 }
 
-// Specialized cache types for type safety
-type IssuerCache = *SimpleCache[*model.Issuer]
-type IssuerListCache = *SimpleCache[[]model.Issuer]
-type RedemptionCache = *SimpleCache[*Redemption]
-type IssuerCohortCache = *SimpleCache[[]model.Issuer]
-
-// CacheCollection holds all application caches with proper types
 type CacheCollection struct {
-	Issuer       IssuerCache
-	Issuers      IssuerListCache
-	Redemptions  RedemptionCache
-	IssuerCohort IssuerCohortCache
+	Issuer       *SimpleCache[*model.Issuer]
+	Issuers      *SimpleCache[[]model.Issuer]
+	Redemptions  *SimpleCache[*Redemption]
+	IssuerCohort *SimpleCache[[]model.Issuer]
 }
 
-// bootstrapCache creates all the caches with proper types
 func bootstrapCache(cfg DBConfig) *CacheCollection {
 	if !cfg.CachingConfig.Enabled {
 		return nil
