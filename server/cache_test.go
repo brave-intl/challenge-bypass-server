@@ -1,10 +1,10 @@
 package server
 
 import (
-	"reflect"
 	"testing"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,30 +26,17 @@ func TestSimpleCache_SetDefault(t *testing.T) {
 		A int
 		B string
 	}
+
 	tests := []struct {
 		name              string
 		defaultExpiration time.Duration
 		key               string
-		value             any
+		value             testStruct
 		wantStored        bool
 	}{
 		{
-			name:              "set_string_value",
-			defaultExpiration: 5 * time.Second,
-			key:               "testkey",
-			value:             "testval",
-			wantStored:        true,
-		},
-		{
-			name:              "set_int_value",
-			defaultExpiration: 0,
-			key:               "intkey",
-			value:             123,
-			wantStored:        true,
-		},
-		{
 			name:              "set_struct_value",
-			defaultExpiration: 0,
+			defaultExpiration: 5 * time.Second,
 			key:               "structkey",
 			value:             testStruct{A: 9, B: "b"},
 			wantStored:        true,
@@ -58,15 +45,18 @@ func TestSimpleCache_SetDefault(t *testing.T) {
 			name:              "set_with_no_expiration",
 			defaultExpiration: 0,
 			key:               "noexpire",
-			value:             "persist",
+			value:             testStruct{A: 1, B: "persist"},
 			wantStored:        true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-			cache := newSimpleCacheWithClock(tt.defaultExpiration, 0, mockClock)
+			cache := newSimpleCacheWithClock[testStruct](tt.defaultExpiration, 0, mockClock)
+
 			cache.SetDefault(tt.key, tt.value)
+
 			got, found := cache.Get(tt.key)
 			assert.Equal(t, tt.wantStored, found, "Expected key to be stored")
 			if found {
@@ -81,9 +71,9 @@ func TestSimpleCache_Get(t *testing.T) {
 		name              string
 		defaultExpiration time.Duration
 		setupKey          string
-		setupValue        any
+		setupValue        string
 		getKey            string
-		wantValue         any
+		wantValue         string
 		wantFound         bool
 	}{
 		{
@@ -101,24 +91,27 @@ func TestSimpleCache_Get(t *testing.T) {
 			setupKey:          "testkey",
 			setupValue:        "testval",
 			getKey:            "wrongkey",
-			wantValue:         nil,
+			wantValue:         "",
 			wantFound:         false,
 		},
 		{
 			name:              "get_before_expiration",
 			defaultExpiration: 50 * time.Millisecond,
 			setupKey:          "expirekey",
-			setupValue:        42,
+			setupValue:        "value",
 			getKey:            "expirekey",
-			wantValue:         42,
+			wantValue:         "value",
 			wantFound:         true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-			cache := newSimpleCacheWithClock(tt.defaultExpiration, 0, mockClock)
+			cache := newSimpleCacheWithClock[string](tt.defaultExpiration, 0, mockClock)
+
 			cache.SetDefault(tt.setupKey, tt.setupValue)
+
 			got, found := cache.Get(tt.getKey)
 			assert.Equal(t, tt.wantFound, found, "Expected found status")
 			assert.Equal(t, tt.wantValue, got, "Expected correct value")
@@ -131,7 +124,7 @@ func TestSimpleCache_Get_Expiration(t *testing.T) {
 		name              string
 		defaultExpiration time.Duration
 		key               string
-		value             any
+		value             int
 		advanceDuration   time.Duration
 		wantFound         bool
 	}{
@@ -147,15 +140,17 @@ func TestSimpleCache_Get_Expiration(t *testing.T) {
 			name:              "no_expiration_persists",
 			defaultExpiration: 0,
 			key:               "nokey",
-			value:             "persist",
+			value:             99,
 			advanceDuration:   30 * time.Millisecond,
 			wantFound:         true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-			cache := newSimpleCacheWithClock(tt.defaultExpiration, 0, mockClock)
+			cache := newSimpleCacheWithClock[int](tt.defaultExpiration, 0, mockClock)
+
 			cache.SetDefault(tt.key, tt.value)
 
 			// Advance the mock clock instead of sleeping
@@ -171,7 +166,7 @@ func TestSimpleCache_Delete(t *testing.T) {
 	tests := []struct {
 		name       string
 		setupKey   string
-		setupValue any
+		setupValue string
 		deleteKey  string
 		wantFound  bool
 	}{
@@ -190,12 +185,15 @@ func TestSimpleCache_Delete(t *testing.T) {
 			wantFound:  true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-			cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
+			cache := newSimpleCacheWithClock[string](5*time.Second, 0, mockClock)
+
 			cache.SetDefault(tt.setupKey, tt.setupValue)
 			cache.Delete(tt.deleteKey)
+
 			_, found := cache.Get(tt.setupKey)
 			assert.Equal(t, tt.wantFound, found, "Expected key presence after delete")
 		})
@@ -208,7 +206,7 @@ func TestSimpleCache_CleanupRoutine(t *testing.T) {
 		defaultExpiration time.Duration
 		cleanupInterval   time.Duration
 		key               string
-		value             any
+		value             string
 		sleepDuration     time.Duration
 		wantFound         bool
 	}{
@@ -222,14 +220,17 @@ func TestSimpleCache_CleanupRoutine(t *testing.T) {
 			wantFound:         false,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Note: For the cleanup routine test, we still use RealClock since the
 			// ticker is based on real time. However, we could refactor the cleanup
 			// to also use the clock if we wanted more control.
-			cache := NewSimpleCache(tt.defaultExpiration, tt.cleanupInterval)
+			cache := NewSimpleCache[string](tt.defaultExpiration, tt.cleanupInterval)
 			cache.SetDefault(tt.key, tt.value)
+
 			time.Sleep(tt.sleepDuration)
+
 			_, found := cache.Get(tt.key)
 			assert.Equal(t, tt.wantFound, found, "Expected cleanup to remove expired item")
 		})
@@ -237,127 +238,43 @@ func TestSimpleCache_CleanupRoutine(t *testing.T) {
 }
 
 func TestSimpleCache_MultipleTypes(t *testing.T) {
+	t.Run("store_string", func(t *testing.T) {
+		mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
+		cache := newSimpleCacheWithClock[string](0, 0, mockClock)
+		cache.SetDefault("str", "hello")
+		val, found := cache.Get("str")
+		require.True(t, found, "Expected key to be found")
+		assert.Equal(t, "hello", val, "Expected correct value")
+	})
+
+	t.Run("store_int", func(t *testing.T) {
+		mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
+		cache := newSimpleCacheWithClock[int](0, 0, mockClock)
+		cache.SetDefault("int", 123)
+		val, found := cache.Get("int")
+		require.True(t, found, "Expected key to be found")
+		assert.Equal(t, 123, val, "Expected correct value")
+	})
+
 	type testStruct struct {
 		A int
 		B string
 	}
-	tests := []struct {
-		name      string
-		key       string
-		value     any
-		wantValue any
-	}{
-		{
-			name:      "store_string",
-			key:       "str",
-			value:     "hello",
-			wantValue: "hello",
-		},
-		{
-			name:      "store_int",
-			key:       "int",
-			value:     123,
-			wantValue: 123,
-		},
-		{
-			name:      "store_struct",
-			key:       "struct",
-			value:     testStruct{A: 9, B: "b"},
-			wantValue: testStruct{A: 9, B: "b"},
-		},
-	}
-	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-	cache := newSimpleCacheWithClock(0, 0, mockClock)
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cache.SetDefault(tt.key, tt.value)
-			val, found := cache.Get(tt.key)
-			require.True(t, found, "Expected key to be found")
-			assert.True(t, reflect.DeepEqual(tt.wantValue, val), "Expected correct value")
-		})
-	}
-}
-
-func TestRetrieveFromCache(t *testing.T) {
-	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-	tests := []struct {
-		name      string
-		setupFunc func() map[string]Cache
-		cacheName string
-		key       string
-		wantValue any
-		wantFound bool
-	}{
-		{
-			name: "retrieve_existing_value",
-			setupFunc: func() map[string]Cache {
-				cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
-				cache.SetDefault("key", 100)
-				return map[string]Cache{"mycache": cache}
-			},
-			cacheName: "mycache",
-			key:       "key",
-			wantValue: 100,
-			wantFound: true,
-		},
-		{
-			name: "retrieve_missing_key",
-			setupFunc: func() map[string]Cache {
-				cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
-				return map[string]Cache{"mycache": cache}
-			},
-			cacheName: "mycache",
-			key:       "missing",
-			wantValue: nil,
-			wantFound: false,
-		},
-		{
-			name: "retrieve_missing_cache",
-			setupFunc: func() map[string]Cache {
-				cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
-				return map[string]Cache{"mycache": cache}
-			},
-			cacheName: "wrongcache",
-			key:       "key",
-			wantValue: nil,
-			wantFound: false,
-		},
-		{
-			name: "retrieve_nil_caches",
-			setupFunc: func() map[string]Cache {
-				return nil
-			},
-			cacheName: "any",
-			key:       "any",
-			wantValue: nil,
-			wantFound: false,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			caches := tt.setupFunc()
-			res, ok := retrieveFromCache[any](caches, tt.cacheName, tt.key)
-			assert.Equal(t, tt.wantFound, ok, "Expected found status")
-			assert.Equal(t, tt.wantValue, res, "Expected correct value")
-		})
-	}
-}
-
-func TestRetrieveFromCache_TypedRetrieval(t *testing.T) {
-	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-	cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
-	cache.SetDefault("key", 100)
-	caches := map[string]Cache{"mycache": cache}
-	res, ok := retrieveFromCache[int](caches, "mycache", "key")
-	assert.True(t, ok, "Expected to find value in cache")
-	assert.Equal(t, 100, res, "Expected retrieved value from cache")
+	t.Run("store_struct", func(t *testing.T) {
+		mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
+		cache := newSimpleCacheWithClock[testStruct](0, 0, mockClock)
+		expected := testStruct{A: 9, B: "b"}
+		cache.SetDefault("struct", expected)
+		val, found := cache.Get("struct")
+		require.True(t, found, "Expected key to be found")
+		assert.Equal(t, expected, val, "Expected correct value")
+	})
 }
 
 func TestBootstrapCache(t *testing.T) {
 	tests := []struct {
 		name           string
 		config         DBConfig
-		wantCacheKeys  []string
 		wantExpiration time.Duration
 		wantCleanup    time.Duration
 		wantNil        bool
@@ -370,7 +287,6 @@ func TestBootstrapCache(t *testing.T) {
 					ExpirationSec: 2,
 				},
 			},
-			wantCacheKeys:  []string{"issuers", "issuer", "redemptions", "issuercohort"},
 			wantExpiration: 2 * time.Second,
 			wantCleanup:    4 * time.Second,
 			wantNil:        false,
@@ -383,7 +299,6 @@ func TestBootstrapCache(t *testing.T) {
 					ExpirationSec: 1,
 				},
 			},
-			wantCacheKeys:  []string{"issuers", "issuer", "redemptions", "issuercohort"},
 			wantExpiration: 1 * time.Second,
 			wantCleanup:    2 * time.Second,
 			wantNil:        false,
@@ -399,24 +314,26 @@ func TestBootstrapCache(t *testing.T) {
 			wantNil: true,
 		},
 	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			caches := bootstrapCache(tt.config)
+
 			if tt.wantNil {
 				assert.Nil(t, caches, "Expected nil caches when disabled")
 				return
 			}
+
 			require.NotNil(t, caches, "Expected non-nil caches")
-			for _, key := range tt.wantCacheKeys {
-				cache, ok := caches[key]
-				assert.True(t, ok, "Expected key %q in bootstrapped cache", key)
-				if simpleCache, ok := cache.(*SimpleCache); ok {
-					assert.Equal(t, tt.wantExpiration, simpleCache.defaultExpiration,
-						"Expected defaultExpiration %v for cache %q", tt.wantExpiration, key)
-					assert.Equal(t, tt.wantCleanup, simpleCache.cleanupInterval,
-						"Expected cleanupInterval %v for cache %q", tt.wantCleanup, key)
-				}
-			}
+			require.NotNil(t, caches.Issuer, "Expected Issuer cache")
+			require.NotNil(t, caches.Issuers, "Expected Issuers cache")
+			require.NotNil(t, caches.Redemptions, "Expected Redemptions cache")
+			require.NotNil(t, caches.IssuerCohort, "Expected IssuerCohort cache")
+
+			assert.Equal(t, tt.wantExpiration, caches.Issuer.defaultExpiration,
+				"Expected defaultExpiration for Issuer cache")
+			assert.Equal(t, tt.wantCleanup, caches.Issuer.cleanupInterval,
+				"Expected cleanupInterval for Issuer cache")
 		})
 	}
 }
@@ -424,7 +341,7 @@ func TestBootstrapCache(t *testing.T) {
 // New test specifically for clock-based expiration
 func TestSimpleCache_ExpirationWithMockClock(t *testing.T) {
 	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-	cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
+	cache := newSimpleCacheWithClock[string](5*time.Second, 0, mockClock)
 
 	// Set a value
 	cache.SetDefault("key", "value")
@@ -444,13 +361,13 @@ func TestSimpleCache_ExpirationWithMockClock(t *testing.T) {
 	mockClock.Advance(3 * time.Second)
 	val, found = cache.Get("key")
 	assert.False(t, found)
-	assert.Nil(t, val)
+	assert.Equal(t, "", val)
 }
 
 // Test that deleteExpired works with mock clock
 func TestSimpleCache_DeleteExpiredWithMockClock(t *testing.T) {
 	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
-	cache := newSimpleCacheWithClock(5*time.Second, 0, mockClock)
+	cache := newSimpleCacheWithClock[string](5*time.Second, 0, mockClock)
 
 	// Add multiple items
 	cache.SetDefault("key1", "value1")
@@ -470,4 +387,29 @@ func TestSimpleCache_DeleteExpiredWithMockClock(t *testing.T) {
 	assert.False(t, found)
 	_, found = cache.Get("key3")
 	assert.False(t, found)
+}
+
+// Test with actual model types
+func TestSimpleCache_WithModelTypes(t *testing.T) {
+	mockClock := &MockClock{CurrentTime: time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)}
+
+	t.Run("issuer_cache", func(t *testing.T) {
+		cache := newSimpleCacheWithClock[*model.Issuer](5*time.Second, 0, mockClock)
+		issuer := &model.Issuer{} // Assuming Issuer is a struct in model package
+		cache.SetDefault("issuer1", issuer)
+
+		val, found := cache.Get("issuer1")
+		assert.True(t, found)
+		assert.Equal(t, issuer, val)
+	})
+
+	t.Run("issuer_list_cache", func(t *testing.T) {
+		cache := newSimpleCacheWithClock[[]model.Issuer](5*time.Second, 0, mockClock)
+		issuers := []model.Issuer{{}, {}}
+		cache.SetDefault("issuers", issuers)
+
+		val, found := cache.Get("issuers")
+		assert.True(t, found)
+		assert.Equal(t, len(issuers), len(val))
+	})
 }

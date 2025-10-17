@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/model"
-	"github.com/lib/pq"
-
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -27,7 +27,6 @@ var (
 		DefaultIssuerValidDays:  1,
 		DynamodbEndpoint:        "",
 	}
-
 	issuerToCache = model.Issuer{
 		ID:           &issuerID,
 		IssuerType:   "0.0025BAT_0",
@@ -47,40 +46,45 @@ var (
 
 func TestBootstrapDBCache(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	assert.Contains(t, caches, "issuers")
-	assert.Contains(t, caches, "issuer")
-	assert.Contains(t, caches, "redemptions")
-	assert.Contains(t, caches, "issuercohort")
+	require.NotNil(t, caches, "Expected caches to be initialized")
+	assert.NotNil(t, caches.Issuers, "Expected Issuers cache to exist")
+	assert.NotNil(t, caches.Issuer, "Expected Issuer cache to exist")
+	assert.NotNil(t, caches.Redemptions, "Expected Redemptions cache to exist")
+	assert.NotNil(t, caches.IssuerCohort, "Expected IssuerCohort cache to exist")
 }
 
 // TestIssuerCacheRetrieval tests that getting values from the cache works
 func TestIssuerCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	caches["issuer"].SetDefault(issuerID.String(), &issuerToCache)
+	require.NotNil(t, caches, "Expected caches to be initialized")
 
-	cached, ok := retrieveFromCache[*model.Issuer](caches, "issuer", issuerID.String())
+	caches.Issuer.SetDefault(issuerID.String(), &issuerToCache)
+
+	cached, ok := caches.Issuer.Get(issuerID.String())
 	assert.True(t, ok, "Expected an issuer to be found in the cache")
-	cacheMiss, ok := retrieveFromCache[*model.Issuer](caches, "issuer", "test")
-	assert.False(t, ok, "Expected a cache miss for test issuer")
+	assert.Equal(t, &issuerToCache, cached)
 
-	assert.Equal(t, cached, &issuerToCache)
+	cacheMiss, ok := caches.Issuer.Get("test")
+	assert.False(t, ok, "Expected a cache miss for test issuer")
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, &issuerToCache)
+	assert.NotEqual(t, &issuerToCache, cacheMiss)
 }
 
 // TestIssuersCacheRetrieval tests that getting values from the cache works
 func TestIssuersCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	caches["issuers"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
+	require.NotNil(t, caches, "Expected caches to be initialized")
 
-	cached, ok := retrieveFromCache[[]model.Issuer](caches, "issuers", issuerToCache.IssuerType)
+	caches.Issuers.SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
+
+	cached, ok := caches.Issuers.Get(issuerToCache.IssuerType)
 	assert.True(t, ok, "Expected issuers to be found in the cache")
-	cacheMiss, ok := retrieveFromCache[[]model.Issuer](caches, "issuers", "test")
-	assert.False(t, ok, "Expected a cache miss for the test issuers")
+	assert.Equal(t, []model.Issuer{issuerToCache}, cached)
 
-	assert.Equal(t, cached, []model.Issuer{issuerToCache})
+	cacheMiss, ok := caches.Issuers.Get("test")
+	assert.False(t, ok, "Expected a cache miss for the test issuers")
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
+	assert.NotEqual(t, []model.Issuer{issuerToCache}, cacheMiss)
 }
 
 // TestRedemptionsCacheRetrieval tests that getting values from the cache works
@@ -91,30 +95,36 @@ func TestRedemCacheRetrieval(t *testing.T) {
 		Timestamp:  now,
 		Payload:    "",
 	}
+
 	caches := bootstrapCache(dbConfig)
-	caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID), &redemption)
+	require.NotNil(t, caches, "Expected caches to be initialized")
 
-	cached, ok := retrieveFromCache[*Redemption](caches, "redemptions", fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID))
+	cacheKey := fmt.Sprintf("%s:%s", redemption.IssuerType, redemption.ID)
+	caches.Redemptions.SetDefault(cacheKey, &redemption)
+
+	cached, ok := caches.Redemptions.Get(cacheKey)
 	assert.True(t, ok, "Expected a redemption to be found in the cache")
-	cacheMiss, ok := retrieveFromCache[*Redemption](caches, "redemptions", "test")
-	assert.False(t, ok, "Expected a cache miss for the test redemption")
+	assert.Equal(t, &redemption, cached)
 
-	assert.Equal(t, cached, &redemption)
+	cacheMiss, ok := caches.Redemptions.Get("test")
+	assert.False(t, ok, "Expected a cache miss for the test redemption")
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, &redemption)
+	assert.NotEqual(t, &redemption, cacheMiss)
 }
 
 // TestIssuerCohortCacheRetrieval tests that getting values from the cache works
 func TestIssuerCohortCacheRetrieval(t *testing.T) {
 	caches := bootstrapCache(dbConfig)
-	caches["issuercohort"].SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
+	require.NotNil(t, caches, "Expected caches to be initialized")
 
-	cached, ok := retrieveFromCache[[]model.Issuer](caches, "issuercohort", issuerToCache.IssuerType)
-	assert.True(t, ok, "Expected redemptions to be found in the cache")
-	cacheMiss, ok := retrieveFromCache[[]model.Issuer](caches, "issuercohort", "test")
-	assert.False(t, ok, "Expected a cache miss for the test redemptions")
+	caches.IssuerCohort.SetDefault(issuerToCache.IssuerType, []model.Issuer{issuerToCache})
 
-	assert.Equal(t, cached, []model.Issuer{issuerToCache})
+	cached, ok := caches.IssuerCohort.Get(issuerToCache.IssuerType)
+	assert.True(t, ok, "Expected issuer cohort to be found in the cache")
+	assert.Equal(t, []model.Issuer{issuerToCache}, cached)
+
+	cacheMiss, ok := caches.IssuerCohort.Get("test")
+	assert.False(t, ok, "Expected a cache miss for the test issuer cohort")
 	assert.Nil(t, cacheMiss)
-	assert.NotEqual(t, cacheMiss, []model.Issuer{issuerToCache})
+	assert.NotEqual(t, []model.Issuer{issuerToCache}, cacheMiss)
 }

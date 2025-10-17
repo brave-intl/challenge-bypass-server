@@ -3,6 +3,8 @@ package server
 import (
 	"sync"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 )
 
 type CachingConfig struct {
@@ -10,10 +12,10 @@ type CachingConfig struct {
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-type Cache interface {
-	Get(k string) (any, bool)
+type Cache[T any] interface {
+	Get(k string) (T, bool)
 	Delete(k string)
-	SetDefault(k string, x any)
+	SetDefault(k string, x T)
 }
 
 // Clock interface allows us to mock time in tests
@@ -21,14 +23,13 @@ type Clock interface {
 	Now() time.Time
 }
 
-// RealClock uses actual system time
 type RealClock struct{}
 
 func (RealClock) Now() time.Time {
 	return time.Now()
 }
 
-type SimpleCache struct {
+type SimpleCache[T any] struct {
 	items             sync.Map
 	defaultExpiration time.Duration
 	cleanupInterval   time.Duration
@@ -36,35 +37,35 @@ type SimpleCache struct {
 	clock             Clock
 }
 
-type cacheItem struct {
-	value      any
-	expiration int64 // Unix timestamp for expiration
+type cacheItem[T any] struct {
+	value      T
+	expiration int64
 }
 
 // NewSimpleCache creates a new cache with the given default expiration and cleanup interval
-func NewSimpleCache(defaultExpiration, cleanupInterval time.Duration) *SimpleCache {
-	return newSimpleCacheWithClock(defaultExpiration, cleanupInterval, RealClock{})
+func NewSimpleCache[T any](defaultExpiration, cleanupInterval time.Duration) *SimpleCache[T] {
+	return newSimpleCacheWithClock[T](defaultExpiration, cleanupInterval, RealClock{})
 }
 
-// NewSimpleCacheWithClock creates a new cache with a custom clock (useful for testing)
-func newSimpleCacheWithClock(defaultExpiration, cleanupInterval time.Duration, clock Clock) *SimpleCache {
-	cache := &SimpleCache{
+func newSimpleCacheWithClock[T any](defaultExpiration, cleanupInterval time.Duration, clock Clock) *SimpleCache[T] {
+	cache := &SimpleCache[T]{
 		defaultExpiration: defaultExpiration,
 		cleanupInterval:   cleanupInterval,
 		stopCleanup:       make(chan bool),
 		clock:             clock,
 	}
-	// Start cleanup routine if cleanup interval > 0
+
 	if cleanupInterval > 0 {
 		go cache.startCleanupTimer()
 	}
+
 	return cache
 }
 
-// startCleanupTimer starts a timer that periodically cleans up expired items
-func (c *SimpleCache) startCleanupTimer() {
+func (c *SimpleCache[T]) startCleanupTimer() {
 	ticker := time.NewTicker(c.cleanupInterval)
 	defer ticker.Stop()
+
 	for {
 		select {
 		case <-ticker.C:
@@ -75,11 +76,10 @@ func (c *SimpleCache) startCleanupTimer() {
 	}
 }
 
-// deleteExpired deletes expired items from the cache
-func (c *SimpleCache) deleteExpired() {
+func (c *SimpleCache[T]) deleteExpired() {
 	now := c.clock.Now().UnixNano()
 	c.items.Range(func(key, value any) bool {
-		item, ok := value.(cacheItem)
+		item, ok := value.(cacheItem[T])
 		if ok && item.expiration > 0 && item.expiration < now {
 			c.items.Delete(key)
 		}
@@ -87,74 +87,71 @@ func (c *SimpleCache) deleteExpired() {
 	})
 }
 
-// Get retrieves an item from the cache
-func (c *SimpleCache) Get(k string) (any, bool) {
+func (c *SimpleCache[T]) Get(k string) (T, bool) {
+	var zero T
 	value, found := c.items.Load(k)
 	if !found {
-		return nil, false
+		return zero, false
 	}
-	item, ok := value.(cacheItem)
+
+	item, ok := value.(cacheItem[T])
 	if !ok {
-		return nil, false
+		return zero, false
 	}
-	// Check if item has expired
+
 	if item.expiration > 0 && item.expiration < c.clock.Now().UnixNano() {
 		c.items.Delete(k)
-		return nil, false
+		return zero, false
 	}
+
 	return item.value, true
 }
 
 // Delete removes an item from the cache
-func (c *SimpleCache) Delete(k string) {
+func (c *SimpleCache[T]) Delete(k string) {
 	c.items.Delete(k)
 }
 
 // SetDefault adds an item to the cache with the default expiration time
-func (c *SimpleCache) SetDefault(k string, x any) {
+func (c *SimpleCache[T]) SetDefault(k string, x T) {
 	var expiration int64 = 0
 	if c.defaultExpiration > 0 {
 		expiration = c.clock.Now().Add(c.defaultExpiration).UnixNano()
 	}
-	c.items.Store(k, cacheItem{
+
+	c.items.Store(k, cacheItem[T]{
 		value:      x,
 		expiration: expiration,
 	})
 }
 
-// retrieveFromCache safely retrieves a value from a named cache
-func retrieveFromCache[T any](
-	caches map[string]Cache,
-	cacheName string,
-	key string,
-) (T, bool) {
-	var zero T
-	cache, exists := caches[cacheName]
-	if !exists {
-		return zero, false
-	}
-	cached, found := cache.Get(key)
-	if !found {
-		return zero, false
-	}
-	value, ok := cached.(T)
-	if !ok {
-		return zero, false
-	}
-	return value, true
+// Specialized cache types for type safety
+type IssuerCache = *SimpleCache[*model.Issuer]
+type IssuerListCache = *SimpleCache[[]model.Issuer]
+type RedemptionCache = *SimpleCache[*Redemption]
+type IssuerCohortCache = *SimpleCache[[]model.Issuer]
+
+// CacheCollection holds all application caches with proper types
+type CacheCollection struct {
+	Issuer       IssuerCache
+	Issuers      IssuerListCache
+	Redemptions  RedemptionCache
+	IssuerCohort IssuerCohortCache
 }
 
-// bootstrapCache creates all the caches
-func bootstrapCache(cfg DBConfig) map[string]Cache {
+// bootstrapCache creates all the caches with proper types
+func bootstrapCache(cfg DBConfig) *CacheCollection {
 	if !cfg.CachingConfig.Enabled {
 		return nil
 	}
-	caches := make(map[string]Cache)
+
 	defaultDuration := time.Duration(cfg.CachingConfig.ExpirationSec) * time.Second
 	cleanupInterval := defaultDuration * 2
-	caches["issuers"] = NewSimpleCache(defaultDuration, cleanupInterval)
-	caches["issuer"] = NewSimpleCache(defaultDuration, cleanupInterval)
-	caches["redemptions"] = NewSimpleCache(defaultDuration, cleanupInterval)
-	caches["issuercohort"] = NewSimpleCache(defaultDuration, cleanupInterval)
-	return caches
+
+	return &CacheCollection{
+		Issuer:       NewSimpleCache[*model.Issuer](defaultDuration, cleanupInterval),
+		Issuers:      NewSimpleCache[[]model.Issuer](defaultDuration, cleanupInterval),
+		Redemptions:  NewSimpleCache[*Redemption](defaultDuration, cleanupInterval),
+		IssuerCohort: NewSimpleCache[[]model.Issuer](defaultDuration, cleanupInterval),
+	}
 }

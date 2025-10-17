@@ -205,9 +205,11 @@ func incrementTotal(c prometheus.Counter) {
 func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	defer incrementTotal(fetchIssuerTotal)
 
-	issuer, ok := retrieveFromCache[*model.Issuer](c.caches, "issuer", issuerID)
-	if ok {
-		return issuer, nil
+	if c.caches != nil {
+		issuer, ok := c.caches.Issuer.Get(issuerID)
+		if ok {
+			return issuer, nil
+		}
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers WHERE issuer_id=$1`, issuerColumns)
@@ -229,8 +231,9 @@ func (c *Server) fetchIssuer(issuerID string) (*model.Issuer, error) {
 	}
 
 	convertedIssuer := &fetchedKeys[0]
+
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerID, convertedIssuer)
+		c.caches.Issuer.SetDefault(issuerID, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
@@ -337,9 +340,11 @@ func (c *Server) fetchIssuersByCohort(
 	issuerCohort int16,
 	queryTemplate string,
 ) ([]model.Issuer, error) {
-	issuers, ok := retrieveFromCache[[]model.Issuer](c.caches, "issuercohort", issuerType)
-	if ok {
-		return issuers, nil
+	if c.caches != nil {
+		issuers, ok := c.caches.IssuerCohort.Get(issuerType)
+		if ok {
+			return issuers, nil
+		}
 	}
 
 	rows, err := c.dbr.Query(queryTemplate, issuerType, issuerCohort)
@@ -373,16 +378,18 @@ func (c *Server) fetchIssuersByCohort(
 	}
 
 	if c.caches != nil {
-		c.caches["issuercohort"].SetDefault(issuerType, issuersWithKey)
+		c.caches.IssuerCohort.SetDefault(issuerType, issuersWithKey)
 	}
 
 	return issuersWithKey, nil
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {
-	issuer, ok := retrieveFromCache[*model.Issuer](c.caches, "issuer", issuerType)
-	if ok {
-		return issuer, nil
+	if c.caches != nil {
+		issuer, ok := c.caches.Issuer.Get(issuerType)
+		if ok {
+			return issuer, nil
+		}
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers
@@ -404,8 +411,9 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
 	}
 
 	convertedIssuer := &fetchedKeys[0]
+
 	if c.caches != nil {
-		c.caches["issuer"].SetDefault(issuerType, convertedIssuer)
+		c.caches.Issuer.SetDefault(issuerType, convertedIssuer)
 	}
 
 	return convertedIssuer, nil
@@ -414,9 +422,11 @@ func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*mod
 // FetchAllIssuers fetches issuers from a cache or a database based on their type, saving them in the cache
 // if it has to query the database.
 func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
-	issuers, ok := retrieveFromCache[[]model.Issuer](c.caches, "issuers", "all")
-	if ok {
-		return issuers, nil
+	if c.caches != nil {
+		issuers, ok := c.caches.Issuers.Get("all")
+		if ok {
+			return issuers, nil
+		}
 	}
 
 	query := fmt.Sprintf(`SELECT %s FROM v3_issuers 
@@ -459,7 +469,7 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	}
 
 	if c.caches != nil {
-		c.caches["issuers"].SetDefault("all", results)
+		c.caches.Issuers.SetDefault("all", results)
 	}
 
 	return results, nil
@@ -1106,9 +1116,11 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 	defer incrementTotal(fetchRedemptionTotal)
 
-	redemption, ok := retrieveFromCache[*Redemption](c.caches, "redemptions", fmt.Sprintf("%s:%s", issuerType, id))
-	if ok {
-		return redemption, nil
+	if c.caches != nil {
+		redemption, ok := c.caches.Redemptions.Get(fmt.Sprintf("%s:%s", issuerType, id))
+		if ok {
+			return redemption, nil
+		}
 	}
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
@@ -1130,7 +1142,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 		}
 
 		if c.caches != nil {
-			c.caches["redemptions"].SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
+			c.caches.Redemptions.SetDefault(fmt.Sprintf("%s:%s", issuerType, id), &redemption)
 		}
 
 		return &redemption, nil
