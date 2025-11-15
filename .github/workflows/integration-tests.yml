@@ -10,6 +10,9 @@ on:
       - synchronize
       - reopened
 
+permissions:
+  contents: read
+
 jobs:
   integration-tests:
     name: Run Integration Tests
