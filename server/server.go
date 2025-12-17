@@ -1,7 +1,7 @@
+// server.go - with consolidated routing
 package server
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -14,12 +14,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/brave-intl/bat-go/libs/middleware"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
-	"github.com/go-chi/chi/v5"
-	chiware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/httplog/v3"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -192,11 +189,10 @@ func (c *Server) InitDBConfig() error {
 
 // SetupLogger creates a logger to use
 func SetupLogger(
-	ctx context.Context,
 	version,
 	buildTime,
 	commit string,
-) (context.Context, *slog.Logger) {
+) *slog.Logger {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
 	var level slog.Level
@@ -213,10 +209,8 @@ func SetupLogger(
 		level = slog.LevelWarn
 	}
 
-	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		ReplaceAttr: logFormat.ReplaceAttr,
-		Level:       level,
+		Level: level,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),
@@ -225,62 +219,109 @@ func SetupLogger(
 		slog.String("version", version),
 		slog.String("env", env),
 	)
-	return ctx, logger
+	return logger
 }
 
-func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.Context, *chi.Mux) {
-	r := chi.NewRouter()
-	r.Use(chiware.RequestID)
-	r.Use(chiware.Heartbeat("/"))
-	r.Use(chiware.Timeout(60 * time.Second))
-	r.Use(middleware.BearerToken)
-	chiLogger := httplog.RequestLogger(logger, &httplog.Options{
-		RecoverPanics: true,
-		Schema:        httplog.SchemaECS,
-		Skip: func(req *http.Request, respStatus int) bool {
-			return req.URL.Path == "/metrics"
-		},
-	})
-	r.Use(chiLogger)
-
+// setupRouter sets up all routes for the server
+func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
+	mux := http.NewServeMux()
 	c.Logger = logger
 
-	// kick rotate v3 issuers on start
+	// Kick rotate v3 issuers on start
 	if err := c.rotateIssuersV3(); err != nil {
+		// @TODO: Alert here once merged
 		panic(err)
 	}
 
-	r.Mount("/v1/blindedToken", c.tokenRouterV1())
-	r.Mount("/v1/issuer", c.issuerRouterV1())
+	// Helper to register authenticated routes
+	registerAuth := func(pattern string, handler func(http.ResponseWriter, *http.Request) *AppError) {
+		mux.Handle(pattern, c.withAuth(AppHandler(handler)))
+	}
 
-	r.Mount("/v2/blindedToken", c.tokenRouterV2())
-	r.Mount("/v2/issuer", c.issuerRouterV2())
+	// Helper to register public routes with base middleware
+	registerPublic := func(pattern string, handler http.Handler) {
+		mux.Handle(pattern, c.withBase(handler))
+	}
 
-	// time aware token router
-	r.Mount("/v3/blindedToken", c.tokenRouterV3())
-	r.Mount("/v3/issuer", c.issuerRouterV3())
+	// Root health check endpoint
+	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Length", "1")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("."))
+	})
 
-	// Metrics for retroactive compatibility
-	// @TODO: Remove  this once the service health check is transferred to th 9090
-	// version
-	r.Get("/metrics", middleware.Metrics())
+	// =========== V1 API Routes ===========
+	// V1 Token Routes
+	registerAuth("GET /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
+	registerAuth("POST /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
+	registerAuth("POST /v1/blindedToken/{type}/redemption", c.blindedTokenRedeemHandler)
+	registerAuth("GET /v1/blindedToken/{id}/redemption/{tokenId}", c.blindedTokenRedemptionHandler)
+	registerAuth("POST /v1/blindedToken/bulk/redemption", c.blindedTokenBulkRedeemHandler)
 
-	return ctx, r
+	// V1 Issuer Routes
+	registerAuth("GET /v1/issuer/{type}", c.issuerGetHandlerV1)
+	registerAuth("POST /v1/issuer", c.issuerCreateHandlerV1)
+	registerAuth("GET /v1/issuer", c.issuerGetAllHandler)
+
+	// =========== V2 API Routes ===========
+	// V2 Token Routes
+	registerAuth("GET /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
+	registerAuth("POST /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
+
+	// V2 Issuer Routes
+	registerAuth("GET /v2/issuer/{type}", c.issuerHandlerV2)
+	registerAuth("POST /v2/issuer", c.issuerCreateHandlerV2)
+
+	// =========== V3 API Routes ===========
+	// V3 Token Routes
+	registerAuth("POST /v3/blindedToken/{type}/redemption", c.blindedTokenRedeemHandlerV3)
+
+	// V3 Issuer Routes
+	registerAuth("GET /v3/issuer/{type}", c.issuerHandlerV3)
+	registerAuth("POST /v3/issuer", c.issuerV3CreateHandler)
+
+	// Metrics endpoint
+	registerPublic("GET /metrics", promhttp.Handler())
+
+	// Wrap the entire mux with StripTrailingSlash middleware
+	return StripTrailingSlash(mux)
+}
+
+func (c *Server) withBase(h http.Handler) http.Handler {
+	return Chain(h,
+		RequestIDMiddleware,
+		TimeoutMiddleware(60*time.Second),
+		BearerTokenMiddleware,
+		LoggingMiddleware(c.Logger),
+	)
+}
+
+func (c *Server) withAuth(h http.Handler) http.Handler {
+	// Start with base middleware chain
+	h = c.withBase(h)
+
+	// Add auth middleware in production
+	if os.Getenv("ENV") == "production" {
+		h = SimpleTokenAuthorizedOnly(h)
+	}
+
+	return h
 }
 
 // ListenAndServe listen to ports and mount handlers
-func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
-	_, srv := c.setupRouter(ctx, logger)
+func (c *Server) ListenAndServe(logger *slog.Logger) error {
+	router := c.setupRouter(logger)
 
 	ServeMetrics()
 
-	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), srv)
+	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), router)
 }
 
 // ServeMetrics exposes the metrics collection endpoint on :9090
 func ServeMetrics() {
 	// Run metrics on 9090 for collection
-	r := chi.NewRouter()
-	r.Get("/metrics", middleware.Metrics())
+	r := http.NewServeMux()
+	r.Handle("/metrics", promhttp.Handler().(http.HandlerFunc))
 	go http.ListenAndServe(":9090", r)
 }
