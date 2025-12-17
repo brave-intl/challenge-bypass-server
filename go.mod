@@ -1,6 +1,6 @@
 module github.com/brave-intl/challenge-bypass-server
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
@@ -66,9 +66,9 @@ require (
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/throttled/throttled/v2 v2.12.0 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
-	golang.org/x/crypto v0.36.0 // indirect
-	golang.org/x/sys v0.31.0 // indirect
-	golang.org/x/text v0.23.0 // indirect
+	golang.org/x/crypto v0.45.0 // indirect
+	golang.org/x/sys v0.38.0 // indirect
+	golang.org/x/text v0.31.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
