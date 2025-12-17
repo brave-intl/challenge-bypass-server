@@ -120,7 +120,7 @@ type Server struct {
 	db           *sql.DB // Database writer instance
 	dbr          *sql.DB // Database reader instance
 
-	caches map[string]CacheInterface
+	caches *CacheCollection
 }
 
 // DefaultServer on port
