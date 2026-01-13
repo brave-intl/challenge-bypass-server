@@ -22,7 +22,6 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 
-	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -53,7 +52,7 @@ func (suite *ServerTestSuite) SetupSuite() {
 	uuidV4, err := uuid.NewRandom()
 	suite.Require().NoError(err)
 	suite.accessToken = uuidV4.String()
-	middleware.TokenList = []string{suite.accessToken}
+	TokenList = []string{suite.accessToken}
 
 	suite.srv = &Server{}
 

@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
+	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -215,7 +216,7 @@ func SetupLogger(
 
 // setupRouter sets up all routes for the server
 func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
-	mux := http.NewServeMux()
+	r := chi.NewRouter()
 	c.Logger = logger
 
 	// Kick rotate v3 issuers on start
@@ -224,80 +225,63 @@ func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
 		panic(err)
 	}
 
-	// Helper to register authenticated routes
-	registerAuth := func(pattern string, handler func(http.ResponseWriter, *http.Request) *AppError) {
-		mux.Handle(pattern, c.withAuth(AppHandler(handler)))
-	}
-
-	// Helper to register public routes with base middleware
-	registerPublic := func(pattern string, handler http.Handler) {
-		mux.Handle(pattern, c.withBase(handler))
-	}
-
 	// Root health check endpoint
-	mux.HandleFunc("GET /", func(w http.ResponseWriter, r *http.Request) {
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Content-Length", "1")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("."))
 	})
 
-	// =========== V1 API Routes ===========
-	// V1 Token Routes
-	registerAuth("GET /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
-	registerAuth("POST /v1/blindedToken/{type}", c.blindedTokenIssuerHandler)
-	registerAuth("POST /v1/blindedToken/{type}/redemption", c.blindedTokenRedeemHandler)
-	registerAuth("GET /v1/blindedToken/{id}/redemption/{tokenId}", c.blindedTokenRedemptionHandler)
-	registerAuth("POST /v1/blindedToken/bulk/redemption", c.blindedTokenBulkRedeemHandler)
+	r.Group(func(r chi.Router) {
+		r.Use(RequestIDMiddleware)
+		r.Use(TimeoutMiddleware(60 * time.Second))
+		r.Use(BearerTokenMiddleware)
+		r.Use(LoggingMiddleware(c.Logger))
 
-	// V1 Issuer Routes
-	registerAuth("GET /v1/issuer/{type}", c.issuerGetHandlerV1)
-	registerAuth("POST /v1/issuer", c.issuerCreateHandlerV1)
-	registerAuth("GET /v1/issuer", c.issuerGetAllHandler)
+		// Metrics endpoint
+		r.Method("GET", "/metrics", promhttp.Handler())
 
-	// =========== V2 API Routes ===========
-	// V2 Token Routes
-	registerAuth("GET /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
-	registerAuth("POST /v2/blindedToken/{type}", c.BlindedTokenIssuerHandlerV2)
+		// Authenticated Routes
+		r.Group(func(r chi.Router) {
+			if os.Getenv("ENV") == "production" {
+				r.Use(SimpleTokenAuthorizedOnly)
+			}
 
-	// V2 Issuer Routes
-	registerAuth("GET /v2/issuer/{type}", c.issuerHandlerV2)
-	registerAuth("POST /v2/issuer", c.issuerCreateHandlerV2)
+			// =========== V1 API Routes ===========
+			// V1 Token Routes
+			r.Method("GET", "/v1/blindedToken/{type}", AppHandler(c.blindedTokenIssuerHandler))
+			r.Method("POST", "/v1/blindedToken/{type}", AppHandler(c.blindedTokenIssuerHandler))
+			r.Method("POST", "/v1/blindedToken/{type}/redemption", AppHandler(c.blindedTokenRedeemHandler))
+			r.Method("GET", "/v1/blindedToken/{id}/redemption/{tokenId}", AppHandler(c.blindedTokenRedemptionHandler))
+			r.Method("POST", "/v1/blindedToken/bulk/redemption", AppHandler(c.blindedTokenBulkRedeemHandler))
 
-	// =========== V3 API Routes ===========
-	// V3 Token Routes
-	registerAuth("POST /v3/blindedToken/{type}/redemption", c.blindedTokenRedeemHandlerV3)
+			// V1 Issuer Routes
+			r.Method("GET", "/v1/issuer/{type}", AppHandler(c.issuerGetHandlerV1))
+			r.Method("POST", "/v1/issuer", AppHandler(c.issuerCreateHandlerV1))
+			r.Method("GET", "/v1/issuer", AppHandler(c.issuerGetAllHandler))
 
-	// V3 Issuer Routes
-	registerAuth("GET /v3/issuer/{type}", c.issuerHandlerV3)
-	registerAuth("POST /v3/issuer", c.issuerV3CreateHandler)
+			// =========== V2 API Routes ===========
+			// V2 Token Routes
+			r.Method("GET", "/v2/blindedToken/{type}", AppHandler(c.BlindedTokenIssuerHandlerV2))
+			r.Method("POST", "/v2/blindedToken/{type}", AppHandler(c.BlindedTokenIssuerHandlerV2))
 
-	// Metrics endpoint
-	registerPublic("GET /metrics", promhttp.Handler())
+			// V2 Issuer Routes
+			r.Method("GET", "/v2/issuer/{type}", AppHandler(c.issuerHandlerV2))
+			r.Method("POST", "/v2/issuer", AppHandler(c.issuerCreateHandlerV2))
+
+			// =========== V3 API Routes ===========
+			// V3 Token Routes
+			r.Method("POST", "/v3/blindedToken/{type}/redemption", AppHandler(c.blindedTokenRedeemHandlerV3))
+
+			// V3 Issuer Routes
+			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
+			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+		})
+	})
 
 	// Wrap the entire mux with StripTrailingSlash middleware
-	return StripTrailingSlash(mux)
-}
-
-func (c *Server) withBase(h http.Handler) http.Handler {
-	return Chain(h,
-		RequestIDMiddleware,
-		TimeoutMiddleware(60*time.Second),
-		BearerTokenMiddleware,
-		LoggingMiddleware(c.Logger),
-	)
-}
-
-func (c *Server) withAuth(h http.Handler) http.Handler {
-	// Start with base middleware chain
-	h = c.withBase(h)
-
-	// Add auth middleware in production
-	if os.Getenv("ENV") == "production" {
-		h = SimpleTokenAuthorizedOnly(h)
-	}
-
-	return h
+	return StripTrailingSlash(r)
 }
 
 // ListenAndServe listen to ports and mount handlers
@@ -312,7 +296,7 @@ func (c *Server) ListenAndServe(logger *slog.Logger) error {
 // ServeMetrics exposes the metrics collection endpoint on :9090
 func ServeMetrics() {
 	// Run metrics on 9090 for collection
-	r := http.NewServeMux()
-	r.Handle("/metrics", promhttp.Handler().(http.HandlerFunc))
+	r := chi.NewRouter()
+	r.Method("GET", "/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9090", r)
 }

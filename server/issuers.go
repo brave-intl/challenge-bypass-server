@@ -12,6 +12,7 @@ import (
 	"github.com/brave-intl/bat-go/libs/closers"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/go-chi/chi/v5"
 	"github.com/lib/pq"
 )
 
@@ -114,7 +115,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *App
 	v1IssuerCallTotal.WithLabelValues("getIssuer").Inc()
 	defer closers.Panic(r.Context(), r.Body)
 
-	if issuerType := r.PathValue("type"); issuerType != "" {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
@@ -135,7 +136,7 @@ func (c *Server) issuerGetHandlerV1(w http.ResponseWriter, r *http.Request) *App
 
 func (c *Server) issuerHandlerV3(w http.ResponseWriter, r *http.Request) *AppError {
 	v3IssuerCallTotal.WithLabelValues("getIssuer").Inc()
-	issuerType := r.PathValue("type")
+	issuerType := chi.URLParam(r, "type")
 
 	if issuerType == "" {
 		// need an issuer type, 404 otherwise
@@ -172,7 +173,7 @@ func (c *Server) issuerHandlerV2(w http.ResponseWriter, r *http.Request) *AppErr
 		return WrapError(err, "Could not parse the request body", 400)
 	}
 
-	if issuerType := r.PathValue("type"); issuerType != "" {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, req.Cohort)
 		if appErr != nil {
 			return appErr

@@ -12,6 +12,7 @@ import (
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
 
@@ -67,7 +68,7 @@ type BlindedTokenBulkRedeemRequest struct {
 func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Request) *AppError {
 	v2BlindedTokenCallTotal.WithLabelValues("issueTokens").Inc()
 	var response blindedTokenIssueResponse
-	if issuerType := r.PathValue("type"); issuerType != "" {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		var request BlindedTokenIssueRequestV2
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize)).Decode(&request); err != nil {
 			c.Logger.Error(
@@ -141,7 +142,7 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	v1BlindedTokenCallTotal.WithLabelValues("issueToken").Inc()
 	var response blindedTokenIssueResponse
-	if issuerType := r.PathValue("type"); issuerType != "" {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
@@ -205,7 +206,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	v3BlindedTokenCallTotal.WithLabelValues("redeemTokens").Inc()
 	ctx := r.Context()
 
-	issuerType := r.PathValue("type")
+	issuerType := chi.URLParam(r, "type")
 	if issuerType == "" {
 		if err := RenderContent(blindedTokenRedeemResponse{}, w, http.StatusOK); err != nil {
 			return &AppError{
@@ -336,7 +337,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	v1BlindedTokenCallTotal.WithLabelValues("redeemToken").Inc()
 	var response blindedTokenRedeemResponse
-	if issuerType := r.PathValue("type"); issuerType != "" {
+	if issuerType := chi.URLParam(r, "type"); issuerType != "" {
 		issuers, appErr := c.getIssuers(r.Context(), issuerType)
 		if appErr != nil {
 			return appErr
@@ -527,8 +528,8 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 func (c *Server) blindedTokenRedemptionHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	v1BlindedTokenCallTotal.WithLabelValues("checkToken").Inc()
 	var response any
-	if issuerID := r.PathValue("id"); issuerID != "" {
-		tokenID := r.PathValue("tokenId")
+	if issuerID := chi.URLParam(r, "id"); issuerID != "" {
+		tokenID := chi.URLParam(r, "tokenId")
 		if tokenID == "" {
 			return &AppError{
 				Message: errRedemptionNotFound.Error(),
