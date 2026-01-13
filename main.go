@@ -34,7 +34,7 @@ func main() {
 		Commit    = "none"
 	)
 
-	logger := server.SetupLogger(Version, BuildTime, Commit)
+	serverCtx, logger := server.SetupLogger(context.Background(), Version, BuildTime, Commit)
 	srv := *server.DefaultServer
 	srv.Logger = logger
 
@@ -100,7 +100,7 @@ func main() {
 	}
 
 	logger.Debug("Initializing API server")
-	err = srv.ListenAndServe(logger)
+	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
 		logger.Error("listenandserve", slog.Any("error", err))
 		a.Crash(serverCtx, err)

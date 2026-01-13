@@ -2,6 +2,7 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -10,12 +11,12 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/httplog/v3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -190,28 +191,17 @@ func (c *Server) InitDBConfig() error {
 
 // SetupLogger creates a logger to use
 func SetupLogger(
+	ctx context.Context,
 	version,
 	buildTime,
 	commit string,
-) *slog.Logger {
+) (context.Context, *slog.Logger) {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
-	var level slog.Level
-	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
-	case "DEBUG":
-		level = slog.LevelDebug
-	case "WARN":
-		level = slog.LevelWarn
-	case "INFO":
-		level = slog.LevelInfo
-	case "ERROR":
-		level = slog.LevelError
-	default:
-		level = slog.LevelWarn
-	}
-
+	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: level,
+		Level:       slog.LevelWarn,
+		ReplaceAttr: logFormat.ReplaceAttr,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),
@@ -220,11 +210,11 @@ func SetupLogger(
 		slog.String("version", version),
 		slog.String("env", env),
 	)
-	return logger
+	return ctx, logger
 }
 
 // setupRouter sets up all routes for the server
-func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
+func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.Context, http.Handler) {
 	r := chi.NewRouter()
 	c.Logger = logger
 
@@ -246,6 +236,7 @@ func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
 		r.Use(RequestIDMiddleware)
 		r.Use(TimeoutMiddleware(60 * time.Second))
 		r.Use(BearerTokenMiddleware)
+		// Use local logging middleware for now, or revert to httplog if needed
 		r.Use(LoggingMiddleware(c.Logger))
 
 		// Metrics endpoint
@@ -290,12 +281,12 @@ func (c *Server) setupRouter(logger *slog.Logger) http.Handler {
 	})
 
 	// Wrap the entire mux with StripTrailingSlash middleware
-	return StripTrailingSlash(r)
+	return ctx, StripTrailingSlash(r)
 }
 
 // ListenAndServe listen to ports and mount handlers
-func (c *Server) ListenAndServe(logger *slog.Logger) error {
-	router := c.setupRouter(logger)
+func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
+	_, router := c.setupRouter(ctx, logger)
 
 	ServeMetrics()
 
