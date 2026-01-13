@@ -1,6 +1,6 @@
 module github.com/brave-intl/challenge-bypass-server
 
-go 1.24
+go 1.24.0
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
@@ -16,7 +16,6 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/prometheus/client_golang v1.14.0
-	github.com/robfig/cron/v3 v3.0.1
 	github.com/segmentio/kafka-go v0.4.38
 	github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2 v0.1.0
 	github.com/stretchr/testify v1.10.0
@@ -54,6 +53,7 @@ require (
 	github.com/prometheus/procfs v0.9.0 // indirect
 	github.com/rs/zerolog v1.29.0 // indirect
 	github.com/satori/go.uuid v1.2.0 // indirect
+	github.com/stretchr/objx v0.5.2 // indirect
 	go.uber.org/atomic v1.10.0 // indirect
 	golang.org/x/sys v0.31.0 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
