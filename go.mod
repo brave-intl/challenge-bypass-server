@@ -11,6 +11,7 @@ require (
 	github.com/brave-intl/bat-go/libs v0.0.0-20250515184320-890ea7676fc7
 	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20220418231828-419995e4a873
 	github.com/go-chi/chi/v5 v5.2.3
+	github.com/go-chi/httplog/v3 v3.3.0
 	github.com/golang-migrate/migrate/v4 v4.18.3
 	github.com/google/uuid v1.6.0
 	github.com/lib/pq v1.10.9
