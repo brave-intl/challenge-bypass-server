@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
+	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -233,11 +234,18 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 	})
 
 	r.Group(func(r chi.Router) {
-		r.Use(RequestIDMiddleware)
-		r.Use(TimeoutMiddleware(60 * time.Second))
+		r.Use(chiware.RequestID)
+		r.Use(chiware.Timeout(60 * time.Second))
 		r.Use(BearerTokenMiddleware)
-		// Use local logging middleware for now, or revert to httplog if needed
-		r.Use(LoggingMiddleware(c.Logger))
+
+		chiLogger := httplog.RequestLogger(logger, &httplog.Options{
+			RecoverPanics: true,
+			Schema:        httplog.SchemaECS,
+			Skip: func(req *http.Request, respStatus int) bool {
+				return req.URL.Path == "/metrics"
+			},
+		})
+		r.Use(chiLogger)
 
 		// Metrics endpoint
 		r.Method("GET", "/metrics", promhttp.Handler())
@@ -281,7 +289,7 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 	})
 
 	// Wrap the entire mux with StripTrailingSlash middleware
-	return ctx, StripTrailingSlash(r)
+	return ctx, chiware.StripSlashes(r)
 }
 
 // ListenAndServe listen to ports and mount handlers
