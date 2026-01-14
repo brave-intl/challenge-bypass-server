@@ -125,10 +125,10 @@ func (c *SimpleCache[T]) SetDefault(k string, x T) {
 }
 
 type CacheCollection struct {
-	Issuer       *SimpleCache[*model.Issuer]
-	Issuers      *SimpleCache[[]model.Issuer]
-	Redemptions  *SimpleCache[*Redemption]
-	IssuerCohort *SimpleCache[[]model.Issuer]
+	Issuer       Cache[*model.Issuer]
+	Issuers      Cache[[]model.Issuer]
+	Redemptions  Cache[*Redemption]
+	IssuerCohort Cache[[]model.Issuer]
 }
 
 func bootstrapCache(cfg DBConfig) *CacheCollection {
