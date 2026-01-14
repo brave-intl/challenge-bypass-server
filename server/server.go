@@ -1,3 +1,4 @@
+// server.go - with consolidated routing
 package server
 
 import (
@@ -10,16 +11,15 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/brave-intl/bat-go/libs/middleware"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/httplog/v3"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -199,24 +199,10 @@ func SetupLogger(
 ) (context.Context, *slog.Logger) {
 	// Simplify logs during local development
 	env := os.Getenv("ENV")
-	var level slog.Level
-	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
-	case "DEBUG":
-		level = slog.LevelDebug
-	case "WARN":
-		level = slog.LevelWarn
-	case "INFO":
-		level = slog.LevelInfo
-	case "ERROR":
-		level = slog.LevelError
-	default:
-		level = slog.LevelWarn
-	}
-
 	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       slog.LevelWarn,
 		ReplaceAttr: logFormat.ReplaceAttr,
-		Level:       level,
 	})).With(
 		slog.String("app", "challenge-bypass"),
 		slog.String("version", version),
@@ -228,59 +214,97 @@ func SetupLogger(
 	return ctx, logger
 }
 
-func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.Context, *chi.Mux) {
+// setupRouter sets up all routes for the server
+func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.Context, http.Handler) {
 	r := chi.NewRouter()
-	r.Use(chiware.RequestID)
-	r.Use(chiware.Heartbeat("/"))
-	r.Use(chiware.Timeout(60 * time.Second))
-	r.Use(middleware.BearerToken)
-	chiLogger := httplog.RequestLogger(logger, &httplog.Options{
-		RecoverPanics: true,
-		Schema:        httplog.SchemaECS,
-		Skip: func(req *http.Request, respStatus int) bool {
-			return req.URL.Path == "/metrics"
-		},
-	})
-	r.Use(chiLogger)
-
 	c.Logger = logger
 
-	// kick rotate v3 issuers on start
+	// Kick rotate v3 issuers on start
 	if err := c.rotateIssuersV3(); err != nil {
+		// @TODO: Alert here once merged
 		panic(err)
 	}
 
-	r.Mount("/v1/blindedToken", c.tokenRouterV1())
-	r.Mount("/v1/issuer", c.issuerRouterV1())
+	// Root health check endpoint
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Length", "1")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("."))
+	})
 
-	r.Mount("/v2/blindedToken", c.tokenRouterV2())
-	r.Mount("/v2/issuer", c.issuerRouterV2())
+	r.Group(func(r chi.Router) {
+		r.Use(chiware.RequestID)
+		r.Use(chiware.Timeout(60 * time.Second))
+		r.Use(BearerTokenMiddleware)
 
-	// time aware token router
-	r.Mount("/v3/blindedToken", c.tokenRouterV3())
-	r.Mount("/v3/issuer", c.issuerRouterV3())
+		chiLogger := httplog.RequestLogger(logger, &httplog.Options{
+			RecoverPanics: true,
+			Schema:        httplog.SchemaECS,
+			Skip: func(req *http.Request, respStatus int) bool {
+				return req.URL.Path == "/metrics"
+			},
+		})
+		r.Use(chiLogger)
 
-	// Metrics for retroactive compatibility
-	// @TODO: Remove  this once the service health check is transferred to th 9090
-	// version
-	r.Get("/metrics", middleware.Metrics())
+		// Metrics endpoint
+		r.Method("GET", "/metrics", promhttp.Handler())
 
-	return ctx, r
+		// Authenticated Routes
+		r.Group(func(r chi.Router) {
+			if os.Getenv("ENV") == "production" {
+				r.Use(SimpleTokenAuthorizedOnly)
+			}
+
+			// =========== V1 API Routes ===========
+			// V1 Token Routes
+			r.Method("GET", "/v1/blindedToken/{type}", AppHandler(c.blindedTokenIssuerHandler))
+			r.Method("POST", "/v1/blindedToken/{type}", AppHandler(c.blindedTokenIssuerHandler))
+			r.Method("POST", "/v1/blindedToken/{type}/redemption", AppHandler(c.blindedTokenRedeemHandler))
+			r.Method("GET", "/v1/blindedToken/{id}/redemption/{tokenId}", AppHandler(c.blindedTokenRedemptionHandler))
+			r.Method("POST", "/v1/blindedToken/bulk/redemption", AppHandler(c.blindedTokenBulkRedeemHandler))
+
+			// V1 Issuer Routes
+			r.Method("GET", "/v1/issuer/{type}", AppHandler(c.issuerGetHandlerV1))
+			r.Method("POST", "/v1/issuer", AppHandler(c.issuerCreateHandlerV1))
+			r.Method("GET", "/v1/issuer", AppHandler(c.issuerGetAllHandler))
+
+			// =========== V2 API Routes ===========
+			// V2 Token Routes
+			r.Method("GET", "/v2/blindedToken/{type}", AppHandler(c.BlindedTokenIssuerHandlerV2))
+			r.Method("POST", "/v2/blindedToken/{type}", AppHandler(c.BlindedTokenIssuerHandlerV2))
+
+			// V2 Issuer Routes
+			r.Method("GET", "/v2/issuer/{type}", AppHandler(c.issuerHandlerV2))
+			r.Method("POST", "/v2/issuer", AppHandler(c.issuerCreateHandlerV2))
+
+			// =========== V3 API Routes ===========
+			// V3 Token Routes
+			r.Method("POST", "/v3/blindedToken/{type}/redemption", AppHandler(c.blindedTokenRedeemHandlerV3))
+
+			// V3 Issuer Routes
+			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
+			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+		})
+	})
+
+	// Wrap the entire mux with StripTrailingSlash middleware
+	return ctx, chiware.StripSlashes(r)
 }
 
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
-	_, srv := c.setupRouter(ctx, logger)
+	_, router := c.setupRouter(ctx, logger)
 
 	ServeMetrics()
 
-	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), srv)
+	return http.ListenAndServe(fmt.Sprintf(":%d", c.ListenPort), router)
 }
 
 // ServeMetrics exposes the metrics collection endpoint on :9090
 func ServeMetrics() {
 	// Run metrics on 9090 for collection
 	r := chi.NewRouter()
-	r.Get("/metrics", middleware.Metrics())
+	r.Method("GET", "/metrics", promhttp.Handler())
 	go http.ListenAndServe(":9090", r)
 }
