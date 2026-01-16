@@ -301,6 +301,13 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			r.Method("GET", "/api/v1/manage/issuers/{id}", AppHandler(c.manageGetIssuerHandler))
 			r.Method("POST", "/api/v1/manage/issuers", AppHandler(c.manageCreateIssuerHandler))
 			r.Method("DELETE", "/api/v1/manage/issuers/{id}", AppHandler(c.manageDeleteIssuerHandler))
+
+			// Key Management Routes
+			r.Method("GET", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageListKeysHandler))
+			r.Method("GET", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageGetKeyHandler))
+			r.Method("POST", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageCreateKeyHandler))
+			r.Method("DELETE", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageDeleteKeyHandler))
+			r.Method("POST", "/api/v1/manage/issuers/{id}/keys/rotate", AppHandler(c.manageRotateKeysHandler))
 		})
 	})
 

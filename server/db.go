@@ -60,6 +60,7 @@ var (
 	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
 	errDuplicateRedemption  = errors.New("duplicate Redemption")
 	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
+	errKeyNotFound          = errors.New("key with the given id does not exist")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
@@ -573,6 +574,286 @@ func (c *Server) fetchIssuerKeysForIssuer(issuerID string) ([]model.IssuerKeys, 
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if publicKey.Valid {
+			key.PublicKey = &publicKey.String
+		}
+
+		if issuerIDStr.Valid {
+			id, err := uuid.Parse(issuerIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			key.IssuerID = &id
+		}
+
+		keys = append(keys, key)
+	}
+
+	return keys, rows.Err()
+}
+
+// fetchAllIssuerKeys fetches all keys for an issuer, optionally including expired ones
+func (c *Server) fetchAllIssuerKeys(issuerID string, includeExpired bool) ([]model.IssuerKeys, error) {
+	var query string
+	if includeExpired {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys 
+                 WHERE issuer_id=$1
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	} else {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys 
+                 WHERE issuer_id=$1
+                   AND (end_at > now() OR end_at IS NULL)
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	}
+
+	rows, err := c.dbr.Query(query, issuerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanIssuerKeys(rows)
+}
+
+// fetchKeyByID fetches a single key by its ID
+func (c *Server) fetchKeyByID(issuerID, keyID string) (*model.IssuerKeys, error) {
+	query := `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+              FROM v3_issuer_keys 
+              WHERE issuer_id=$1 AND key_id=$2`
+
+	row := c.dbr.QueryRow(query, issuerID, keyID)
+
+	var key model.IssuerKeys
+	var keyIDStr sql.NullString
+	var publicKey sql.NullString
+	var issuerIDStr sql.NullString
+
+	err := row.Scan(
+		&keyIDStr,
+		&key.SigningKey,
+		&publicKey,
+		&key.Cohort,
+		&issuerIDStr,
+		&key.StartAt,
+		&key.EndAt,
+		&key.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errKeyNotFound
+		}
+		return nil, err
+	}
+
+	if keyIDStr.Valid {
+		id, err := uuid.Parse(keyIDStr.String)
+		if err != nil {
+			return nil, err
+		}
+		key.ID = &id
+	}
+
+	if publicKey.Valid {
+		key.PublicKey = &publicKey.String
+	}
+
+	if issuerIDStr.Valid {
+		id, err := uuid.Parse(issuerIDStr.String)
+		if err != nil {
+			return nil, err
+		}
+		key.IssuerID = &id
+	}
+
+	return &key, nil
+}
+
+// createIssuerKey creates a new key for an issuer
+func (c *Server) createIssuerKey(issuerID string, key *model.IssuerKeys) (*model.IssuerKeys, error) {
+	query := `INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+              VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING key_id, created_at`
+
+	var keyIDStr string
+	var createdAt time.Time
+
+	err := c.db.QueryRow(
+		query,
+		issuerID,
+		key.SigningKey,
+		key.PublicKey,
+		key.Cohort,
+		key.StartAt,
+		key.EndAt,
+	).Scan(&keyIDStr, &createdAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return nil, err
+	}
+	key.ID = &id
+	key.CreatedAt = &createdAt
+
+	return key, nil
+}
+
+// deleteKeyByID deletes a key by its ID
+func (c *Server) deleteKeyByID(issuerID, keyID string) (bool, error) {
+	result, err := c.db.Exec(
+		`DELETE FROM v3_issuer_keys WHERE issuer_id = $1 AND key_id = $2`,
+		issuerID, keyID,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// rotateIssuerKeys creates new keys for an issuer based on its configuration
+func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int) ([]model.IssuerKeys, error) {
+	if issuer.Version != 3 {
+		// For v1/v2 issuers, just create a single key without time bounds
+		key, err := c.createSingleKey(issuer, nil, nil)
+		if err != nil {
+			return nil, err
+		}
+		return []model.IssuerKeys{*key}, nil
+	}
+
+	// For v3 issuers, calculate time windows based on duration
+	var createdKeys []model.IssuerKeys
+
+	// Find the latest end_at from existing keys
+	existingKeys, err := c.fetchAllIssuerKeys(issuer.ID.String(), false)
+	if err != nil {
+		return nil, err
+	}
+
+	var startTime time.Time
+	if len(existingKeys) > 0 {
+		// Start from the end of the last key
+		lastKey := existingKeys[len(existingKeys)-1]
+		if lastKey.EndAt != nil {
+			startTime = *lastKey.EndAt
+		} else {
+			startTime = time.Now()
+		}
+	} else {
+		// No existing keys, start from now or valid_from
+		if issuer.ValidFrom != nil {
+			startTime = *issuer.ValidFrom
+		} else {
+			startTime = time.Now()
+		}
+	}
+
+	// Parse duration if available
+	var duration *timeutils.ISODuration
+	if issuer.Duration != nil && *issuer.Duration != "" {
+		duration, err = timeutils.ParseDuration(*issuer.Duration)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse issuer duration: %w", err)
+		}
+	}
+
+	// Create the requested number of keys
+	for i := 0; i < count; i++ {
+		var endTime *time.Time
+		if duration != nil {
+			end, err := duration.From(startTime)
+			if err != nil {
+				return nil, fmt.Errorf("failed to calculate end time: %w", err)
+			}
+			endTime = end
+		}
+
+		key, err := c.createSingleKey(issuer, &startTime, endTime)
+		if err != nil {
+			return nil, err
+		}
+		createdKeys = append(createdKeys, *key)
+
+		// Move start time forward for the next key
+		if endTime != nil {
+			startTime = *endTime
+		}
+	}
+
+	return createdKeys, nil
+}
+
+// createSingleKey creates a single key with the given time bounds
+func (c *Server) createSingleKey(issuer *model.Issuer, startAt, endAt *time.Time) (*model.IssuerKeys, error) {
+	signingKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signing key: %w", err)
+	}
+
+	signingKeyTxt, err := signingKey.MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signing key: %w", err)
+	}
+
+	pubKeyTxt, err := signingKey.PublicKey().MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	key := &model.IssuerKeys{
+		SigningKey: signingKeyTxt,
+		PublicKey:  ptr.FromString(string(pubKeyTxt)),
+		Cohort:     issuer.IssuerCohort,
+		IssuerID:   issuer.ID,
+		StartAt:    startAt,
+		EndAt:      endAt,
+	}
+
+	return c.createIssuerKey(issuer.ID.String(), key)
+}
+
+// scanIssuerKeys scans rows into IssuerKeys slice
+func scanIssuerKeys(rows *sql.Rows) ([]model.IssuerKeys, error) {
+	var keys []model.IssuerKeys
+	for rows.Next() {
+		var key model.IssuerKeys
+		var keyIDStr sql.NullString
+		var publicKey sql.NullString
+		var issuerIDStr sql.NullString
+
+		err := rows.Scan(
+			&keyIDStr,
+			&key.SigningKey,
+			&publicKey,
+			&key.Cohort,
+			&issuerIDStr,
+			&key.StartAt,
+			&key.EndAt,
+			&key.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if keyIDStr.Valid {
+			id, err := uuid.Parse(keyIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			key.ID = &id
 		}
 
 		if publicKey.Valid {

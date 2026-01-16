@@ -191,3 +191,111 @@ func (c *Client) DeleteIssuer(id string) error {
 
 	return handleResponse(resp, nil)
 }
+
+// Key Management Types
+
+// KeyListResponse is the response for listing keys
+type KeyListResponse struct {
+	Keys  []IssuerKeyResponse `json:"keys"`
+	Total int                 `json:"total"`
+}
+
+// CreateKeyRequest is the request body for creating a key
+type CreateKeyRequest struct {
+	StartAt *string `json:"start_at,omitempty"`
+	EndAt   *string `json:"end_at,omitempty"`
+}
+
+// RotateKeysRequest is the request body for rotating keys
+type RotateKeysRequest struct {
+	Count int `json:"count,omitempty"`
+}
+
+// RotateKeysResponse is the response for key rotation
+type RotateKeysResponse struct {
+	CreatedKeys []IssuerKeyResponse `json:"created_keys"`
+	Message     string              `json:"message"`
+}
+
+// Key Management Methods
+
+// ListKeys fetches all keys for an issuer
+func (c *Client) ListKeys(issuerID string, includeExpired bool) (*KeyListResponse, error) {
+	path := "/api/v1/manage/issuers/" + issuerID + "/keys"
+	if includeExpired {
+		path += "?include_expired=true"
+	}
+
+	resp, err := c.doRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result KeyListResponse
+	if err := handleResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// GetKey fetches a single key by ID
+func (c *Client) GetKey(issuerID, keyID string) (*IssuerKeyResponse, error) {
+	path := "/api/v1/manage/issuers/" + issuerID + "/keys/" + keyID
+	resp, err := c.doRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result IssuerKeyResponse
+	if err := handleResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// CreateKey creates a new key for an issuer
+func (c *Client) CreateKey(issuerID string, req *CreateKeyRequest) (*IssuerKeyResponse, error) {
+	path := "/api/v1/manage/issuers/" + issuerID + "/keys"
+	resp, err := c.doRequest(http.MethodPost, path, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result IssuerKeyResponse
+	if err := handleResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+// DeleteKey deletes a key by ID
+func (c *Client) DeleteKey(issuerID, keyID string) error {
+	path := "/api/v1/manage/issuers/" + issuerID + "/keys/" + keyID
+	resp, err := c.doRequest(http.MethodDelete, path, nil)
+	if err != nil {
+		return err
+	}
+
+	return handleResponse(resp, nil)
+}
+
+// RotateKeys creates new keys for an issuer
+func (c *Client) RotateKeys(issuerID string, count int) (*RotateKeysResponse, error) {
+	path := "/api/v1/manage/issuers/" + issuerID + "/keys/rotate"
+	req := &RotateKeysRequest{Count: count}
+
+	resp, err := c.doRequest(http.MethodPost, path, req)
+	if err != nil {
+		return nil, err
+	}
+
+	var result RotateKeysResponse
+	if err := handleResponse(resp, &result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
