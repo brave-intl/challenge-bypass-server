@@ -475,6 +475,73 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	return results, nil
 }
 
+// fetchIssuerByID fetches a single issuer by its UUID
+func (c *Server) fetchIssuerByID(issuerID string) (*model.Issuer, error) {
+	query := fmt.Sprintf(`SELECT %s FROM v3_issuers WHERE issuer_id=$1`, issuerColumns)
+
+	row := c.dbr.QueryRow(query, issuerID)
+
+	var issuer model.Issuer
+	err := scanIssuer(row, &issuer)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errIssuerNotFound
+		}
+		return nil, err
+	}
+
+	// Fetch keys for this issuer
+	keys, err := c.fetchIssuerKeysForIssuer(issuerID)
+	if err != nil {
+		return nil, err
+	}
+	issuer.Keys = keys
+
+	return &issuer, nil
+}
+
+// deleteIssuerByID deletes an issuer and its keys by UUID
+func (c *Server) deleteIssuerByID(issuerID string) (bool, error) {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return false, err
+	}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Delete associated keys first
+	_, err = tx.Exec(`DELETE FROM v3_issuer_keys WHERE issuer_id = $1`, issuerID)
+	if err != nil {
+		return false, err
+	}
+
+	// Delete the issuer
+	result, err := tx.Exec(`DELETE FROM v3_issuers WHERE issuer_id = $1`, issuerID)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+
+	// Invalidate caches
+	if c.caches != nil {
+		c.caches.Issuers.Delete("all")
+	}
+
+	return rowsAffected > 0, nil
+}
+
 func (c *Server) fetchIssuerKeysForIssuer(issuerID string) ([]model.IssuerKeys, error) {
 	query := `SELECT signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
               FROM v3_issuer_keys 
