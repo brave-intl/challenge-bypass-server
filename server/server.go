@@ -81,6 +81,13 @@ var (
 		},
 		[]string{"action"},
 	)
+	manageIssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_manage_issuer_total",
+			Help: "Number of calls to manage issuer HTTP endpoint",
+		},
+		[]string{"action"},
+	)
 )
 
 // init - Register Metrics for Server
@@ -106,6 +113,8 @@ func init() {
 		v3IssuerCallTotal,
 		// Cron
 		cronTotal,
+		// Management API
+		manageIssuerCallTotal,
 	)
 }
 
@@ -285,6 +294,20 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			// V3 Issuer Routes
 			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
 			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+
+			// =========== Management API Routes ===========
+			// Issuer Management Routes
+			r.Method("GET", "/api/v1/manage/issuers", AppHandler(c.manageListIssuersHandler))
+			r.Method("GET", "/api/v1/manage/issuers/{id}", AppHandler(c.manageGetIssuerHandler))
+			r.Method("POST", "/api/v1/manage/issuers", AppHandler(c.manageCreateIssuerHandler))
+			r.Method("DELETE", "/api/v1/manage/issuers/{id}", AppHandler(c.manageDeleteIssuerHandler))
+
+			// Key Management Routes
+			r.Method("GET", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageListKeysHandler))
+			r.Method("GET", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageGetKeyHandler))
+			r.Method("POST", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageCreateKeyHandler))
+			r.Method("DELETE", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageDeleteKeyHandler))
+			r.Method("POST", "/api/v1/manage/issuers/{id}/keys/rotate", AppHandler(c.manageRotateKeysHandler))
 		})
 	})
 
