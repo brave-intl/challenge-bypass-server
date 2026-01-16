@@ -281,6 +281,35 @@ func (c *Server) manageDeleteKeyHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// Check if force delete is requested
+	forceDelete := r.URL.Query().Get("force") == "true"
+
+	// Fetch the key to check if it's still active
+	key, err := c.fetchKeyByID(issuerID, keyID)
+	if err != nil {
+		if err == errKeyNotFound {
+			return &AppError{
+				Message: "Key not found",
+				Code:    http.StatusNotFound,
+			}
+		}
+		return &AppError{
+			Cause:   err,
+			Message: "Failed to fetch key",
+			Code:    http.StatusInternalServerError,
+		}
+	}
+
+	// Check if key is still active (can be used for signing or redemption)
+	if !forceDelete && isKeyActive(key) {
+		return &AppError{
+			Message: "Cannot delete active key. This key is still valid for signing or redemption. " +
+				"To safely retire this key, wait until after its end_at time, or use key rotation to create new keys. " +
+				"If you must delete this key immediately, use ?force=true (WARNING: this will invalidate tokens signed with this key).",
+			Code: http.StatusConflict,
+		}
+	}
+
 	deleted, err := c.deleteKeyByID(issuerID, keyID)
 	if err != nil {
 		return &AppError{
@@ -423,4 +452,38 @@ func (c *Server) invalidateIssuerCaches() {
 		// Note: Individual issuer and cohort caches will expire naturally
 		// or could be cleared more aggressively if needed
 	}
+}
+
+// isKeyActive returns true if the key is still active (can be used for signing or redemption)
+// A key is considered active if:
+// - It has no end_at time (never expires), OR
+// - Its end_at time is in the future
+func isKeyActive(key *model.IssuerKeys) bool {
+	if key.EndAt == nil || key.EndAt.IsZero() {
+		// No expiration set - key is always active
+		return true
+	}
+	// Key is active if end_at is in the future
+	return key.EndAt.After(time.Now())
+}
+
+// hasActiveKeys returns true if any of the keys are still active
+func hasActiveKeys(keys []model.IssuerKeys) bool {
+	for _, key := range keys {
+		if isKeyActive(&key) {
+			return true
+		}
+	}
+	return false
+}
+
+// countActiveKeys returns the number of active keys
+func countActiveKeys(keys []model.IssuerKeys) int {
+	count := 0
+	for _, key := range keys {
+		if isKeyActive(&key) {
+			count++
+		}
+	}
+	return count
 }

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -251,6 +252,68 @@ func (c *Server) manageDeleteIssuerHandler(w http.ResponseWriter, r *http.Reques
 			Cause:   err,
 			Message: "Invalid issuer ID format",
 			Code:    http.StatusBadRequest,
+		}
+	}
+
+	// Check if force delete is requested
+	forceDelete := r.URL.Query().Get("force") == "true"
+
+	// Fetch the issuer to check for active keys
+	issuer, err := c.fetchIssuerByID(issuerID)
+	if err != nil {
+		if err == errIssuerNotFound {
+			return &AppError{
+				Message: "Issuer not found",
+				Code:    http.StatusNotFound,
+			}
+		}
+		return &AppError{
+			Cause:   err,
+			Message: "Failed to fetch issuer",
+			Code:    http.StatusInternalServerError,
+		}
+	}
+
+	// Fetch all keys (including expired) to check for active ones
+	allKeys, err := c.fetchAllIssuerKeys(issuerID, true)
+	if err != nil {
+		return &AppError{
+			Cause:   err,
+			Message: "Failed to fetch issuer keys",
+			Code:    http.StatusInternalServerError,
+		}
+	}
+
+	// Check if issuer has active keys
+	activeKeyCount := countActiveKeys(allKeys)
+	if !forceDelete && activeKeyCount > 0 {
+		return &AppError{
+			Message: fmt.Sprintf(
+				"Cannot delete issuer with %d active key(s). "+
+					"Active keys can still be used for signing and redemption. "+
+					"To safely deprecate this issuer: "+
+					"1) Stop issuing new tokens with this issuer, "+
+					"2) Wait for all keys to expire (check end_at times), "+
+					"3) Then delete the issuer. "+
+					"Alternatively, set an expires_at on the issuer to prevent new token issuance. "+
+					"If you must delete immediately, use ?force=true (WARNING: this will invalidate all tokens signed with this issuer's keys).",
+				activeKeyCount,
+			),
+			Code: http.StatusConflict,
+		}
+	}
+
+	// Also warn if issuer hasn't expired yet (still accepting new tokens)
+	if !forceDelete && !issuer.HasExpired(time.Now()) && issuer.ExpiresAt.Valid {
+		// Issuer has an expiry but hasn't expired yet
+		return &AppError{
+			Message: fmt.Sprintf(
+				"Cannot delete issuer that hasn't expired yet (expires_at: %s). "+
+					"This issuer may still be accepting new token signing requests. "+
+					"Wait until after the expiration time, or use ?force=true to delete immediately.",
+				issuer.ExpiresAt.Time.Format(time.RFC3339),
+			),
+			Code: http.StatusConflict,
 		}
 	}
 

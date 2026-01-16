@@ -139,14 +139,25 @@ Examples:
 	},
 }
 
+// Flag for force delete
+var keyForceDelete bool
+
 // keyDeleteCmd represents the key delete command
 var keyDeleteCmd = &cobra.Command{
 	Use:   "delete <key-id>",
 	Short: "Delete a key",
 	Long: `Delete a specific key by its ID.
 
-WARNING: Deleting a key will prevent redemption of tokens signed with that key.
-Only delete keys that are no longer needed.`,
+By default, deletion is prevented if the key is still active (end_at is in 
+the future or not set). Active keys can still be used for token redemption,
+so deleting them would invalidate outstanding tokens.
+
+To safely retire a key:
+  1. Use key rotation to create new keys (cbscli key rotate)
+  2. Wait for the key's end_at time to pass
+  3. Then delete the expired key
+
+Use --force to bypass these safety checks (use with caution).`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkAuthToken(); err != nil {
@@ -159,7 +170,7 @@ Only delete keys that are no longer needed.`,
 
 		keyID := args[0]
 		client := NewClient(serverURL, authToken)
-		if err := client.DeleteKey(keyIssuerID, keyID); err != nil {
+		if err := client.DeleteKey(keyIssuerID, keyID, keyForceDelete); err != nil {
 			return fmt.Errorf("failed to delete key: %w", err)
 		}
 
@@ -234,6 +245,9 @@ func init() {
 	// Flags for create command
 	keyCreateCmd.Flags().StringVar(&keyStartAt, "start-at", "", "Key validity start time (RFC3339 format)")
 	keyCreateCmd.Flags().StringVar(&keyEndAt, "end-at", "", "Key validity end time (RFC3339 format)")
+
+	// Flags for delete command
+	keyDeleteCmd.Flags().BoolVar(&keyForceDelete, "force", false, "Force deletion even if key is still active (dangerous)")
 
 	// Flags for rotate command
 	keyRotateCmd.Flags().IntVar(&keyRotateCount, "count", 1, "Number of new keys to create")

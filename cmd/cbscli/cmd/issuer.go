@@ -132,12 +132,27 @@ Examples:
 	},
 }
 
+// Flag for force delete
+var forceDelete bool
+
 // issuerDeleteCmd represents the issuer delete command
 var issuerDeleteCmd = &cobra.Command{
 	Use:   "delete <issuer-id>",
 	Short: "Delete an issuer",
-	Long:  `Delete an issuer and all its associated keys by ID.`,
-	Args:  cobra.ExactArgs(1),
+	Long: `Delete an issuer and all its associated keys by ID.
+
+By default, deletion is prevented if the issuer has active keys that could
+still be used for token signing or redemption. This protects against
+accidentally invalidating tokens that are still in use.
+
+To safely deprecate an issuer:
+  1. Stop issuing new tokens with this issuer
+  2. Set an expires_at time if not already set
+  3. Wait for all keys to expire (past their end_at times)
+  4. Then delete the issuer
+
+Use --force to bypass these safety checks (use with caution).`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := checkAuthToken(); err != nil {
 			return err
@@ -145,7 +160,7 @@ var issuerDeleteCmd = &cobra.Command{
 
 		issuerID := args[0]
 		client := NewClient(serverURL, authToken)
-		if err := client.DeleteIssuer(issuerID); err != nil {
+		if err := client.DeleteIssuer(issuerID, forceDelete); err != nil {
 			return fmt.Errorf("failed to delete issuer: %w", err)
 		}
 
@@ -175,6 +190,9 @@ func init() {
 	issuerCreateCmd.Flags().IntVar(&createOverlap, "overlap", 0, "Extra buffer keys for overlap (v3 only)")
 
 	issuerCreateCmd.MarkFlagRequired("name")
+
+	// Flags for delete command
+	issuerDeleteCmd.Flags().BoolVar(&forceDelete, "force", false, "Force deletion even if issuer has active keys (dangerous)")
 }
 
 // printJSON outputs the result as formatted JSON

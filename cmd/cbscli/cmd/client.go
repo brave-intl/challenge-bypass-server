@@ -183,8 +183,12 @@ func (c *Client) CreateIssuer(req *CreateIssuerRequest) error {
 }
 
 // DeleteIssuer deletes an issuer by ID
-func (c *Client) DeleteIssuer(id string) error {
-	resp, err := c.doRequest(http.MethodDelete, "/api/v1/manage/issuers/"+id, nil)
+func (c *Client) DeleteIssuer(id string, force bool) error {
+	path := "/api/v1/manage/issuers/" + id
+	if force {
+		path += "?force=true"
+	}
+	resp, err := c.doRequest(http.MethodDelete, path, nil)
 	if err != nil {
 		return err
 	}
@@ -272,8 +276,11 @@ func (c *Client) CreateKey(issuerID string, req *CreateKeyRequest) (*IssuerKeyRe
 }
 
 // DeleteKey deletes a key by ID
-func (c *Client) DeleteKey(issuerID, keyID string) error {
+func (c *Client) DeleteKey(issuerID, keyID string, force bool) error {
 	path := "/api/v1/manage/issuers/" + issuerID + "/keys/" + keyID
+	if force {
+		path += "?force=true"
+	}
 	resp, err := c.doRequest(http.MethodDelete, path, nil)
 	if err != nil {
 		return err
