@@ -476,29 +476,23 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	return results, nil
 }
 
-// fetchIssuerByID fetches a single issuer by its UUID
+// fetchIssuerByID fetches a single issuer by its UUID.
+// This is a simpler variant of fetchIssuer without caching or metrics,
+// primarily used by the management API.
 func (c *Server) fetchIssuerByID(issuerID string) (*model.Issuer, error) {
-	query := fmt.Sprintf(`SELECT %s FROM v3_issuers WHERE issuer_id=$1`, issuerColumns)
-
-	row := c.dbr.QueryRow(query, issuerID)
-
-	var issuer model.Issuer
-	err := scanIssuer(row, &issuer)
+	issuer, err := c.fetchIssuer(issuerID)
 	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errIssuerNotFound
+		// Unwrap ProcessingError to return the underlying error
+		var procErr *utils.ProcessingError
+		if errors.As(err, &procErr) {
+			if errors.Is(procErr.OriginalError, errIssuerNotFound) {
+				return nil, errIssuerNotFound
+			}
+			return nil, procErr.OriginalError
 		}
 		return nil, err
 	}
-
-	// Fetch keys for this issuer
-	keys, err := c.fetchIssuerKeysForIssuer(issuerID)
-	if err != nil {
-		return nil, err
-	}
-	issuer.Keys = keys
-
-	return &issuer, nil
+	return issuer, nil
 }
 
 // deleteIssuerByID deletes an issuer and its keys by UUID
