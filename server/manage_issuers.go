@@ -63,6 +63,11 @@ type CreateIssuerRequest struct {
 func (c *Server) manageListIssuersHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("list").Inc()
 
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
+
 	issuers, err := c.FetchAllIssuers()
 	if err != nil {
 		return &AppError{
@@ -94,6 +99,11 @@ func (c *Server) manageListIssuersHandler(w http.ResponseWriter, r *http.Request
 // manageGetIssuerHandler handles GET /api/v1/manage/issuers/{id}
 func (c *Server) manageGetIssuerHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("get").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	issuerID := chi.URLParam(r, "id")
 	if issuerID == "" {
@@ -141,6 +151,11 @@ func (c *Server) manageGetIssuerHandler(w http.ResponseWriter, r *http.Request) 
 // manageCreateIssuerHandler handles POST /api/v1/manage/issuers
 func (c *Server) manageCreateIssuerHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("create").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestSize))
 	var req CreateIssuerRequest
@@ -237,6 +252,11 @@ func (c *Server) manageCreateIssuerHandler(w http.ResponseWriter, r *http.Reques
 // manageDeleteIssuerHandler handles DELETE /api/v1/manage/issuers/{id}
 func (c *Server) manageDeleteIssuerHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("delete").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	issuerID := chi.URLParam(r, "id")
 	if issuerID == "" {

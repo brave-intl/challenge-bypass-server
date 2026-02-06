@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -23,9 +21,11 @@ import (
 
 type ManageIssuersTestSuite struct {
 	suite.Suite
-	handler     http.Handler
-	accessToken string
-	srv         *Server
+	handler        http.Handler
+	accessToken    string
+	srv            *Server
+	signingKeys    *testSigningKeys
+	cleanupSigners func()
 }
 
 func TestManageIssuersTestSuite(t *testing.T) {
@@ -40,6 +40,9 @@ func (suite *ManageIssuersTestSuite) SetupSuite() {
 	suite.Require().NoError(err)
 	suite.accessToken = uuidV4.String()
 	TokenList = []string{suite.accessToken}
+
+	// Setup test signing keys for management API
+	suite.signingKeys, suite.cleanupSigners = setupTestSigningKeys()
 
 	suite.srv = &Server{}
 
@@ -61,6 +64,12 @@ func (suite *ManageIssuersTestSuite) SetupSuite() {
 	suite.Require().NoError(err)
 }
 
+func (suite *ManageIssuersTestSuite) TearDownSuite() {
+	if suite.cleanupSigners != nil {
+		suite.cleanupSigners()
+	}
+}
+
 func (suite *ManageIssuersTestSuite) SetupTest() {
 	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 	for _, table := range tables {
@@ -69,20 +78,13 @@ func (suite *ManageIssuersTestSuite) SetupTest() {
 	}
 }
 
-func (suite *ManageIssuersTestSuite) request(method, url string, payload io.Reader) (*http.Response, error) {
-	var req *http.Request
-	var err error
-	if payload != nil {
-		req, err = http.NewRequest(method, url, payload)
-	} else {
-		req, err = http.NewRequest(method, url, nil)
-	}
+func (suite *ManageIssuersTestSuite) request(method, url string, body []byte) (*http.Response, error) {
+	req, err := suite.signingKeys.signedRequest(method, url, body)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Add("Authorization", "Bearer "+suite.accessToken)
-	req.Header.Add("Content-Type", "application/json")
 
 	return http.DefaultClient.Do(req)
 }
@@ -218,7 +220,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_Success() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -248,7 +250,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_MissingName() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -268,7 +270,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_MissingBuffer() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -288,7 +290,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_MissingDuration()
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -307,7 +309,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_InvalidVersion() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -330,7 +332,7 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_PastExpiration() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }

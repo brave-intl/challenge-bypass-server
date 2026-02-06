@@ -1,11 +1,9 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -23,9 +21,11 @@ import (
 
 type ManageKeysTestSuite struct {
 	suite.Suite
-	handler     http.Handler
-	accessToken string
-	srv         *Server
+	handler        http.Handler
+	accessToken    string
+	srv            *Server
+	signingKeys    *testSigningKeys
+	cleanupSigners func()
 }
 
 func TestManageKeysTestSuite(t *testing.T) {
@@ -40,6 +40,9 @@ func (suite *ManageKeysTestSuite) SetupSuite() {
 	suite.Require().NoError(err)
 	suite.accessToken = uuidV4.String()
 	TokenList = []string{suite.accessToken}
+
+	// Setup test signing keys for management API
+	suite.signingKeys, suite.cleanupSigners = setupTestSigningKeys()
 
 	suite.srv = &Server{}
 
@@ -61,6 +64,12 @@ func (suite *ManageKeysTestSuite) SetupSuite() {
 	suite.Require().NoError(err)
 }
 
+func (suite *ManageKeysTestSuite) TearDownSuite() {
+	if suite.cleanupSigners != nil {
+		suite.cleanupSigners()
+	}
+}
+
 func (suite *ManageKeysTestSuite) SetupTest() {
 	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
 	for _, table := range tables {
@@ -69,20 +78,13 @@ func (suite *ManageKeysTestSuite) SetupTest() {
 	}
 }
 
-func (suite *ManageKeysTestSuite) request(method, url string, payload io.Reader) (*http.Response, error) {
-	var req *http.Request
-	var err error
-	if payload != nil {
-		req, err = http.NewRequest(method, url, payload)
-	} else {
-		req, err = http.NewRequest(method, url, nil)
-	}
+func (suite *ManageKeysTestSuite) request(method, url string, body []byte) (*http.Response, error) {
+	req, err := suite.signingKeys.signedRequest(method, url, body)
 	if err != nil {
 		return nil, err
 	}
 
 	req.Header.Add("Authorization", "Bearer "+suite.accessToken)
-	req.Header.Add("Content-Type", "application/json")
 
 	return http.DefaultClient.Do(req)
 }
@@ -243,7 +245,7 @@ func (suite *ManageKeysTestSuite) TestManageCreateKey_Success() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, issuer.ID.String()), bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, issuer.ID.String()), payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -269,7 +271,7 @@ func (suite *ManageKeysTestSuite) TestManageCreateKey_EmptyBody() {
 
 	issuer := suite.createTestIssuer()
 
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, issuer.ID.String()), bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, issuer.ID.String()), []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -287,7 +289,7 @@ func (suite *ManageKeysTestSuite) TestManageCreateKey_IssuerNotFound() {
 	defer server.Close()
 
 	randomID := uuid.New().String()
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, randomID), bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys", server.URL, randomID), []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -297,7 +299,7 @@ func (suite *ManageKeysTestSuite) TestManageCreateKey_InvalidIssuerUUID() {
 	server := httptest.NewServer(suite.handler)
 	defer server.Close()
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers/not-a-uuid/keys", bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers/not-a-uuid/keys", []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
@@ -401,7 +403,7 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_Success() {
 	payload, err := json.Marshal(req)
 	suite.Require().NoError(err)
 
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), bytes.NewBuffer(payload))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -431,7 +433,7 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_DefaultCount() {
 	initialCount := len(initialKeys)
 
 	// Rotate keys with empty body (default count=1)
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 
@@ -453,7 +455,7 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_IssuerNotFound() {
 	defer server.Close()
 
 	randomID := uuid.New().String()
-	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, randomID), bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, randomID), []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusNotFound, resp.StatusCode)
 }
@@ -463,7 +465,7 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_InvalidUUID() {
 	server := httptest.NewServer(suite.handler)
 	defer server.Close()
 
-	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers/not-a-uuid/keys/rotate", bytes.NewBuffer([]byte("{}")))
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers/not-a-uuid/keys/rotate", []byte("{}"))
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }

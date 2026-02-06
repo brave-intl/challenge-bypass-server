@@ -41,6 +41,11 @@ type RotateKeysResponse struct {
 func (c *Server) manageListKeysHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("list_keys").Inc()
 
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
+
 	issuerID := chi.URLParam(r, "id")
 	if issuerID == "" {
 		return &AppError{
@@ -92,6 +97,11 @@ func (c *Server) manageListKeysHandler(w http.ResponseWriter, r *http.Request) *
 // manageGetKeyHandler handles GET /api/v1/manage/issuers/{id}/keys/{keyId}
 func (c *Server) manageGetKeyHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("get_key").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	issuerID := chi.URLParam(r, "id")
 	keyID := chi.URLParam(r, "keyId")
@@ -148,6 +158,11 @@ func (c *Server) manageGetKeyHandler(w http.ResponseWriter, r *http.Request) *Ap
 // manageCreateKeyHandler handles POST /api/v1/manage/issuers/{id}/keys
 func (c *Server) manageCreateKeyHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("create_key").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	issuerID := chi.URLParam(r, "id")
 	if issuerID == "" {
@@ -255,6 +270,11 @@ func (c *Server) manageCreateKeyHandler(w http.ResponseWriter, r *http.Request) 
 func (c *Server) manageDeleteKeyHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("delete_key").Inc()
 
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
+
 	issuerID := chi.URLParam(r, "id")
 	keyID := chi.URLParam(r, "keyId")
 
@@ -336,6 +356,11 @@ func (c *Server) manageDeleteKeyHandler(w http.ResponseWriter, r *http.Request) 
 // manageRotateKeysHandler handles POST /api/v1/manage/issuers/{id}/keys/rotate
 func (c *Server) manageRotateKeysHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	manageIssuerCallTotal.WithLabelValues("rotate_keys").Inc()
+
+	// Verify request signature
+	if _, appErr := c.verifyManagementRequest(r); appErr != nil {
+		return appErr
+	}
 
 	issuerID := chi.URLParam(r, "id")
 	if issuerID == "" {
