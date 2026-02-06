@@ -89,6 +89,24 @@ func TestVerifySignedRequest_NoAuthorizedSigners(t *testing.T) {
 	assert.ErrorIs(t, err, errNoAuthorizedSigners)
 }
 
+func TestVerifySignedRequest_BodyTooLarge(t *testing.T) {
+	pub, priv := generateTestKeyPair(t)
+
+	originalSigners := AuthorizedSigners
+	AuthorizedSigners = []string{base64.StdEncoding.EncodeToString(pub)}
+	defer func() { AuthorizedSigners = originalSigners }()
+
+	body := bytes.Repeat([]byte("a"), int(maxSignedRequestBodySize)+1)
+	timestamp := time.Now()
+
+	req := createSignedRequest(t, "POST", "/api/v1/test", "", body, pub, priv, timestamp)
+
+	_, err := VerifySignedRequest(req)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, errRequestBodyTooLarge)
+}
+
 func TestVerifySignedRequest_ValidSignature(t *testing.T) {
 	pub, priv := generateTestKeyPair(t)
 
@@ -502,4 +520,23 @@ func TestVerifyManagementRequest_ExpiredRequest(t *testing.T) {
 
 	require.NotNil(t, appErr)
 	assert.Equal(t, http.StatusUnauthorized, appErr.Code)
+}
+
+func TestVerifyManagementRequest_BodyTooLarge(t *testing.T) {
+	pub, priv := generateTestKeyPair(t)
+
+	originalSigners := AuthorizedSigners
+	AuthorizedSigners = []string{base64.StdEncoding.EncodeToString(pub)}
+	defer func() { AuthorizedSigners = originalSigners }()
+
+	body := bytes.Repeat([]byte("a"), int(maxSignedRequestBodySize)+1)
+	timestamp := time.Now()
+
+	req := createSignedRequest(t, "POST", "/api/v1/test", "", body, pub, priv, timestamp)
+
+	srv := &Server{}
+	_, appErr := srv.verifyManagementRequest(req)
+
+	require.NotNil(t, appErr)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, appErr.Code)
 }

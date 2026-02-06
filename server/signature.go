@@ -21,6 +21,9 @@ const (
 
 	// Maximum age of a signed request (prevents replay attacks)
 	maxRequestAge = 5 * time.Minute
+
+	// Maximum size of signed request bodies we will accept (currently 1 MiB)
+	maxSignedRequestBodySize int64 = 1 << 20
 )
 
 var (
@@ -34,6 +37,7 @@ var (
 	errRequestFromFuture   = errors.New("request timestamp is in the future")
 	errUnauthorizedSigner  = errors.New("public key not in authorized signers list")
 	errNoAuthorizedSigners = errors.New("no authorized signers configured")
+	errRequestBodyTooLarge = errors.New("request body exceeds allowed size")
 )
 
 // AuthorizedSigners is the list of Ed25519 public keys authorized to sign management API requests.
@@ -104,11 +108,16 @@ func parseSignedRequest(r *http.Request) (*SignedRequest, []byte, error) {
 	}
 	timestamp := time.Unix(timestampUnix, 0)
 
-	// Read request body
-	body, err := io.ReadAll(r.Body)
+	// Read request body with an upper bound to prevent resource exhaustion
+	limitedReader := io.LimitReader(r.Body, maxSignedRequestBodySize+1)
+	body, err := io.ReadAll(limitedReader)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to read request body: %w", err)
 	}
+	if int64(len(body)) > maxSignedRequestBodySize {
+		return nil, nil, errRequestBodyTooLarge
+	}
+
 	// Restore the body for downstream handlers
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
 
@@ -199,10 +208,15 @@ func (c *Server) verifyManagementRequest(r *http.Request) ([]byte, *AppError) {
 	body, err := VerifySignedRequest(r)
 	if err != nil {
 		code := http.StatusUnauthorized
-		if errors.Is(err, errRequestExpired) || errors.Is(err, errRequestFromFuture) {
+		switch {
+		case errors.Is(err, errRequestExpired), errors.Is(err, errRequestFromFuture):
 			code = http.StatusUnauthorized
-		} else if errors.Is(err, errUnauthorizedSigner) {
+		case errors.Is(err, errUnauthorizedSigner):
 			code = http.StatusForbidden
+		case errors.Is(err, errRequestBodyTooLarge):
+			code = http.StatusRequestEntityTooLarge
+		case errors.Is(err, errNoAuthorizedSigners):
+			code = http.StatusInternalServerError
 		}
 		return nil, &AppError{
 			Message: err.Error(),
