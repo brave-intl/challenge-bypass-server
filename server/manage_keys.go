@@ -467,16 +467,6 @@ func isKeyActive(key *model.IssuerKeys) bool {
 	return key.EndAt.After(time.Now())
 }
 
-// hasActiveKeys returns true if any of the keys are still active
-func hasActiveKeys(keys []model.IssuerKeys) bool {
-	for _, key := range keys {
-		if isKeyActive(&key) {
-			return true
-		}
-	}
-	return false
-}
-
 // countActiveKeys returns the number of active keys
 func countActiveKeys(keys []model.IssuerKeys) int {
 	count := 0
