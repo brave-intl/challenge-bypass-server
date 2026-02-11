@@ -593,18 +593,43 @@ func (c *Server) fetchAllIssuerKeys(issuerID string, includeExpired bool) ([]mod
 	var query string
 	if includeExpired {
 		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
-                 FROM v3_issuer_keys 
+                 FROM v3_issuer_keys
                  WHERE issuer_id=$1
                  ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
 	} else {
 		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
-                 FROM v3_issuer_keys 
+                 FROM v3_issuer_keys
                  WHERE issuer_id=$1
                    AND (end_at > now() OR end_at IS NULL)
                  ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
 	}
 
 	rows, err := c.dbr.Query(query, issuerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanIssuerKeys(rows)
+}
+
+// fetchAllIssuerKeysTx fetches all issuer keys within a transaction
+func fetchAllIssuerKeysTx(tx *sql.Tx, issuerID string, includeExpired bool) ([]model.IssuerKeys, error) {
+	var query string
+	if includeExpired {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	} else {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                   AND (end_at > now() OR end_at IS NULL)
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	}
+
+	rows, err := tx.Query(query, issuerID)
 	if err != nil {
 		return nil, err
 	}
@@ -699,6 +724,39 @@ func (c *Server) createIssuerKey(issuerID string, key *model.IssuerKeys) (*model
 	return key, nil
 }
 
+// createIssuerKeyTx creates an issuer key within a transaction
+func createIssuerKeyTx(tx *sql.Tx, issuerID string, key *model.IssuerKeys) (*model.IssuerKeys, error) {
+	query := `INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+              VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING key_id, created_at`
+
+	var keyIDStr string
+	var createdAt time.Time
+
+	err := tx.QueryRow(
+		query,
+		issuerID,
+		key.SigningKey,
+		key.PublicKey,
+		key.Cohort,
+		key.StartAt,
+		key.EndAt,
+	).Scan(&keyIDStr, &createdAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return nil, err
+	}
+	key.ID = &id
+	key.CreatedAt = &createdAt
+
+	return key, nil
+}
+
 // deleteKeyByID deletes a key by its ID
 func (c *Server) deleteKeyByID(issuerID, keyID string) (bool, error) {
 	result, err := c.db.Exec(
@@ -726,9 +784,19 @@ func (c *Server) updateKeyEndAt(issuerID, keyID string, endAt *time.Time) error 
 	return err
 }
 
+// updateKeyEndAtTx updates a key's end_at timestamp within a transaction
+func updateKeyEndAtTx(tx *sql.Tx, issuerID, keyID string, endAt *time.Time) error {
+	_, err := tx.Exec(
+		`UPDATE v3_issuer_keys SET end_at = $1 WHERE issuer_id = $2 AND key_id = $3`,
+		endAt, issuerID, keyID,
+	)
+	return err
+}
+
 // rotateIssuerKeys creates new keys for an issuer based on its configuration
 // and updates the expiration of existing active keys to overlap with the new keys.
 // The overlap parameter specifies the ISO 8601 duration for the overlap period.
+// This operation is performed within a database transaction to prevent race conditions.
 func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDuration string) (created, updated []model.IssuerKeys, err error) {
 	if issuer.Version != 3 {
 		// For v1/v2 issuers, just create a single key without time bounds
@@ -759,8 +827,21 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 		return nil, nil, fmt.Errorf("issuer must have a duration set for key rotation")
 	}
 
-	// Find active keys (keys that haven't expired yet)
-	existingKeys, err := c.fetchAllIssuerKeys(issuer.ID.String(), false)
+	// Begin transaction to ensure atomicity
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				c.Logger.Error("failed to rollback transaction", "error", rbErr, "original_error", err)
+			}
+		}
+	}()
+
+	// Find active keys (keys that haven't expired yet) within the transaction
+	existingKeys, err := fetchAllIssuerKeysTx(tx, issuer.ID.String(), false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -813,8 +894,8 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 				newEndAt = endTime
 			}
 
-			// Update the key's end_at in the database
-			err = c.updateKeyEndAt(issuer.ID.String(), mostRecentActiveKey.ID.String(), newEndAt)
+			// Update the key's end_at in the database within the transaction
+			err = updateKeyEndAtTx(tx, issuer.ID.String(), mostRecentActiveKey.ID.String(), newEndAt)
 			if err != nil {
 				return nil, nil, fmt.Errorf("failed to update key end_at: %w", err)
 			}
@@ -826,8 +907,8 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 		// Create a copy of startTime to avoid pointer aliasing issues
 		keyStartTime := startTime
 
-		// Create the new key
-		key, err := c.createSingleKey(issuer, &keyStartTime, endTime)
+		// Create the new key within the transaction
+		key, err := c.createSingleKeyTx(tx, issuer, &keyStartTime, endTime)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -835,6 +916,11 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 
 		// Move start time forward for the next key
 		startTime = *endTime
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
 	return createdKeys, updatedKeys, nil
@@ -867,6 +953,35 @@ func (c *Server) createSingleKey(issuer *model.Issuer, startAt, endAt *time.Time
 	}
 
 	return c.createIssuerKey(issuer.ID.String(), key)
+}
+
+// createSingleKeyTx creates a single key with the given time bounds within a transaction
+func (c *Server) createSingleKeyTx(tx *sql.Tx, issuer *model.Issuer, startAt, endAt *time.Time) (*model.IssuerKeys, error) {
+	signingKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signing key: %w", err)
+	}
+
+	signingKeyTxt, err := signingKey.MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signing key: %w", err)
+	}
+
+	pubKeyTxt, err := signingKey.PublicKey().MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	key := &model.IssuerKeys{
+		SigningKey: signingKeyTxt,
+		PublicKey:  ptr.FromString(string(pubKeyTxt)),
+		Cohort:     issuer.IssuerCohort,
+		IssuerID:   issuer.ID,
+		StartAt:    startAt,
+		EndAt:      endAt,
+	}
+
+	return createIssuerKeyTx(tx, issuer.ID.String(), key)
 }
 
 // scanIssuerKeys scans rows into IssuerKeys slice
