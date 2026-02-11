@@ -15,15 +15,16 @@ import (
 // Management API request/response types
 
 // IssuerDetailResponse is the detailed response for a single issuer including keys
+// All timestamp strings are in UTC and formatted as RFC3339.
 type IssuerDetailResponse struct {
 	ID        string              `json:"id"`
 	Name      string              `json:"name"`
 	Cohort    int16               `json:"cohort"`
 	MaxTokens int                 `json:"max_tokens"`
 	Version   int                 `json:"version"`
-	ExpiresAt *string             `json:"expires_at,omitempty"`
-	CreatedAt *string             `json:"created_at,omitempty"`
-	ValidFrom *string             `json:"valid_from,omitempty"`
+	ExpiresAt *string             `json:"expires_at,omitempty"` // RFC3339 UTC timestamp
+	CreatedAt *string             `json:"created_at,omitempty"` // RFC3339 UTC timestamp
+	ValidFrom *string             `json:"valid_from,omitempty"` // RFC3339 UTC timestamp
 	Buffer    int                 `json:"buffer,omitempty"`
 	Overlap   int                 `json:"overlap,omitempty"`
 	Duration  *string             `json:"duration,omitempty"`
@@ -31,13 +32,14 @@ type IssuerDetailResponse struct {
 }
 
 // IssuerKeyResponse represents an issuer key in the API response
+// All timestamp strings are in UTC and formatted as RFC3339.
 type IssuerKeyResponse struct {
 	ID        string  `json:"id,omitempty"`
 	PublicKey string  `json:"public_key"`
 	Cohort    int16   `json:"cohort"`
-	StartAt   *string `json:"start_at,omitempty"`
-	EndAt     *string `json:"end_at,omitempty"`
-	CreatedAt *string `json:"created_at,omitempty"`
+	StartAt   *string `json:"start_at,omitempty"`   // RFC3339 UTC timestamp
+	EndAt     *string `json:"end_at,omitempty"`     // RFC3339 UTC timestamp
+	CreatedAt *string `json:"created_at,omitempty"` // RFC3339 UTC timestamp
 }
 
 // IssuerListResponse is the response for listing issuers
@@ -47,16 +49,18 @@ type IssuerListResponse struct {
 }
 
 // CreateIssuerRequest is the request body for creating an issuer
+// All timestamps should be in UTC and are formatted as RFC3339 in JSON.
 type CreateIssuerRequest struct {
 	Name      string     `json:"name"`
 	Cohort    int16      `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
-	Version   int        `json:"version"` // 1, 2, or 3
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	ValidFrom *time.Time `json:"valid_from,omitempty"`
-	Duration  string     `json:"duration,omitempty"` // ISO 8601 duration for v3
-	Buffer    int        `json:"buffer,omitempty"`   // for v3
-	Overlap   int        `json:"overlap,omitempty"`  // for v3
+	Version   int        `json:"version"` // 1, 2, or 3 (defaults to 3)
+	ExpiresAt *time.Time `json:"expires_at,omitempty"` // UTC timestamp
+	ValidFrom *time.Time `json:"valid_from,omitempty"` // UTC timestamp
+	// V3-specific fields (required for version 3, ignored for versions 1 and 2)
+	Duration string `json:"duration,omitempty"` // ISO 8601 duration (required for v3)
+	Buffer   int    `json:"buffer,omitempty"`   // Required for v3, must be > 0
+	Overlap  int    `json:"overlap,omitempty"`  // Optional for v3
 }
 
 // manageListIssuersHandler handles GET /api/v1/manage/issuers
@@ -184,7 +188,7 @@ func (c *Server) manageCreateIssuerHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Validate expiration
-	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now()) {
+	if req.ExpiresAt != nil && req.ExpiresAt.Before(time.Now().UTC()) {
 		return &AppError{
 			Message: "Expiration time has passed",
 			Code:    http.StatusBadRequest,
@@ -218,17 +222,21 @@ func (c *Server) manageCreateIssuerHandler(w http.ResponseWriter, r *http.Reques
 		IssuerCohort: req.Cohort,
 		MaxTokens:    req.MaxTokens,
 		Version:      req.Version,
-		Buffer:       req.Buffer,
-		Overlap:      req.Overlap,
-		Duration:     &req.Duration,
 		ValidFrom:    req.ValidFrom,
+	}
+
+	// Set v3-specific fields only for v3 issuers
+	if req.Version == 3 {
+		issuer.Buffer = req.Buffer
+		issuer.Overlap = req.Overlap
+		issuer.Duration = &req.Duration
 	}
 
 	if req.ExpiresAt != nil {
 		issuer.ExpiresAt = pq.NullTime{Time: *req.ExpiresAt, Valid: true}
 	}
 
-	// Create the issuer
+	// Create the issuer (createV3Issuer handles all versions 1, 2, and 3)
 	if err := c.createV3Issuer(issuer); err != nil {
 		// Check for duplicate
 		if pqErr, ok := err.(*pq.Error); ok && pqErr.Code == "23505" {
@@ -324,7 +332,7 @@ func (c *Server) manageDeleteIssuerHandler(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Also warn if issuer hasn't expired yet (still accepting new tokens)
-	if !forceDelete && !issuer.HasExpired(time.Now()) && issuer.ExpiresAt.Valid {
+	if !forceDelete && !issuer.HasExpired(time.Now().UTC()) && issuer.ExpiresAt.Valid {
 		// Issuer has an expiry but hasn't expired yet
 		return &AppError{
 			Message: fmt.Sprintf(

@@ -21,19 +21,23 @@ type KeyListResponse struct {
 }
 
 // CreateKeyRequest is the request body for creating a key
+// All timestamps should be in UTC and are formatted as RFC3339 in JSON.
 type CreateKeyRequest struct {
-	StartAt *time.Time `json:"start_at,omitempty"`
-	EndAt   *time.Time `json:"end_at,omitempty"`
+	StartAt *time.Time `json:"start_at,omitempty"` // UTC timestamp
+	EndAt   *time.Time `json:"end_at,omitempty"`   // UTC timestamp
 }
 
 // RotateKeysRequest is the request body for rotating keys
+// All timestamps and durations should be in UTC.
 type RotateKeysRequest struct {
-	Count int `json:"count,omitempty"` // Number of new keys to create (default: 1)
+	Count   int    `json:"count,omitempty"`   // Number of new keys to create (default: 1)
+	Overlap string `json:"overlap,omitempty"` // ISO 8601 duration for overlap period (default: P1M = 1 month)
 }
 
 // RotateKeysResponse is the response for key rotation
 type RotateKeysResponse struct {
-	CreatedKeys []IssuerKeyResponse `json:"created_keys"`
+	CreatedKeys []IssuerKeyResponse `json:"created_keys"` // Newly created keys
+	UpdatedKeys []IssuerKeyResponse `json:"updated_keys"` // Previously active keys with updated expiration
 	Message     string              `json:"message"`
 }
 
@@ -406,8 +410,8 @@ func (c *Server) manageRotateKeysHandler(w http.ResponseWriter, r *http.Request)
 		req.Count = 1
 	}
 
-	// Create new keys
-	createdKeys, err := c.rotateIssuerKeys(issuer, req.Count)
+	// Rotate keys (create new keys and update old keys with overlap)
+	createdKeys, updatedKeys, err := c.rotateIssuerKeys(issuer, req.Count, req.Overlap)
 	if err != nil {
 		return &AppError{
 			Cause:   err,
@@ -421,11 +425,16 @@ func (c *Server) manageRotateKeysHandler(w http.ResponseWriter, r *http.Request)
 
 	response := RotateKeysResponse{
 		CreatedKeys: make([]IssuerKeyResponse, len(createdKeys)),
+		UpdatedKeys: make([]IssuerKeyResponse, len(updatedKeys)),
 		Message:     "Keys rotated successfully",
 	}
 
 	for i, key := range createdKeys {
 		response.CreatedKeys[i] = makeKeyResponse(&key)
+	}
+
+	for i, key := range updatedKeys {
+		response.UpdatedKeys[i] = makeKeyResponse(&key)
 	}
 
 	if err := RenderContent(response, w, http.StatusCreated); err != nil {
@@ -489,7 +498,7 @@ func isKeyActive(key *model.IssuerKeys) bool {
 		return true
 	}
 	// Key is active if end_at is in the future
-	return key.EndAt.After(time.Now())
+	return key.EndAt.After(time.Now().UTC())
 }
 
 // countActiveKeys returns the number of active keys

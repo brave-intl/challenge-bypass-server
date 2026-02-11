@@ -88,6 +88,12 @@ var (
 		},
 		[]string{"action"},
 	)
+	rateLimitExceededTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "cbp_api_rate_limit_exceeded_total",
+			Help: "Number of requests rejected due to rate limiting",
+		},
+	)
 )
 
 // init - Register Metrics for Server
@@ -115,6 +121,7 @@ func init() {
 		cronTotal,
 		// Management API
 		manageIssuerCallTotal,
+		rateLimitExceededTotal,
 	)
 }
 
@@ -296,18 +303,29 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
 
 			// =========== Management API Routes ===========
-			// Issuer Management Routes
-			r.Method("GET", "/api/v1/manage/issuers", AppHandler(c.manageListIssuersHandler))
-			r.Method("GET", "/api/v1/manage/issuers/{id}", AppHandler(c.manageGetIssuerHandler))
-			r.Method("POST", "/api/v1/manage/issuers", AppHandler(c.manageCreateIssuerHandler))
-			r.Method("DELETE", "/api/v1/manage/issuers/{id}", AppHandler(c.manageDeleteIssuerHandler))
+			// Create rate limiter for management endpoints
+			// Default: 60 requests per minute per IP
+			managementRateLimiter := NewRateLimiter(60, 1*time.Minute)
+			// Start cleanup goroutine to prevent memory leaks (cleanup every hour)
+			managementRateLimiter.CleanupOldLimiters(1 * time.Hour)
 
-			// Key Management Routes
-			r.Method("GET", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageListKeysHandler))
-			r.Method("GET", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageGetKeyHandler))
-			r.Method("POST", "/api/v1/manage/issuers/{id}/keys", AppHandler(c.manageCreateKeyHandler))
-			r.Method("DELETE", "/api/v1/manage/issuers/{id}/keys/{keyId}", AppHandler(c.manageDeleteKeyHandler))
-			r.Method("POST", "/api/v1/manage/issuers/{id}/keys/rotate", AppHandler(c.manageRotateKeysHandler))
+			// Apply rate limiting to all management routes
+			r.Route("/api/v1/manage", func(r chi.Router) {
+				r.Use(c.RateLimitMiddleware(managementRateLimiter))
+
+				// Issuer Management Routes
+				r.Method("GET", "/issuers", AppHandler(c.manageListIssuersHandler))
+				r.Method("GET", "/issuers/{id}", AppHandler(c.manageGetIssuerHandler))
+				r.Method("POST", "/issuers", AppHandler(c.manageCreateIssuerHandler))
+				r.Method("DELETE", "/issuers/{id}", AppHandler(c.manageDeleteIssuerHandler))
+
+				// Key Management Routes
+				r.Method("GET", "/issuers/{id}/keys", AppHandler(c.manageListKeysHandler))
+				r.Method("GET", "/issuers/{id}/keys/{keyId}", AppHandler(c.manageGetKeyHandler))
+				r.Method("POST", "/issuers/{id}/keys", AppHandler(c.manageCreateKeyHandler))
+				r.Method("DELETE", "/issuers/{id}/keys/{keyId}", AppHandler(c.manageDeleteKeyHandler))
+				r.Method("POST", "/issuers/{id}/keys/rotate", AppHandler(c.manageRotateKeysHandler))
+			})
 		})
 	})
 

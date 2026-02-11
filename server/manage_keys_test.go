@@ -470,6 +470,103 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_InvalidUUID() {
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
+// Test rotating keys with overlap - ensures old keys get updated expiration
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_WithOverlap() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Get the initial key (created by createTestIssuer)
+	initialKeys, err := suite.srv.fetchAllIssuerKeys(issuer.ID.String(), true)
+	suite.Require().NoError(err)
+	suite.Require().Greater(len(initialKeys), 0, "Should have at least one initial key")
+
+	initialKey := initialKeys[0]
+	originalEndAt := initialKey.EndAt
+
+	// Rotate keys with a 7-day overlap
+	req := RotateKeysRequest{
+		Count:   1,
+		Overlap: "P7D", // 7 days
+	}
+
+	payload, err := json.Marshal(req)
+	suite.Require().NoError(err)
+
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	var result RotateKeysResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	suite.Require().NoError(err)
+
+	// Should have one created key
+	suite.Assert().Len(result.CreatedKeys, 1)
+	suite.Assert().NotEmpty(result.CreatedKeys[0].ID)
+
+	// Should have one updated key (the original key with new end_at)
+	suite.Assert().Len(result.UpdatedKeys, 1)
+	suite.Assert().Equal(initialKey.ID.String(), result.UpdatedKeys[0].ID)
+
+	// Parse the updated key's end_at
+	updatedEndAtStr := result.UpdatedKeys[0].EndAt
+	suite.Require().NotNil(updatedEndAtStr)
+	updatedEndAt, err := time.Parse(time.RFC3339, *updatedEndAtStr)
+	suite.Require().NoError(err)
+
+	// Parse the new key's start_at
+	newKeyStartStr := result.CreatedKeys[0].StartAt
+	suite.Require().NotNil(newKeyStartStr)
+	newKeyStart, err := time.Parse(time.RFC3339, *newKeyStartStr)
+	suite.Require().NoError(err)
+
+	// The updated key should expire after the new key starts
+	suite.Assert().True(updatedEndAt.After(newKeyStart),
+		"Updated key end_at (%v) should be after new key start_at (%v)",
+		updatedEndAt, newKeyStart)
+
+	// The updated key should have a different (earlier) expiration than before
+	if originalEndAt != nil && !originalEndAt.IsZero() {
+		suite.Assert().True(updatedEndAt.Before(*originalEndAt),
+			"Updated key end_at (%v) should be earlier than original end_at (%v)",
+			updatedEndAt, originalEndAt)
+	}
+
+	suite.Assert().Equal("Keys rotated successfully", result.Message)
+}
+
+// Test rotating keys with default overlap (should be 1 month)
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_DefaultOverlap() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Rotate without specifying overlap
+	req := RotateKeysRequest{
+		Count: 1,
+		// Overlap not specified, should default to P1M (1 month)
+	}
+
+	payload, err := json.Marshal(req)
+	suite.Require().NoError(err)
+
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	var result RotateKeysResponse
+	err = json.NewDecoder(resp.Body).Decode(&result)
+	suite.Require().NoError(err)
+
+	// Should have created and updated keys
+	suite.Assert().Len(result.CreatedKeys, 1)
+	suite.Assert().Len(result.UpdatedKeys, 1)
+	suite.Assert().Equal("Keys rotated successfully", result.Message)
+}
+
 // Test makeKeyResponse helper function
 func (suite *ManageKeysTestSuite) TestMakeKeyResponse() {
 	keyID := uuid.New()

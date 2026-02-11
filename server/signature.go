@@ -16,10 +16,11 @@ const (
 	// Header names for signed requests
 	HeaderSignature   = "X-Signature"
 	HeaderPublicKey   = "X-Public-Key"
-	HeaderTimestamp   = "X-Timestamp"
+	HeaderTimestamp   = "X-Timestamp" // Unix timestamp in seconds (UTC)
 	HeaderContentHash = "X-Content-Hash"
 
 	// Maximum age of a signed request (prevents replay attacks)
+	// Timestamp validation uses UTC time for consistency
 	maxRequestAge = 5 * time.Minute
 
 	// Maximum size of signed request bodies we will accept (currently 1 MiB)
@@ -149,7 +150,7 @@ func (sr *SignedRequest) verifySignature() bool {
 
 // verifyTimestamp checks that the request timestamp is within acceptable bounds
 func (sr *SignedRequest) verifyTimestamp() error {
-	now := time.Now()
+	now := time.Now().UTC()
 	age := now.Sub(sr.Timestamp)
 
 	if age > maxRequestAge {

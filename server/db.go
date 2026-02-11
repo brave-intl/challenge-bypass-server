@@ -717,77 +717,127 @@ func (c *Server) deleteKeyByID(issuerID, keyID string) (bool, error) {
 	return rowsAffected > 0, nil
 }
 
+// updateKeyEndAt updates the end_at timestamp for a key
+func (c *Server) updateKeyEndAt(issuerID, keyID string, endAt *time.Time) error {
+	_, err := c.db.Exec(
+		`UPDATE v3_issuer_keys SET end_at = $1 WHERE issuer_id = $2 AND key_id = $3`,
+		endAt, issuerID, keyID,
+	)
+	return err
+}
+
 // rotateIssuerKeys creates new keys for an issuer based on its configuration
-func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int) ([]model.IssuerKeys, error) {
+// and updates the expiration of existing active keys to overlap with the new keys.
+// The overlap parameter specifies the ISO 8601 duration for the overlap period.
+func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDuration string) (created, updated []model.IssuerKeys, err error) {
 	if issuer.Version != 3 {
 		// For v1/v2 issuers, just create a single key without time bounds
 		key, err := c.createSingleKey(issuer, nil, nil)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return []model.IssuerKeys{*key}, nil
+		return []model.IssuerKeys{*key}, nil, nil
 	}
 
-	// For v3 issuers, calculate time windows based on duration
-	var createdKeys []model.IssuerKeys
-
-	// Find the latest end_at from existing keys
-	existingKeys, err := c.fetchAllIssuerKeys(issuer.ID.String(), false)
+	// Parse overlap duration (default to 1 month if not specified)
+	if overlapDuration == "" {
+		overlapDuration = "P1M" // 1 month default
+	}
+	overlap, err := timeutils.ParseDuration(overlapDuration)
 	if err != nil {
-		return nil, err
+		return nil, nil, fmt.Errorf("failed to parse overlap duration: %w", err)
 	}
 
-	var startTime time.Time
-	if len(existingKeys) > 0 {
-		// Start from the end of the last key
-		lastKey := existingKeys[len(existingKeys)-1]
-		if lastKey.EndAt != nil {
-			startTime = *lastKey.EndAt
-		} else {
-			startTime = time.Now()
-		}
-	} else {
-		// No existing keys, start from now or valid_from
-		if issuer.ValidFrom != nil {
-			startTime = *issuer.ValidFrom
-		} else {
-			startTime = time.Now()
-		}
-	}
-
-	// Parse duration if available
+	// Parse issuer duration
 	var duration *timeutils.ISODuration
 	if issuer.Duration != nil && *issuer.Duration != "" {
 		duration, err = timeutils.ParseDuration(*issuer.Duration)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse issuer duration: %w", err)
+			return nil, nil, fmt.Errorf("failed to parse issuer duration: %w", err)
+		}
+	} else {
+		return nil, nil, fmt.Errorf("issuer must have a duration set for key rotation")
+	}
+
+	// Find active keys (keys that haven't expired yet)
+	existingKeys, err := c.fetchAllIssuerKeys(issuer.ID.String(), false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	now := time.Now().UTC()
+	var createdKeys []model.IssuerKeys
+	var updatedKeys []model.IssuerKeys
+
+	// Determine the start time for the first new key
+	// For rotation, we ALWAYS start from now to begin the overlap period immediately
+	startTime := now
+
+	// Find the most recent currently-active key (not future keys)
+	// This is the key we'll update to expire during the overlap period
+	var mostRecentActiveKey *model.IssuerKeys
+	if len(existingKeys) > 0 {
+		// Find the most recent currently-active key (one that has started and hasn't expired)
+		for i := len(existingKeys) - 1; i >= 0; i-- {
+			key := &existingKeys[i]
+			// Check if key is currently active (has started and hasn't expired)
+			isCurrentlyActive := isKeyActive(key) &&
+				(key.StartAt == nil || !key.StartAt.After(now))
+
+			if isCurrentlyActive {
+				mostRecentActiveKey = key
+				break
+			}
 		}
 	}
 
 	// Create the requested number of keys
 	for i := 0; i < count; i++ {
-		var endTime *time.Time
-		if duration != nil {
-			end, err := duration.From(startTime)
-			if err != nil {
-				return nil, fmt.Errorf("failed to calculate end time: %w", err)
-			}
-			endTime = end
+		// Calculate end time for this new key
+		endTime, err := duration.From(startTime)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate end time: %w", err)
 		}
 
-		key, err := c.createSingleKey(issuer, &startTime, endTime)
+		// For the first new key, update the most recent active key if it exists
+		if i == 0 && mostRecentActiveKey != nil && mostRecentActiveKey.ID != nil {
+			// Calculate when this old key should expire
+			// It should expire after the new key starts: new_key_start + overlap_duration
+			newEndAt, err := overlap.From(startTime)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to calculate overlap end time: %w", err)
+			}
+
+			// Ensure the new end time is before the new key's end time
+			if newEndAt.After(*endTime) {
+				newEndAt = endTime
+			}
+
+			// Update the key's end_at in the database
+			err = c.updateKeyEndAt(issuer.ID.String(), mostRecentActiveKey.ID.String(), newEndAt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to update key end_at: %w", err)
+			}
+			// Update the in-memory key for the response
+			mostRecentActiveKey.EndAt = newEndAt
+			updatedKeys = append(updatedKeys, *mostRecentActiveKey)
+		}
+
+		// Create a copy of startTime to avoid pointer aliasing issues
+		keyStartTime := startTime
+
+		// Create the new key
+		key, err := c.createSingleKey(issuer, &keyStartTime, endTime)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		createdKeys = append(createdKeys, *key)
 
 		// Move start time forward for the next key
-		if endTime != nil {
-			startTime = *endTime
-		}
+		startTime = *endTime
 	}
 
-	return createdKeys, nil
+	return createdKeys, updatedKeys, nil
 }
 
 // createSingleKey creates a single key with the given time bounds

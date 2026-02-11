@@ -236,6 +236,76 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_Success() {
 	suite.Assert().Equal(req.Overlap, createdIssuer.Overlap)
 }
 
+// Test creating a v1 issuer (should not require v3-specific fields)
+func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V1_Success() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	expiresAt := time.Now().Add(72 * time.Hour).Truncate(time.Second)
+	req := CreateIssuerRequest{
+		Name:      test.RandomString(),
+		Cohort:    1,
+		MaxTokens: 50,
+		Version:   1,
+		ExpiresAt: &expiresAt,
+		// No Buffer, Duration, or Overlap for v1
+	}
+
+	payload, err := json.Marshal(req)
+	suite.Require().NoError(err)
+
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	// Verify the issuer was created with correct version
+	ctx := context.Background()
+	createdIssuer, err := suite.srv.fetchIssuerByType(ctx, req.Name)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(req.Name, createdIssuer.IssuerType)
+	suite.Assert().Equal(req.Cohort, createdIssuer.IssuerCohort)
+	suite.Assert().Equal(req.MaxTokens, createdIssuer.MaxTokens)
+	suite.Assert().Equal(1, createdIssuer.Version)
+	// V3 fields should be zero/nil for v1
+	suite.Assert().Equal(0, createdIssuer.Buffer)
+	suite.Assert().Nil(createdIssuer.Duration)
+}
+
+// Test creating a v2 issuer (should not require v3-specific fields)
+func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V2_Success() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	expiresAt := time.Now().Add(72 * time.Hour).Truncate(time.Second)
+	req := CreateIssuerRequest{
+		Name:      test.RandomString(),
+		Cohort:    2,
+		MaxTokens: 40,
+		Version:   2,
+		ExpiresAt: &expiresAt,
+		// No Buffer, Duration, or Overlap for v2
+	}
+
+	payload, err := json.Marshal(req)
+	suite.Require().NoError(err)
+
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+
+	// Verify the issuer was created with correct version
+	ctx := context.Background()
+	createdIssuer, err := suite.srv.fetchIssuerByType(ctx, req.Name)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(req.Name, createdIssuer.IssuerType)
+	suite.Assert().Equal(req.Cohort, createdIssuer.IssuerCohort)
+	suite.Assert().Equal(req.MaxTokens, createdIssuer.MaxTokens)
+	suite.Assert().Equal(2, createdIssuer.Version)
+	// V3 fields should be zero/nil for v2
+	suite.Assert().Equal(0, createdIssuer.Buffer)
+	suite.Assert().Nil(createdIssuer.Duration)
+}
+
 // Test creating issuer without required name
 func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_MissingName() {
 	server := httptest.NewServer(suite.handler)
