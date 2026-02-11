@@ -816,6 +816,25 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 		return nil, nil, fmt.Errorf("failed to parse overlap duration: %w", err)
 	}
 
+	// Validate overlap duration is within reasonable bounds
+	// Calculate the actual duration by applying it to a reference time
+	now := time.Now().UTC()
+	overlapEnd, err := overlap.From(now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to calculate overlap duration: %w", err)
+	}
+	overlapDurationTime := overlapEnd.Sub(now)
+
+	// Overlap must be between 1 hour and 6 months (180 days)
+	minOverlap := 1 * time.Hour
+	maxOverlap := 180 * 24 * time.Hour // 6 months
+	if overlapDurationTime < minOverlap {
+		return nil, nil, fmt.Errorf("overlap duration must be at least 1 hour, got %v", overlapDurationTime)
+	}
+	if overlapDurationTime > maxOverlap {
+		return nil, nil, fmt.Errorf("overlap duration must be at most 6 months, got %v", overlapDurationTime)
+	}
+
 	// Parse issuer duration
 	var duration *timeutils.ISODuration
 	if issuer.Duration != nil && *issuer.Duration != "" {
@@ -846,7 +865,7 @@ func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDurati
 		return nil, nil, err
 	}
 
-	now := time.Now().UTC()
+	now = time.Now().UTC()
 	var createdKeys []model.IssuerKeys
 	var updatedKeys []model.IssuerKeys
 

@@ -701,3 +701,65 @@ func (suite *ManageKeysTestSuite) TestInvalidateIssuerCaches_NilCaches() {
 		srv.invalidateIssuerCaches()
 	})
 }
+
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_OverlapTooShort() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Attempt rotation with overlap less than 1 hour (30 minutes)
+	payload := []byte(`{"count": 1, "overlap": "PT30M"}`)
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
+
+	var errResp map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errResp)
+	suite.Require().NoError(err)
+	suite.Assert().Contains(errResp["message"], "overlap duration must be at least 1 hour")
+}
+
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_OverlapTooLong() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Attempt rotation with overlap greater than 6 months (7 months)
+	payload := []byte(`{"count": 1, "overlap": "P7M"}`)
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
+
+	var errResp map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errResp)
+	suite.Require().NoError(err)
+	suite.Assert().Contains(errResp["message"], "overlap duration must be at most 6 months")
+}
+
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_OverlapAtMinimumBound() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Rotation with exactly 1 hour overlap should succeed
+	payload := []byte(`{"count": 1, "overlap": "PT1H"}`)
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+}
+
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_OverlapAtMaximumBound() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Rotation with exactly 180 days (6 months) overlap should succeed
+	payload := []byte(`{"count": 1, "overlap": "P180D"}`)
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
+}

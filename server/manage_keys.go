@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
@@ -413,10 +414,23 @@ func (c *Server) manageRotateKeysHandler(w http.ResponseWriter, r *http.Request)
 	// Rotate keys (create new keys and update old keys with overlap)
 	createdKeys, updatedKeys, err := c.rotateIssuerKeys(issuer, req.Count, req.Overlap)
 	if err != nil {
+		// Check if this is a validation error (bad input) vs internal error
+		errMsg := err.Error()
+		statusCode := http.StatusInternalServerError
+		message := "Failed to rotate keys"
+
+		// Validation errors should return 400
+		if strings.Contains(errMsg, "overlap duration must be") ||
+			strings.Contains(errMsg, "failed to parse") ||
+			strings.Contains(errMsg, "failed to calculate overlap duration") {
+			statusCode = http.StatusBadRequest
+			message = errMsg
+		}
+
 		return &AppError{
 			Cause:   err,
-			Message: "Failed to rotate keys",
-			Code:    http.StatusInternalServerError,
+			Message: message,
+			Code:    statusCode,
 		}
 	}
 
