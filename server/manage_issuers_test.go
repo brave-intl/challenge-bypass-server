@@ -365,6 +365,31 @@ func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_MissingDuration()
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
 }
 
+func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_V3_InvalidDurationFormat() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	req := CreateIssuerRequest{
+		Name:     test.RandomString(),
+		Cohort:   1,
+		Version:  3,
+		Buffer:   5,
+		Duration: "invalid-duration", // Invalid ISO 8601 duration
+	}
+
+	payload, err := json.Marshal(req)
+	suite.Require().NoError(err)
+
+	resp, err := suite.request("POST", server.URL+"/api/v1/manage/issuers", payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
+
+	var errResp map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errResp)
+	suite.Require().NoError(err)
+	suite.Assert().Contains(errResp["message"], "Invalid duration format")
+}
+
 // Test creating issuer with invalid version
 func (suite *ManageIssuersTestSuite) TestManageCreateIssuer_InvalidVersion() {
 	server := httptest.NewServer(suite.handler)

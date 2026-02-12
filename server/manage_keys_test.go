@@ -763,3 +763,21 @@ func (suite *ManageKeysTestSuite) TestManageRotateKeys_OverlapAtMaximumBound() {
 	suite.Require().NoError(err)
 	suite.Assert().Equal(http.StatusCreated, resp.StatusCode)
 }
+
+func (suite *ManageKeysTestSuite) TestManageRotateKeys_CountExceedsMaximum() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	issuer := suite.createTestIssuer()
+
+	// Rotation with count > 300 should fail
+	payload := []byte(`{"count": 301}`)
+	resp, err := suite.request("POST", fmt.Sprintf("%s/api/v1/manage/issuers/%s/keys/rotate", server.URL, issuer.ID.String()), payload)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode)
+
+	var errorResp map[string]interface{}
+	err = json.NewDecoder(resp.Body).Decode(&errorResp)
+	suite.Require().NoError(err)
+	suite.Assert().Contains(errorResp["message"], "Cannot create more than 300 keys")
+}

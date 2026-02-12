@@ -411,6 +411,14 @@ func (c *Server) manageRotateKeysHandler(w http.ResponseWriter, r *http.Request)
 		req.Count = 1
 	}
 
+	// Validate maximum key count to prevent resource exhaustion
+	if req.Count > 300 {
+		return &AppError{
+			Message: "Cannot create more than 300 keys in a single rotation",
+			Code:    http.StatusBadRequest,
+		}
+	}
+
 	// Rotate keys (create new keys and update old keys with overlap)
 	createdKeys, updatedKeys, err := c.rotateIssuerKeys(issuer, req.Count, req.Overlap)
 	if err != nil {

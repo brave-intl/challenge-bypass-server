@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -69,11 +70,12 @@ func canonicalPathAndQuery(path, rawQuery string) string {
 }
 
 // parseSignedRequest extracts and validates signature components from an HTTP request
+// Validates checks in order from cheapest to most expensive to fail fast on invalid requests
 func parseSignedRequest(r *http.Request) (*SignedRequest, []byte, error) {
-	// Extract required headers
-	signatureB64 := r.Header.Get(HeaderSignature)
-	if signatureB64 == "" {
-		return nil, nil, errMissingSignature
+	// Step 1: Check for required headers (cheap - no decoding yet)
+	timestampStr := r.Header.Get(HeaderTimestamp)
+	if timestampStr == "" {
+		return nil, nil, errMissingTimestamp
 	}
 
 	publicKeyB64 := r.Header.Get(HeaderPublicKey)
@@ -81,18 +83,29 @@ func parseSignedRequest(r *http.Request) (*SignedRequest, []byte, error) {
 		return nil, nil, errMissingPublicKey
 	}
 
-	timestampStr := r.Header.Get(HeaderTimestamp)
-	if timestampStr == "" {
-		return nil, nil, errMissingTimestamp
+	signatureB64 := r.Header.Get(HeaderSignature)
+	if signatureB64 == "" {
+		return nil, nil, errMissingSignature
 	}
 
-	// Decode signature
-	signature, err := base64.StdEncoding.DecodeString(signatureB64)
+	// Step 2: Parse and validate timestamp FIRST (cheap - just parse int and time comparison)
+	timestampUnix, err := strconv.ParseInt(timestampStr, 10, 64)
 	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", errInvalidSignature, err)
+		return nil, nil, fmt.Errorf("%w: %v", errInvalidTimestamp, err)
+	}
+	timestamp := time.Unix(timestampUnix, 0)
+
+	// Validate timestamp is within acceptable range (cheap check before expensive operations)
+	now := time.Now().UTC()
+	age := now.Sub(timestamp)
+	if age > maxRequestAge {
+		return nil, nil, errRequestExpired
+	}
+	if age < -maxRequestAge {
+		return nil, nil, errRequestFromFuture
 	}
 
-	// Decode public key
+	// Step 3: Decode and validate public key (moderately expensive)
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKeyB64)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%w: %v", errInvalidPublicKey, err)
@@ -102,14 +115,7 @@ func parseSignedRequest(r *http.Request) (*SignedRequest, []byte, error) {
 	}
 	publicKey := ed25519.PublicKey(publicKeyBytes)
 
-	// Parse timestamp (Unix timestamp in seconds)
-	timestampUnix, err := strconv.ParseInt(timestampStr, 10, 64)
-	if err != nil {
-		return nil, nil, fmt.Errorf("%w: %v", errInvalidTimestamp, err)
-	}
-	timestamp := time.Unix(timestampUnix, 0)
-
-	// Read request body with an upper bound to prevent resource exhaustion
+	// Step 4: Read request body (moderately expensive - I/O operation)
 	limitedReader := io.LimitReader(r.Body, maxSignedRequestBodySize+1)
 	body, err := io.ReadAll(limitedReader)
 	if err != nil {
@@ -121,6 +127,12 @@ func parseSignedRequest(r *http.Request) (*SignedRequest, []byte, error) {
 
 	// Restore the body for downstream handlers
 	r.Body = io.NopCloser(bytes.NewBuffer(body))
+
+	// Step 5: Decode signature (moderately expensive - defer until after cheaper checks)
+	signature, err := base64.StdEncoding.DecodeString(signatureB64)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%w: %v", errInvalidSignature, err)
+	}
 
 	return &SignedRequest{
 		Method:    r.Method,
@@ -148,25 +160,14 @@ func (sr *SignedRequest) verifySignature() bool {
 	return ed25519.Verify(sr.PublicKey, message, sr.Signature)
 }
 
-// verifyTimestamp checks that the request timestamp is within acceptable bounds
-func (sr *SignedRequest) verifyTimestamp() error {
-	now := time.Now().UTC()
-	age := now.Sub(sr.Timestamp)
-
-	if age > maxRequestAge {
-		return errRequestExpired
-	}
-	if age < -maxRequestAge {
-		return errRequestFromFuture
-	}
-	return nil
-}
-
 // isAuthorizedSigner checks if the public key is in the list of authorized signers
+// Uses constant-time comparison to prevent timing attacks
 func (sr *SignedRequest) isAuthorizedSigner() bool {
 	publicKeyB64 := base64.StdEncoding.EncodeToString(sr.PublicKey)
 	for _, authorized := range AuthorizedSigners {
-		if authorized == publicKeyB64 {
+		// Use constant-time comparison to prevent timing attacks that could
+		// leak information about authorized keys through response timing
+		if subtle.ConstantTimeCompare([]byte(authorized), []byte(publicKeyB64)) == 1 {
 			return true
 		}
 	}
@@ -175,28 +176,25 @@ func (sr *SignedRequest) isAuthorizedSigner() bool {
 
 // VerifySignedRequest verifies that an HTTP request is properly signed by an authorized signer.
 // Returns the request body if verification succeeds, or an error if it fails.
+// Performs checks in order from cheapest to most expensive for optimal performance.
 func VerifySignedRequest(r *http.Request) ([]byte, error) {
-	// Fail if no authorized signers are configured - never allow unauthenticated access
+	// Step 1: Check if authorized signers are configured (cheapest - single check)
 	if len(AuthorizedSigners) == 0 {
 		return nil, errNoAuthorizedSigners
 	}
 
+	// Step 2-5: Parse request (timestamp validated inside parseSignedRequest)
 	signedReq, body, err := parseSignedRequest(r)
 	if err != nil {
 		return nil, err
 	}
 
-	// Verify timestamp is within acceptable range
-	if err := signedReq.verifyTimestamp(); err != nil {
-		return nil, err
-	}
-
-	// Verify the signer is authorized
+	// Step 6: Verify the signer is authorized (cheap - string comparison)
 	if !signedReq.isAuthorizedSigner() {
 		return nil, errUnauthorizedSigner
 	}
 
-	// Verify the signature
+	// Step 7: Verify the signature (most expensive - Ed25519 verification, done last)
 	if !signedReq.verifySignature() {
 		return nil, errInvalidSignature
 	}

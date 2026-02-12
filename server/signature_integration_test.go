@@ -378,9 +378,12 @@ func TestSignatureVerificationErrorCases(t *testing.T) {
 		{
 			name: "InvalidBase64Signature",
 			setupHeaders: func(req *http.Request) {
+				// Use a valid 32-byte public key so we reach signature validation
+				dummyKey := make([]byte, 32)
 				req.Header.Set(HeaderSignature, "not-base64!")
-				req.Header.Set(HeaderPublicKey, "dGVzdA==")
-				req.Header.Set(HeaderTimestamp, "123")
+				req.Header.Set(HeaderPublicKey, base64.StdEncoding.EncodeToString(dummyKey))
+				// Use current timestamp so we reach signature decoding validation
+				req.Header.Set(HeaderTimestamp, strconv.FormatInt(time.Now().UTC().Unix(), 10))
 			},
 			expectedStatus: http.StatusUnauthorized,
 			expectedError:  "invalid signature",

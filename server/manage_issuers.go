@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/model"
+	timeutils "github.com/brave-intl/bat-go/libs/time"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -206,6 +207,14 @@ func (c *Server) manageCreateIssuerHandler(w http.ResponseWriter, r *http.Reques
 		if req.Duration == "" {
 			return &AppError{
 				Message: "Duration is required for v3 issuers",
+				Code:    http.StatusBadRequest,
+			}
+		}
+		// Validate duration format is valid ISO 8601
+		if _, err := timeutils.ParseDuration(req.Duration); err != nil {
+			return &AppError{
+				Cause:   err,
+				Message: "Invalid duration format: must be valid ISO 8601 duration (e.g., P1D, P7D, P1M)",
 				Code:    http.StatusBadRequest,
 			}
 		}
