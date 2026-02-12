@@ -135,6 +135,77 @@ CMD ["/src/challenge-bypass-server"]
 
 The server provides a REST API for managing issuers. This API is secured using Ed25519 signature verification to ensure only authorized administrators can access it.
 
+### Authentication Protocol Specification
+
+**Protocol:** Ed25519 Signature-Based Request Authentication
+
+**Purpose:** Authenticate and authorize administrative API requests to prevent unauthorized access to issuer management operations.
+
+#### Protocol Overview
+
+Each request to a management endpoint must be cryptographically signed by an authorized Ed25519 private key. The server verifies the signature and checks that the public key is on the authorized signers whitelist before processing the request.
+
+#### Signing Algorithm
+
+1. **Canonical Request Construction:**
+   ```
+   canonical_request = METHOD + "\n" + PATH + QUERY + "\n" + TIMESTAMP + "\n" + BODY
+   ```
+   - `METHOD`: HTTP method in uppercase (e.g., "GET", "POST")
+   - `PATH`: Request path (e.g., "/api/v1/manage/issuers")
+   - `QUERY`: Raw query string including "?" if present (e.g., "?force=true"), empty string if no query
+   - `TIMESTAMP`: Unix timestamp in seconds (UTC) as string
+   - `BODY`: Raw request body bytes (empty string for GET requests)
+
+2. **Signature Generation:**
+   ```
+   signature = Ed25519-Sign(private_key, canonical_request)
+   ```
+
+3. **Request Headers:**
+   - `X-Signature`: Base64(signature)
+   - `X-Public-Key`: Base64(public_key_bytes)  // Must be exactly 32 bytes
+   - `X-Timestamp`: TIMESTAMP
+
+#### Verification Algorithm
+
+Server performs verification in order from cheapest to most expensive operations:
+
+1. **Header Validation:** Verify all required headers present
+2. **Timestamp Validation:**
+   - Parse timestamp as Unix seconds
+   - Reject if `|now - timestamp| > 5 minutes` (prevents replay attacks)
+3. **Public Key Validation:**
+   - Decode base64 public key
+   - Verify length is exactly 32 bytes
+4. **Authorization Check:** Verify public key is in authorized signers allowlist
+5. **Signature Verification:**
+   - Reconstruct canonical request from incoming request
+   - Verify Ed25519 signature using `Ed25519-Verify(public_key, canonical_request, signature)`
+
+#### Threat Model
+
+**Threats Addressed:**
+- **Unauthorized Access:** Only holders of authorized private keys can call API
+- **Request Tampering:** Signature covers all request components (method, path, query, timestamp, body)
+- **Replay Attacks:** 5-minute timestamp window prevents reuse of old signatures
+- **Timing Attacks:** Constant-time comparison for signature and authorization checks
+- **Denial of Service:** Per-IP rate limiting (60 requests/minute default)
+
+**Known Limitations:**
+- No nonce/jti: Requests can be replayed within the 5-minute timestamp window
+- Authorized signers configured at server startup (no dynamic key rotation)
+- Rate limiter uses in-memory storage (state resets on server restart)
+
+#### Security Properties
+
+- **Algorithm:** Ed25519 (RFC 8032)
+- **Signature Size:** 64 bytes
+- **Public Key Size:** 32 bytes
+- **Timestamp Tolerance:** ±5 minutes
+- **Rate Limit:** 60 requests/minute per IP (configurable)
+- **Max Request Body:** 1 MiB
+
 ### Security & Authentication
 
 All management API endpoints require request signatures using Ed25519 public-key cryptography.
