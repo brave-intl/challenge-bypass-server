@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -49,6 +51,19 @@ var AuthorizedSigners = []string{
 	// Example format (replace with real keys):
 	// "base64-encoded-ed25519-public-key-1",
 	// "base64-encoded-ed25519-public-key-2",
+}
+
+func init() {
+	// Allow authorized signers to be configured via environment variable for testing
+	// Format: comma-separated base64-encoded Ed25519 public keys
+	// Example: MANAGEMENT_API_AUTHORIZED_SIGNERS="key1,key2,key3"
+	if envSigners := os.Getenv("MANAGEMENT_API_AUTHORIZED_SIGNERS"); envSigners != "" {
+		AuthorizedSigners = strings.Split(envSigners, ",")
+		// Trim whitespace from each key
+		for i := range AuthorizedSigners {
+			AuthorizedSigners[i] = strings.TrimSpace(AuthorizedSigners[i])
+		}
+	}
 }
 
 // SignedRequest contains the components needed to verify a signed request
