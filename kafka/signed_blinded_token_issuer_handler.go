@@ -140,7 +140,10 @@ OUTER:
 		)
 		issuer, appErr := server.GetLatestIssuerKafka(request.Issuer_type, int16(request.Issuer_cohort))
 		if appErr != nil {
-			reqLogger.Error("error retrieving issuer")
+			reqLogger.Error(
+				"error retrieving issuer",
+				slog.Any("error", appErr),
+			)
 			kafkaErrorTotal.Inc()
 			var processingError *utils.ProcessingError
 			if errors.As(err, &processingError) {
