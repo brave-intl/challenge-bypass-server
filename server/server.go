@@ -201,7 +201,7 @@ func SetupLogger(
 	env := os.Getenv("ENV")
 	logFormat := httplog.SchemaECS.Concise(env == "local")
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level:       slog.LevelWarn,
+		Level:       slog.LevelInfo,
 		ReplaceAttr: logFormat.ReplaceAttr,
 	})).With(
 		slog.String("app", "challenge-bypass"),
