@@ -52,13 +52,47 @@ func (c *Server) InitDynamo() {
 	c.dynamo = svc
 }
 
-// fetchRedemptionV2 takes a UUID v5 which is used to fetch and return a RedemptionV2 record
-func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
-	tableName := "redemptions"
-	if os.Getenv("dynamodb_table") != "" {
-		tableName = os.Getenv("dynamodb_table")
-	}
+// primaryDynamoTable returns the primary DynamoDB table name, or empty string if not configured.
+func primaryDynamoTable() string {
+	return os.Getenv("dynamodb_table")
+}
 
+// legacyDynamoTable returns the legacy DynamoDB table name.
+// Falls back to "redemptions" so deployments without explicit configuration are unaffected.
+func legacyDynamoTable() string {
+	if t := os.Getenv("dynamodb_table_legacy"); t != "" {
+		return t
+	}
+	return "redemptions"
+}
+
+// redemptionWriteTable returns the table to use for new redemption writes.
+func redemptionWriteTable() string {
+	if t := primaryDynamoTable(); t != "" {
+		return t
+	}
+	return legacyDynamoTable()
+}
+
+// fetchRedemptionV2 takes a UUID v5 which is used to fetch and return a RedemptionV2 record.
+// It checks the primary table first (if configured), then falls back to the legacy table with
+// a warning so that tokens issued against the old table continue to be honoured during migration.
+func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
+	if primary := primaryDynamoTable(); primary != "" {
+		redemption, err := c.fetchRedemptionV2FromTable(id, primary)
+		if err == nil {
+			return redemption, nil
+		}
+		if !errors.Is(err, errRedemptionNotFound) {
+			return nil, err
+		}
+		c.Logger.Warn("redemption not found in primary table, checking legacy table", "id", id)
+	}
+	return c.fetchRedemptionV2FromTable(id, legacyDynamoTable())
+}
+
+// fetchRedemptionV2FromTable fetches a RedemptionV2 record from the named DynamoDB table.
+func (c *Server) fetchRedemptionV2FromTable(id uuid.UUID, tableName string) (*RedemptionV2, error) {
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -115,7 +149,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	input := &dynamodb.PutItemInput{
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(id)"),
-		TableName:           aws.String("redemptions"),
+		TableName:           aws.String(redemptionWriteTable()),
 	}
 
 	_, err = c.dynamo.PutItem(input)
@@ -141,7 +175,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	input := &dynamodb.PutItemInput{
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(id)"),
-		TableName:           aws.String("redemptions"),
+		TableName:           aws.String(redemptionWriteTable()),
 	}
 
 	_, err = c.dynamo.PutItem(input)
