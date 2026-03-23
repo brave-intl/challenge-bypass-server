@@ -66,6 +66,16 @@ func legacyDynamoTable() string {
 	return "redemptions"
 }
 
+// redemptionTTL returns the Unix timestamp to use as the DynamoDB TTL for a redemption record.
+// When the issuer has no expiry, it falls back to 6 months from now so that DynamoDB can
+// sweep the record rather than retaining it indefinitely.
+func redemptionTTL(issuer *model.Issuer) int64 {
+	if t := issuer.ExpiresAtTime(); !t.IsZero() {
+		return t.Unix()
+	}
+	return time.Now().AddDate(0, 6, 0).Unix()
+}
+
 // redemptionWriteTable returns the table to use for new redemption writes.
 func redemptionWriteTable() string {
 	if t := primaryDynamoTable(); t != "" {
@@ -136,7 +146,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       redemptionTTL(issuer),
 		Offset:    offset,
 	}
 
@@ -209,7 +219,7 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       redemptionTTL(issuer),
 	}
 
 	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)
