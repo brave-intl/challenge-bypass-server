@@ -932,7 +932,7 @@ func txPopulateIssuerKeys(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) 
 	i := 0
 
 	// time to create the keys associated with the issuer
-	if issuer.Keys == nil || len(issuer.Keys) == 0 {
+	if len(issuer.Keys) == 0 {
 		issuer.Keys = []model.IssuerKeys{}
 	} else {
 		// if the issuer has keys already, start needs to be the last item in slice
@@ -1084,9 +1084,10 @@ type Queryable interface {
 // RedeemToken redeems a token given an issuer and and preimage
 func (c *Server) RedeemToken(issuerForRedemption *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) error {
 	defer incrementTotal(redeemTokenTotal)
-	if issuerForRedemption.Version == 1 {
+	switch issuerForRedemption.Version {
+	case 1:
 		return redeemTokenWithDB(c.db, issuerForRedemption.IssuerType, preimage, payload)
-	} else if issuerForRedemption.Version == 2 || issuerForRedemption.Version == 3 {
+	case 2, 3:
 		return c.redeemTokenWithDynamo(issuerForRedemption, preimage, payload, offset)
 	}
 	return errors.New("wrong issuer version")
