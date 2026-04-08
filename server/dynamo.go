@@ -2,9 +2,10 @@ package server
 
 import (
 	"errors"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 
 	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
@@ -39,7 +40,7 @@ func (c *Server) InitDynamo() {
 		SharedConfigState: session.SharedConfigEnable,
 	}))
 
-	var config = &aws.Config{
+	config := &aws.Config{
 		Region:   aws.String("us-west-2"),
 		Endpoint: aws.String(c.dbConfig.DynamodbEndpoint),
 	}
@@ -60,9 +61,10 @@ func primaryDynamoTable() string {
 // legacyDynamoTable returns the legacy DynamoDB table name.
 // Falls back to "redemptions" so deployments without explicit configuration are unaffected.
 func legacyDynamoTable() string {
-	if t := os.Getenv("dynamodb_table_legacy"); t != "" {
-		return t
+	if v, ok := os.LookupEnv("dynamodb_table_legacy"); ok {
+		return v
 	}
+
 	return "redemptions"
 }
 
@@ -96,7 +98,7 @@ func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
 		if !errors.Is(err, errRedemptionNotFound) {
 			return nil, err
 		}
-		c.Logger.Warn("redemption not found in primary table, checking legacy table", "id", id)
+		c.Logger.Info("redemption not found in primary table, checking legacy table", "id", id)
 	}
 	return c.fetchRedemptionV2FromTable(id, legacyDynamoTable())
 }
@@ -204,7 +206,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
 func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
-	var temporary = false
+	temporary := false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
