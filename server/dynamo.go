@@ -2,9 +2,10 @@ package server
 
 import (
 	"errors"
-	"github.com/brave-intl/challenge-bypass-server/model"
 	"os"
 	"time"
+
+	"github.com/brave-intl/challenge-bypass-server/model"
 
 	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
@@ -39,7 +40,7 @@ func (c *Server) InitDynamo() {
 		SharedConfigState: session.SharedConfigEnable,
 	}))
 
-	var config = &aws.Config{
+	config := &aws.Config{
 		Region:   aws.String("us-west-2"),
 		Endpoint: aws.String(c.dbConfig.DynamodbEndpoint),
 	}
@@ -52,13 +53,58 @@ func (c *Server) InitDynamo() {
 	c.dynamo = svc
 }
 
-// fetchRedemptionV2 takes a UUID v5 which is used to fetch and return a RedemptionV2 record
-func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
-	tableName := "redemptions"
-	if os.Getenv("dynamodb_table") != "" {
-		tableName = os.Getenv("dynamodb_table")
+// primaryDynamoTable returns the primary DynamoDB table name, or empty string if not configured.
+func primaryDynamoTable() string {
+	return os.Getenv("dynamodb_table")
+}
+
+// legacyDynamoTable returns the legacy DynamoDB table name.
+// Falls back to "redemptions" so deployments without explicit configuration are unaffected.
+func legacyDynamoTable() string {
+	if v, ok := os.LookupEnv("dynamodb_table_legacy"); ok {
+		return v
 	}
 
+	return "redemptions"
+}
+
+// redemptionTTL returns the Unix timestamp to use as the DynamoDB TTL for a redemption record.
+// When the issuer has no expiry, it falls back to 6 months from now so that DynamoDB can
+// sweep the record rather than retaining it indefinitely.
+func redemptionTTL(issuer *model.Issuer) int64 {
+	if t := issuer.ExpiresAtTime(); !t.IsZero() {
+		return t.Unix()
+	}
+	return time.Now().AddDate(0, 6, 0).Unix()
+}
+
+// redemptionWriteTable returns the table to use for new redemption writes.
+func redemptionWriteTable() string {
+	if t := primaryDynamoTable(); t != "" {
+		return t
+	}
+	return legacyDynamoTable()
+}
+
+// fetchRedemptionV2 takes a UUID v5 which is used to fetch and return a RedemptionV2 record.
+// It checks the primary table first (if configured), then falls back to the legacy table with
+// a warning so that tokens issued against the old table continue to be honoured during migration.
+func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
+	if primary := primaryDynamoTable(); primary != "" {
+		redemption, err := c.fetchRedemptionV2FromTable(id, primary)
+		if err == nil {
+			return redemption, nil
+		}
+		if !errors.Is(err, errRedemptionNotFound) {
+			return nil, err
+		}
+		c.Logger.Info("redemption not found in primary table, checking legacy table", "id", id)
+	}
+	return c.fetchRedemptionV2FromTable(id, legacyDynamoTable())
+}
+
+// fetchRedemptionV2FromTable fetches a RedemptionV2 record from the named DynamoDB table.
+func (c *Server) fetchRedemptionV2FromTable(id uuid.UUID, tableName string) (*RedemptionV2, error) {
 	input := &dynamodb.GetItemInput{
 		TableName: aws.String(tableName),
 		Key: map[string]*dynamodb.AttributeValue{
@@ -102,7 +148,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       redemptionTTL(issuer),
 		Offset:    offset,
 	}
 
@@ -115,7 +161,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	input := &dynamodb.PutItemInput{
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(id)"),
-		TableName:           aws.String("redemptions"),
+		TableName:           aws.String(redemptionWriteTable()),
 	}
 
 	_, err = c.dynamo.PutItem(input)
@@ -141,7 +187,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	input := &dynamodb.PutItemInput{
 		Item:                av,
 		ConditionExpression: aws.String("attribute_not_exists(id)"),
-		TableName:           aws.String("redemptions"),
+		TableName:           aws.String(redemptionWriteTable()),
 	}
 
 	_, err = c.dynamo.PutItem(input)
@@ -160,7 +206,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
 func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
-	var temporary = false
+	temporary := false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
@@ -175,7 +221,7 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		PreImage:  string(preimageTxt),
 		Payload:   payload,
 		Timestamp: time.Now(),
-		TTL:       issuer.ExpiresAtTime().Unix(),
+		TTL:       redemptionTTL(issuer),
 	}
 
 	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)
