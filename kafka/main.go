@@ -328,7 +328,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 	// kafka-go's ReaderConfig requires the old style log.Logger
 	// We can make one from our slog.Logger.
 	logLogger := slog.NewLogLogger(logger.Handler(), slog.LevelInfo)
-	minBytes := int(1e3) // 1KB default
+	minBytes := int(1)
 	if v := os.Getenv("KAFKA_CONSUMER_MIN_BYTES"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil {
 			minBytes = parsed
