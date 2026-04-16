@@ -11,7 +11,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://testuser:testpassword@postgres:5432/testdb?sslmode=disable
       - VPC_KAFKA_BROKERS=kafka:9092
-      - DYNAMODB_ENDPOINT=http://localstack:4566
+      - DYNAMODB_ENDPOINT=http://localstack:8000
       - ENV=test
       - REDEEM_CONSUMER_TOPIC=test.consumer.redeem
       - REDEEM_PRODUCER_TOPIC=test.producer.redeem
@@ -71,17 +71,14 @@ services:
       retries: 10
 
   localstack:
-    image: localstack/localstack:latest
+    image: amazon/dynamodb-local:2.5.0
     ports:
-      - "4566:4566"
-    environment:
-      - SERVICES=dynamodb
-      - DEBUG=1
+      - "8000:8000"
     healthcheck:
-      test: ["CMD", "sh", "-c", "awslocal dynamodb list-tables --region us-east-1 || exit 1"]
+      test: ["CMD-SHELL", "curl -s http://localhost:8000 > /dev/null 2>&1"]
       interval: 5s
       timeout: 5s
-      retries: 15
+      retries: 10
 
   test-runner:
     build:
@@ -96,7 +93,7 @@ services:
         condition: service_healthy
     environment:
       - DATABASE_URL=postgresql://testuser:testpassword@postgres:5432/testdb?sslmode=disable
-      - DYNAMODB_ENDPOINT=http://localstack:4566
+      - DYNAMODB_ENDPOINT=http://localstack:8000
       - ENV=test
       - TEST_SHOULD_WRITE_REDEEM_REQUESTS_HERE=test.consumer.redeem
       - TEST_SHOULD_READ_REDEEM_REQUESTS_HERE=test.producer.redeem

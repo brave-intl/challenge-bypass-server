@@ -777,7 +777,7 @@ func initializeLocalStack(logger *log.Logger) {
 
 	sess, err := session.NewSession(&aws.Config{
 		Region:           aws.String("us-west-2"),
-		Endpoint:         aws.String("http://localstack:4566"),
+		Endpoint:         aws.String(os.Getenv("DYNAMODB_ENDPOINT")),
 		Credentials:      credentials.NewStaticCredentials("test", "test", ""),
 		DisableSSL:       aws.Bool(true),
 		S3ForcePathStyle: aws.Bool(true),

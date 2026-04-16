@@ -156,7 +156,8 @@ func StartConsumers(
 		{
 			Topic: adsRequestRedeemV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *slog.Logger) error {
+				logger *slog.Logger,
+			) error {
 				tokenRedeemRequestTotal.Inc()
 				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
 				if err != nil {
@@ -168,7 +169,8 @@ func StartConsumers(
 		{
 			Topic: adsRequestSignV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *slog.Logger) error {
+				logger *slog.Logger,
+			) error {
 				tokenIssuanceRequestTotal.Inc()
 				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
 				if err != nil {
@@ -322,7 +324,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 		kafkaErrorTotal.Inc()
 		return nil, err
 	}
-	// kafka-go's ReaderConfig requires the old styl log.Logger
+	// kafka-go's ReaderConfig requires the old style log.Logger
 	// We can make one from our slog.Logger.
 	logLogger := slog.NewLogLogger(logger.Handler(), slog.LevelInfo)
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
@@ -334,8 +336,8 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 		Logger:         logLogger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
-		MinBytes:       1e3,              // 1KB
 		MaxBytes:       10e6,             // 10MB
+		MinBytes:       1,
 	})
 	logger.Debug("reader created with subscription")
 	return reader, nil
