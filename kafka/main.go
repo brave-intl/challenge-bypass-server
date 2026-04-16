@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -327,6 +328,12 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 	// kafka-go's ReaderConfig requires the old style log.Logger
 	// We can make one from our slog.Logger.
 	logLogger := slog.NewLogLogger(logger.Handler(), slog.LevelInfo)
+	minBytes := int(1e3) // 1KB default
+	if v := os.Getenv("KAFKA_CONSUMER_MIN_BYTES"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			minBytes = parsed
+		}
+	}
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
@@ -337,7 +344,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
 		MaxBytes:       10e6,             // 10MB
-		MinBytes:       1,
+		MinBytes:       minBytes,
 	})
 	logger.Debug("reader created with subscription")
 	return reader, nil
