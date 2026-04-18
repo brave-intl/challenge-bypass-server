@@ -6,12 +6,15 @@ package integration
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -946,4 +949,285 @@ func issueTokensViaKafka(
 	)
 
 	return tokens, blindedTokens, signingResultSet
+}
+
+// Management API Test Types
+
+type managementIssuerDetail struct {
+	ID        string                  `json:"id"`
+	Name      string                  `json:"name"`
+	Cohort    int16                   `json:"cohort"`
+	MaxTokens int                     `json:"max_tokens"`
+	Version   int                     `json:"version"`
+	ExpiresAt *string                 `json:"expires_at,omitempty"`
+	CreatedAt *string                 `json:"created_at,omitempty"`
+	ValidFrom *string                 `json:"valid_from,omitempty"`
+	Buffer    int                     `json:"buffer,omitempty"`
+	Overlap   int                     `json:"overlap,omitempty"`
+	Duration  *string                 `json:"duration,omitempty"`
+	Keys      []managementIssuerKey   `json:"keys,omitempty"`
+}
+
+type managementIssuerKey struct {
+	ID        string  `json:"id,omitempty"`
+	PublicKey string  `json:"public_key"`
+	Cohort    int16   `json:"cohort"`
+	StartAt   *string `json:"start_at,omitempty"`
+	EndAt     *string `json:"end_at,omitempty"`
+	CreatedAt *string `json:"created_at,omitempty"`
+}
+
+type managementIssuerListResponse struct {
+	Issuers []managementIssuerDetail `json:"issuers"`
+	Total   int                      `json:"total"`
+}
+
+// Management API Client Helper
+
+type managementAPIClient struct {
+	serverURL  string
+	privateKey ed25519.PrivateKey
+	publicKey  ed25519.PublicKey
+	httpClient *http.Client
+}
+
+func newManagementAPIClient(serverURL string, privateKey ed25519.PrivateKey) *managementAPIClient {
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+	return &managementAPIClient{
+		serverURL:  serverURL,
+		privateKey: privateKey,
+		publicKey:  publicKey,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+func (c *managementAPIClient) signedRequest(method, path, rawQuery string, body []byte) (*http.Response, error) {
+	url := c.serverURL + path
+	if rawQuery != "" {
+		url = url + "?" + rawQuery
+	}
+
+	timestamp := time.Now().UTC()
+	message := buildSigningMessage(method, path, rawQuery, timestamp, body)
+	signature := ed25519.Sign(c.privateKey, message)
+
+	var bodyReader io.Reader
+	if len(body) > 0 {
+		bodyReader = bytes.NewReader(body)
+	}
+
+	req, err := http.NewRequest(method, url, bodyReader)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(signature))
+	req.Header.Set("X-Public-Key", base64.StdEncoding.EncodeToString(c.publicKey))
+	req.Header.Set("X-Timestamp", strconv.FormatInt(timestamp.Unix(), 10))
+
+	if len(body) > 0 {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	return c.httpClient.Do(req)
+}
+
+func buildSigningMessage(method, path, rawQuery string, timestamp time.Time, body []byte) []byte {
+	timestampStr := strconv.FormatInt(timestamp.Unix(), 10)
+	requestTarget := path
+	if rawQuery != "" {
+		requestTarget = fmt.Sprintf("%s?%s", path, rawQuery)
+	}
+	message := fmt.Sprintf("%s\n%s\n%s\n", method, requestTarget, timestampStr)
+	return append([]byte(message), body...)
+}
+
+// TestManagementAPI tests the Management API endpoints
+func TestManagementAPI(t *testing.T) {
+	t.Log("TESTING MANAGEMENT API")
+
+	// Create test issuer first
+	issuerName := "TestIssuer-" + uuid.New().String()
+	now := time.Now()
+	expires := now.Add(1 * time.Hour)
+
+	issuerRequest := issuerV3CreateRequest{
+		Name:      issuerName,
+		Cohort:    1,
+		MaxTokens: 40,
+		ExpiresAt: &expires,
+		ValidFrom: &now,
+		Duration:  "PT1H",
+		Overlap:   1,
+		Buffer:    1,
+	}
+
+	createTestIssuer(t, issuerRequest)
+
+	// Use hardcoded test key pair for integration testing
+	// Public key: Rv/5s5lttYIudkpaeGuHK2tPuwhSw7bH842bYMxjsBM=
+	// This public key is configured in docker-compose.integration.yml
+	testPrivateKeyB64 := "l4iNDGylf0wyqpv8TWoc3sFSaxJHSMuX8FeKET1ZeXRG//mzmW21gi52Slp4a4cra0+7CFLDtsfzjZtgzGOwEw=="
+	testPrivateKeyBytes, err := base64.StdEncoding.DecodeString(testPrivateKeyB64)
+	require.NoError(t, err, "Should decode test private key")
+
+	privateKey := ed25519.PrivateKey(testPrivateKeyBytes)
+	publicKey := privateKey.Public().(ed25519.PublicKey)
+
+	publicKeyB64 := base64.StdEncoding.EncodeToString(publicKey)
+	t.Logf("Using test public key: %s", publicKeyB64)
+
+	client := newManagementAPIClient("http://cbp:2416", privateKey)
+
+	t.Run("list_issuers_success", func(t *testing.T) {
+		resp, err := client.signedRequest("GET", "/api/v1/manage/issuers", "", nil)
+		require.NoError(t, err, "Should make signed request")
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
+
+		t.Logf("Response status: %d", resp.StatusCode)
+		t.Logf("Response body: %s", string(body))
+
+		assert.Equal(t, http.StatusOK, resp.StatusCode, "Should return 200 OK")
+
+		var listResp managementIssuerListResponse
+		err = json.Unmarshal(body, &listResp)
+		require.NoError(t, err, "Should parse JSON response")
+
+		assert.GreaterOrEqual(t, listResp.Total, 1, "Should have at least one issuer")
+		assert.Len(t, listResp.Issuers, listResp.Total, "Issuers count should match total")
+
+		// Verify issuer structure
+		if len(listResp.Issuers) > 0 {
+			issuer := listResp.Issuers[0]
+			assert.NotEmpty(t, issuer.ID, "Issuer ID should not be empty")
+			assert.NotEmpty(t, issuer.Name, "Issuer name should not be empty")
+			assert.Greater(t, issuer.MaxTokens, 0, "Max tokens should be positive")
+			t.Logf("Found issuer: %s (ID: %s, Cohort: %d)", issuer.Name, issuer.ID, issuer.Cohort)
+		}
+	})
+
+	t.Run("unauthorized_signer", func(t *testing.T) {
+		// Generate a new key pair that's NOT in authorized signers
+		_, unauthorizedPrivateKey, err := ed25519.GenerateKey(nil)
+		require.NoError(t, err, "Should generate unauthorized key pair")
+
+		unauthorizedClient := newManagementAPIClient("http://cbp:2416", unauthorizedPrivateKey)
+
+		resp, err := unauthorizedClient.signedRequest("GET", "/api/v1/manage/issuers", "", nil)
+		require.NoError(t, err, "Should make signed request")
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
+
+		t.Logf("Unauthorized request status: %d", resp.StatusCode)
+		t.Logf("Unauthorized request body: %s", string(body))
+
+		assert.Equal(t, http.StatusForbidden, resp.StatusCode,
+			"Unauthorized signer should get 403 Forbidden")
+	})
+
+	t.Run("invalid_signature", func(t *testing.T) {
+		// Make a request with valid headers but wrong signature
+		url := "http://cbp:2416/api/v1/manage/issuers"
+		timestamp := time.Now().UTC()
+
+		req, err := http.NewRequest("GET", url, nil)
+		require.NoError(t, err, "Should create request")
+
+		// Set headers with an invalid signature
+		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString([]byte("invalid-signature-data-here-xxxxxxxxxxxx")))
+		req.Header.Set("X-Public-Key", base64.StdEncoding.EncodeToString(publicKey))
+		req.Header.Set("X-Timestamp", strconv.FormatInt(timestamp.Unix(), 10))
+
+		resp, err := client.httpClient.Do(req)
+		require.NoError(t, err, "Should make request")
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
+
+		t.Logf("Invalid signature status: %d", resp.StatusCode)
+		t.Logf("Invalid signature body: %s", string(body))
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"Invalid signature should get 401 Unauthorized")
+	})
+
+	t.Run("expired_timestamp", func(t *testing.T) {
+		// Create a request with an old timestamp (> 5 minutes ago)
+		oldTimestamp := time.Now().UTC().Add(-10 * time.Minute)
+		path := "/api/v1/manage/issuers"
+		message := buildSigningMessage("GET", path, "", oldTimestamp, nil)
+		signature := ed25519.Sign(privateKey, message)
+
+		url := "http://cbp:2416" + path
+		req, err := http.NewRequest("GET", url, nil)
+		require.NoError(t, err, "Should create request")
+
+		req.Header.Set("X-Signature", base64.StdEncoding.EncodeToString(signature))
+		req.Header.Set("X-Public-Key", base64.StdEncoding.EncodeToString(publicKey))
+		req.Header.Set("X-Timestamp", strconv.FormatInt(oldTimestamp.Unix(), 10))
+
+		resp, err := client.httpClient.Do(req)
+		require.NoError(t, err, "Should make request")
+		defer resp.Body.Close()
+
+		body, err := io.ReadAll(resp.Body)
+		require.NoError(t, err, "Should read response body")
+
+		t.Logf("Expired timestamp status: %d", resp.StatusCode)
+		t.Logf("Expired timestamp body: %s", string(body))
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"Expired timestamp should get 401 Unauthorized")
+	})
+
+	t.Run("missing_headers", func(t *testing.T) {
+		url := "http://cbp:2416/api/v1/manage/issuers"
+		req, err := http.NewRequest("GET", url, nil)
+		require.NoError(t, err, "Should create request")
+
+		// Make request without signature headers
+		resp, err := client.httpClient.Do(req)
+		require.NoError(t, err, "Should make request")
+		defer resp.Body.Close()
+
+		assert.Equal(t, http.StatusUnauthorized, resp.StatusCode,
+			"Missing headers should get 401 Unauthorized")
+	})
+
+	t.Run("rate_limiting", func(t *testing.T) {
+		t.Log("Testing rate limiting (60 req/min limit)...")
+
+		// Make requests rapidly to trigger rate limit
+		successCount := 0
+		rateLimitedCount := 0
+
+		for i := 0; i < 70; i++ {
+			resp, err := client.signedRequest("GET", "/api/v1/manage/issuers", "", nil)
+			require.NoError(t, err, "Should make request")
+
+			if resp.StatusCode == http.StatusOK {
+				successCount++
+			} else if resp.StatusCode == http.StatusTooManyRequests {
+				rateLimitedCount++
+			}
+
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+
+			// Small delay to avoid overwhelming the server
+			time.Sleep(10 * time.Millisecond)
+		}
+
+		t.Logf("Successful requests: %d, Rate limited: %d", successCount, rateLimitedCount)
+
+		// We should see some rate limiting (exact count depends on timing)
+		assert.Greater(t, rateLimitedCount, 0,
+			"Should get rate limited after 60 requests per minute")
+	})
 }

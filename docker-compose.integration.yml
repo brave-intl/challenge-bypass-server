@@ -21,6 +21,7 @@ services:
       - AWS_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
+      - MANAGEMENT_API_AUTHORIZED_SIGNERS=Rv/5s5lttYIudkpaeGuHK2tPuwhSw7bH842bYMxjsBM=
     ports:
       - "2416:2416"
       - "9090:9090"
