@@ -18,7 +18,7 @@ import (
 
 	timeutils "github.com/brave-intl/bat-go/libs/time"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	migrate "github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/lib/pq"
@@ -133,7 +133,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 	if err != nil {
 		panic(err)
 	}
-	err = m.Migrate(7)
+	err = m.Migrate(12)
 	if err != migrate.ErrNoChange && err != nil {
 		panic(err)
 	}
