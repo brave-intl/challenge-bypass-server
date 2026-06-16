@@ -3,18 +3,20 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsConfig "github.com/aws/aws-sdk-go-v2/config"
-	batgo_kafka "github.com/brave-intl/bat-go/libs/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	uuid "github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus"
 	kafkaGo "github.com/segmentio/kafka-go"
@@ -44,6 +46,12 @@ type MessageContext struct {
 	done chan struct{}
 	err  error
 	msg  kafkaGo.Message
+}
+
+type alerter interface {
+	Outage(ctx context.Context, err error)
+	Crash(ctx context.Context, err error)
+	Generic(ctx context.Context, err error)
 }
 
 var (
@@ -89,21 +97,36 @@ var (
 )
 
 // StartConsumers reads configuration variables and starts the associated kafka consumers
-func StartConsumers(ctx context.Context, providedServer *server.Server, logger *slog.Logger) error {
+func StartConsumers(
+	ctx context.Context,
+	providedServer *server.Server,
+	logger *slog.Logger,
+	a alerter,
+) error {
 	adsRequestRedeemV1Topic := os.Getenv("REDEEM_CONSUMER_TOPIC")
 	adsResultRedeemV1Topic := os.Getenv("REDEEM_PRODUCER_TOPIC")
 	adsRequestSignV1Topic := os.Getenv("SIGN_CONSUMER_TOPIC")
 	adsResultSignV1Topic := os.Getenv("SIGN_PRODUCER_TOPIC")
 	adsConsumerGroupV1 := os.Getenv("CONSUMER_GROUP")
 
-	prometheus.MustRegister(tokenIssuanceRequestTotal)
-	prometheus.MustRegister(tokenIssuanceFailureTotal)
-	prometheus.MustRegister(tokenRedeemRequestTotal)
-	prometheus.MustRegister(tokenRedeemFailureTotal)
-	prometheus.MustRegister(duplicateRedemptionTotal)
-	prometheus.MustRegister(idempotentRedemptionTotal)
-	prometheus.MustRegister(rebootFromPanicTotal)
-	prometheus.MustRegister(kafkaErrorTotal)
+	var prometheusRegistry prometheus.Registerer
+	if os.Getenv("ENV") == "local" || os.Getenv("ENV") == "test" {
+		prometheusRegistry = prometheus.NewRegistry()
+	} else {
+		prometheusRegistry = prometheus.DefaultRegisterer
+	}
+
+	metrics.MustRegisterIfNotRegistered(
+		prometheusRegistry,
+		tokenIssuanceRequestTotal,
+		tokenIssuanceFailureTotal,
+		tokenRedeemRequestTotal,
+		tokenRedeemFailureTotal,
+		duplicateRedemptionTotal,
+		idempotentRedemptionTotal,
+		rebootFromPanicTotal,
+		kafkaErrorTotal,
+	)
 
 	if len(brokers) < 1 {
 		brokers = strings.Split(os.Getenv("VPC_KAFKA_BROKERS"), ",")
@@ -134,7 +157,8 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		{
 			Topic: adsRequestRedeemV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *slog.Logger) error {
+				logger *slog.Logger,
+			) error {
 				tokenRedeemRequestTotal.Inc()
 				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger)
 				if err != nil {
@@ -146,7 +170,8 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 		{
 			Topic: adsRequestSignV1Topic,
 			Processor: func(ctx context.Context, msg kafkaGo.Message,
-				logger *slog.Logger) error {
+				logger *slog.Logger,
+			) error {
 				tokenIssuanceRequestTotal.Inc()
 				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger)
 				if err != nil {
@@ -168,9 +193,9 @@ func StartConsumers(ctx context.Context, providedServer *server.Server, logger *
 	}
 
 	batchPipeline := make(chan *MessageContext, 400)
-	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger)
+	go processMessagesIntoBatchPipeline(ctx, topicMappings, reader, batchPipeline, logger, a)
 	for {
-		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger)
+		err := readAndCommitBatchPipelineResults(ctx, reader, batchPipeline, logger, a)
 		if err != nil {
 			logger.Error("failed to process batch pipeline", slog.Any("error", err))
 			// If readAndCommitBatchPipelineResults returns an error.
@@ -191,12 +216,14 @@ func readAndCommitBatchPipelineResults(
 	reader *kafkaGo.Reader,
 	batchPipeline chan *MessageContext,
 	logger *slog.Logger,
+	a alerter,
 ) error {
 	msgCtx := <-batchPipeline
 	<-msgCtx.done
 
 	if msgCtx.err != nil {
 		kafkaErrorTotal.Inc()
+		a.Outage(ctx, msgCtx.err)
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
 	logger.Debug("committing offset", "offset", msgCtx.msg.Offset)
@@ -216,6 +243,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 	reader messageReader,
 	batchPipeline chan *MessageContext,
 	logger *slog.Logger,
+	a alerter,
 ) {
 	// Catch the panic cases in order to count them, but continue to panic.
 	defer func() {
@@ -234,6 +262,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 				logger.Debug("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				kafkaErrorTotal.Inc()
+				a.Crash(ctx, err)
 				panic("failed to fetch kafka messages and closed channel")
 			}
 			// There are other possible errors, but the underlying consumer
@@ -296,9 +325,15 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 		kafkaErrorTotal.Inc()
 		return nil, err
 	}
-	// kafka-go's ReaderConfig requires the old styl log.Logger
+	// kafka-go's ReaderConfig requires the old style log.Logger
 	// We can make one from our slog.Logger.
 	logLogger := slog.NewLogLogger(logger.Handler(), slog.LevelInfo)
+	minBytes := int(1e3) // 1KB default
+	if v := os.Getenv("KAFKA_CONSUMER_MIN_BYTES"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil {
+			minBytes = parsed
+		}
+	}
 	reader := kafkaGo.NewReader(kafkaGo.ReaderConfig{
 		Brokers:        brokers,
 		Dialer:         dialer,
@@ -308,8 +343,8 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 		Logger:         logLogger,
 		MaxWait:        time.Second * 20, // default 20s
 		CommitInterval: time.Second,      // flush commits to Kafka every second
-		MinBytes:       1e3,              // 1KB
 		MaxBytes:       10e6,             // 10MB
+		MinBytes:       minBytes,
 	})
 	logger.Debug("reader created with subscription")
 	return reader, nil
@@ -354,9 +389,8 @@ func Emit(
 // getDialer returns a reference to a Kafka dialer. The dialer is TLS enabled in non-local
 // environments.
 func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error) {
-	var dialer *kafkaGo.Dialer
 	env := os.Getenv("ENV")
-	if env != "local" {
+	if env != "local" && env != "test" {
 		logger.Debug("generating TLSDialer")
 		var cfg aws.Config
 		var err error
@@ -375,21 +409,19 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 
-		mechanism := aws_msk_iam_v2.NewMechanism(cfg)
-		tlsDialer, _, err := batgo_kafka.TLSDialer()
-		dialer = tlsDialer
-		dialer.SASLMechanism = mechanism
-
-		if err != nil {
-			kafkaErrorTotal.Inc()
-			return nil, fmt.Errorf("failed to initialize TLS dialer: %w", err)
-		}
+		return &kafkaGo.Dialer{
+			Timeout:       10 * time.Second,
+			DualStack:     true,
+			SASLMechanism: aws_msk_iam_v2.NewMechanism(cfg),
+			TLS: &tls.Config{
+				MinVersion: tls.VersionTLS12,
+			},
+		}, nil
 	} else {
 		logger.Debug("generating Dialer")
-		dialer = &kafkaGo.Dialer{
+		return &kafkaGo.Dialer{
 			Timeout:   10 * time.Second,
 			DualStack: true,
-		}
+		}, nil
 	}
-	return dialer, nil
 }

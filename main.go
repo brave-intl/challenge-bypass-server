@@ -12,8 +12,14 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/kafka"
 	"github.com/brave-intl/challenge-bypass-server/server"
-	raven "github.com/getsentry/raven-go"
+	"github.com/brave-intl/challenge-bypass-server/utils/alert"
 )
+
+type alerter interface {
+	Outage(ctx context.Context, err error)
+	Crash(ctx context.Context, err error)
+	Generic(ctx context.Context, err error)
+}
 
 func main() {
 	// Server setup
@@ -37,10 +43,13 @@ func main() {
 	flag.IntVar(&srv.ListenPort, "p", 2416, "port to listen on")
 	flag.Parse()
 
+	a := alert.New(logger)
+
 	if configFile != "" {
 		srv, err = server.LoadConfigFile(configFile)
 		if err != nil {
 			logger.Error("loadconfigfile", slog.Any("error", err))
+			a.Crash(serverCtx, err)
 			panic(err)
 		}
 	}
@@ -54,17 +63,18 @@ func main() {
 	err = srv.InitDBConfig()
 	if err != nil {
 		logger.Error("initdbconfig", slog.Any("error", err))
+		a.Crash(serverCtx, err)
 		panic(err)
 	}
 
 	logger.Debug("Initializing persistence and cron jobs")
 
 	// Initialize databases and cron tasks before the Kafka processors and server start
-	srv.InitDB()
+	srv.InitDB(logger)
 	srv.InitDynamo()
-	// Run the cron job unless it's explicitly disabled.
+	// Run the cron jobs unless explicitly disabled.
 	if os.Getenv("CRON_ENABLED") != "false" {
-		srv.SetupCronTasks()
+		srv.StartCronJobs(serverCtx)
 	}
 
 	logger.Debug("Persistence and cron jobs initialized")
@@ -94,21 +104,21 @@ func main() {
 	err = srv.ListenAndServe(serverCtx, logger)
 	if err != nil {
 		logger.Error("listenandserve", slog.Any("error", err))
-		raven.CaptureErrorAndWait(err, nil)
-		logger.Error("listenandserve", slog.Any("error", err))
+		a.Crash(serverCtx, err)
 		panic(err)
 	}
 }
 
-func startKafka(srv server.Server, logger *slog.Logger) {
+func startKafka(srv server.Server, logger *slog.Logger, a alerter) {
 	ctx := context.Background()
 	logger.Debug("Initializing Kafka consumers")
-	err := kafka.StartConsumers(ctx, &srv, logger)
+	err := kafka.StartConsumers(ctx, &srv, logger, a)
 
 	if err != nil {
 		logger.Error("startkafka", slog.Any("error", err))
+		a.Outage(ctx, err)
 		// If err is something then start consumer again
 		time.Sleep(10 * time.Second)
-		startKafka(srv, logger)
+		startKafka(srv, logger, a)
 	}
 }

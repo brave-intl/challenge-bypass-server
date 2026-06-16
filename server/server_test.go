@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,9 +22,8 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/utils/test"
 
-	"github.com/brave-intl/bat-go/libs/middleware"
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
-	uuid "github.com/satori/go.uuid"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -49,15 +49,17 @@ func (suite *ServerTestSuite) SetupSuite() {
 	err := os.Setenv("ENV", "localtest")
 	suite.Require().NoError(err)
 
-	suite.accessToken = uuid.NewV4().String()
-	middleware.TokenList = []string{suite.accessToken}
+	uuidV4, err := uuid.NewRandom()
+	suite.Require().NoError(err)
+	suite.accessToken = uuidV4.String()
+	TokenList = []string{suite.accessToken}
 
 	suite.srv = &Server{}
 
 	err = suite.srv.InitDBConfig()
 	suite.Require().NoError(err, "Failed to setup db conn")
 
-	suite.srv.InitDB()
+	suite.srv.InitDB(slog.New(slog.DiscardHandler))
 	suite.srv.InitDynamo()
 
 	_, suite.handler = suite.srv.setupRouter(

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/brave-intl/challenge-bypass-server/utils/alert"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 )
@@ -26,6 +27,7 @@ func (r *testMessageReader) Stats() kafka.ReaderStats {
 
 func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 	nopLog := slog.New(slog.DiscardHandler)
+	a := alert.New(nopLog)
 	t.Run("AbsentTopicClosesMsg", func(t *testing.T) {
 		t.Parallel()
 
@@ -43,7 +45,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 			select {}
 		}
 		go processMessagesIntoBatchPipeline(context.Background(),
-			nil, r, batchPipeline, nopLog)
+			nil, r, batchPipeline, nopLog, a)
 		msg := <-batchPipeline
 		assert.NotNil(t, msg)
 		<-msg.done
@@ -95,7 +97,7 @@ func TestProcessMessagesIntoBatchPipeline(t *testing.T) {
 		}}
 
 		go processMessagesIntoBatchPipeline(context.Background(),
-			topicMappings, r, batchPipeline, nopLog)
+			topicMappings, r, batchPipeline, nopLog, a)
 		for i := 0; i < 2*N; i++ {
 			msg := <-batchPipeline
 			assert.NotNil(t, msg)
