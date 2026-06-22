@@ -947,3 +947,61 @@ func issueTokensViaKafka(
 
 	return tokens, blindedTokens, signingResultSet
 }
+
+// TestMetricsEndpoints verifies that both independently-running instances expose
+// Prometheus metrics on :9090/metrics. The API instance reaches ServeMetrics via
+// ListenAndServe, while the Kafka worker instance calls ServeMetrics before it
+// blocks on the consumer loop and never serves the API port. This guards the
+// metrics endpoint that deployment health checks rely on against either startup
+// path regressing.
+func TestMetricsEndpoints(t *testing.T) {
+	t.Log("TESTING METRICS ENDPOINTS ON BOTH INSTANCES")
+
+	instances := []struct {
+		name string
+		url  string
+	}{
+		{"api", "http://cbp:9090/metrics"},
+		{"kafka-worker", "http://cbp-kafka:9090/metrics"},
+	}
+
+	for _, instance := range instances {
+		t.Run(instance.name, func(t *testing.T) {
+			body := fetchMetrics(t, instance.url)
+			assert.Contains(t, string(body), "# HELP",
+				"metrics from %s should be in Prometheus exposition format", instance.url)
+			assert.Contains(t, string(body), "go_",
+				"metrics from %s should include the default Go runtime metrics", instance.url)
+		})
+	}
+}
+
+// fetchMetrics GETs url, retrying until it returns 200 OK or maxRetries is
+// reached, and returns the response body. It fails the test if the endpoint
+// never becomes available.
+func fetchMetrics(t *testing.T, url string) []byte {
+	t.Helper()
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		resp, err := http.Get(url)
+		if err != nil {
+			lastErr = err
+			time.Sleep(retryInterval)
+			continue
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if readErr != nil {
+			lastErr = readErr
+			time.Sleep(retryInterval)
+			continue
+		}
+		if resp.StatusCode == http.StatusOK {
+			return body
+		}
+		lastErr = fmt.Errorf("unexpected status %d from %s", resp.StatusCode, url)
+		time.Sleep(retryInterval)
+	}
+	require.NoErrorf(t, lastErr, "metrics endpoint %s never returned 200 after %d attempts", url, maxRetries)
+	return nil
+}
