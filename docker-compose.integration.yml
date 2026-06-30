@@ -1,29 +1,52 @@
+# Shared configuration for the challenge-bypass-server containers. The service is
+# now run as two independent processes (see PR "Run Kafka or API Independently"):
+#   - cbp:       HTTP API only (KAFKA_ENABLED=false), serves :2416 for the tests
+#   - cbp-kafka: Kafka consumers only (KAFKA_ENABLED defaults to on)
+# Both share the same postgres/dynamo/kafka backends.
+x-cbp-env: &cbp-env
+  DATABASE_URL: postgresql://testuser:testpassword@postgres:5432/testdb?sslmode=disable
+  VPC_KAFKA_BROKERS: kafka:9092
+  DYNAMODB_ENDPOINT: http://localstack:8000
+  ENV: test
+  REDEEM_CONSUMER_TOPIC: test.consumer.redeem
+  REDEEM_PRODUCER_TOPIC: test.producer.redeem
+  SIGN_CONSUMER_TOPIC: test.consumer.sign
+  SIGN_PRODUCER_TOPIC: test.producer.sign
+  CONSUMER_GROUP: integration-service
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+x-cbp-depends: &cbp-depends
+  postgres:
+    condition: service_healthy
+  kafka:
+    condition: service_healthy
+  localstack:
+    condition: service_healthy
+
 services:
   cbp:
     build: .
-    depends_on:
-      postgres:
-        condition: service_healthy
-      kafka:
-        condition: service_healthy
-      localstack:
-        condition: service_healthy
+    image: challenge-bypass-server-cbp:integration
+    depends_on: *cbp-depends
     environment:
-      - DATABASE_URL=postgresql://testuser:testpassword@postgres:5432/testdb?sslmode=disable
-      - VPC_KAFKA_BROKERS=kafka:9092
-      - DYNAMODB_ENDPOINT=http://localstack:8000
-      - ENV=test
-      - REDEEM_CONSUMER_TOPIC=test.consumer.redeem
-      - REDEEM_PRODUCER_TOPIC=test.producer.redeem
-      - SIGN_CONSUMER_TOPIC=test.consumer.sign
-      - SIGN_PRODUCER_TOPIC=test.producer.sign
-      - CONSUMER_GROUP=integration-service
-      - AWS_REGION=us-east-1
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
+      <<: *cbp-env
+      # API-only process: skip the (blocking) Kafka consumers so the HTTP
+      # server starts and serves :2416.
+      KAFKA_ENABLED: "false"
     ports:
       - "2416:2416"
       - "9090:9090"
+
+  cbp-kafka:
+    build: .
+    image: challenge-bypass-server-cbp:integration
+    depends_on: *cbp-depends
+    # Kafka-only process: KAFKA_ENABLED is unset (defaults to on), so this runs
+    # the consumers and never starts the HTTP server. No ports are published.
+    environment:
+      <<: *cbp-env
 
   postgres:
     image: postgres:latest
@@ -88,6 +111,8 @@ services:
       - test
     depends_on:
       cbp:
+        condition: service_started
+      cbp-kafka:
         condition: service_started
       kafka:
         condition: service_healthy
