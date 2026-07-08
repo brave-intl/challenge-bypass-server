@@ -49,6 +49,11 @@ func (r *blindedTokenRedeemRequest) isEmpty() bool {
 
 type blindedTokenRedeemResponse struct {
 	Cohort int16 `json:"cohort"`
+
+	// Equivalence is set when the token was already redeemed: "binding"
+	// (with HTTP 200) when the request is a replay of the original
+	// redemption and is therefore idempotent.
+	Equivalence string `json:"equivalence,omitempty"`
 }
 
 // BlindedTokenRedemptionInfo - this is the redemption information
@@ -309,18 +314,33 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload, 0); err != nil {
 		c.Logger.Error("error redeeming token")
 		if errors.Is(err, errDuplicateRedemption) {
+			_, equiv, eqErr := c.CheckRedeemedTokenEquivalence(issuer, request.TokenPreimage, request.Payload, 0)
+
+			// A replay of the original redemption is idempotent, not a conflict.
+			if eqErr == nil && equiv == BindingEquivalence {
+				result := blindedTokenRedeemResponse{
+					Cohort:      issuer.IssuerCohort,
+					Equivalence: "binding",
+				}
+
+				if err := RenderContent(result, w, http.StatusOK); err != nil {
+					return &AppError{
+						Cause:   err,
+						Message: "Error encoding response",
+						Code:    http.StatusInternalServerError,
+					}
+				}
+
+				return nil
+			}
+
 			appErr := &AppError{
 				Message: err.Error(),
 				Code:    http.StatusConflict,
 			}
 
-			if _, equiv, eqErr := c.CheckRedeemedTokenEquivalence(issuer, request.TokenPreimage, request.Payload, 0); eqErr == nil {
-				switch equiv {
-				case BindingEquivalence:
-					appErr.Equivalence = "binding"
-				case IDEquivalence:
-					appErr.Equivalence = "id"
-				}
+			if eqErr == nil && equiv == IDEquivalence {
+				appErr.Equivalence = "id"
 			}
 
 			return appErr
@@ -333,7 +353,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	result := blindedTokenRedeemResponse{issuer.IssuerCohort}
+	result := blindedTokenRedeemResponse{Cohort: issuer.IssuerCohort}
 
 	if err := RenderContent(result, w, http.StatusOK); err != nil {
 		return &AppError{
@@ -429,7 +449,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				Code:    http.StatusInternalServerError,
 			}
 		}
-		response = blindedTokenRedeemResponse{verifiedCohort}
+		response = blindedTokenRedeemResponse{Cohort: verifiedCohort}
 	}
 
 	if err := RenderContent(response, w, http.StatusOK); err != nil {

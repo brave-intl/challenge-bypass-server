@@ -79,7 +79,8 @@ type blindedTokenRedeemRequest struct {
 }
 
 type blindedTokenRedeemResponse struct {
-	Cohort int32 `json:"cohort"`
+	Cohort      int32  `json:"cohort"`
+	Equivalence string `json:"equivalence"`
 }
 
 type redeemErrorResponse struct {
@@ -730,6 +731,29 @@ func testHTTPRedemption(
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Should read response body")
 
+		if endpoint == RedeemV3 {
+			// A replay of the original redemption is idempotent.
+			assert.Equal(
+				t,
+				http.StatusOK,
+				resp.StatusCode,
+				`Replay of the same redemption should be idempotent.
+				Instead received: %s
+				Request: %s`,
+				body,
+				jsonData,
+			)
+
+			var actual blindedTokenRedeemResponse
+			require.NoError(t, json.Unmarshal(body, &actual))
+
+			assert.Equal(t, issuerCohort, actual.Cohort)
+			assert.Equal(t, "binding", actual.Equivalence,
+				"Replay of the same request should report binding equivalence")
+
+			return
+		}
+
 		assert.Equal(
 			t,
 			http.StatusConflict,
@@ -740,14 +764,6 @@ func testHTTPRedemption(
 			body,
 			jsonData,
 		)
-
-		if endpoint == RedeemV3 {
-			var actual redeemErrorResponse
-			require.NoError(t, json.Unmarshal(body, &actual))
-
-			assert.Equal(t, "binding", actual.Equivalence,
-				"Replay of the same request should report binding equivalence")
-		}
 	})
 
 	if endpoint == RedeemV3 {
