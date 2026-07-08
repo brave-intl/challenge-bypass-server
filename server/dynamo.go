@@ -224,7 +224,7 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		TTL:       redemptionTTL(issuer),
 	}
 
-	existingRedemption, err := c.fetchRedemptionV2(*issuer.ID)
+	existingRedemption, err := c.fetchRedemptionV2(id)
 
 	// If err is nil that means that the record does exist in the database and we need
 	// to determine whether the body is equivalent to what was provided or just the
