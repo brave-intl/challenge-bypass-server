@@ -309,10 +309,21 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 	if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload, 0); err != nil {
 		c.Logger.Error("error redeeming token")
 		if errors.Is(err, errDuplicateRedemption) {
-			return &AppError{
+			appErr := &AppError{
 				Message: err.Error(),
 				Code:    http.StatusConflict,
 			}
+
+			if _, equiv, eqErr := c.CheckRedeemedTokenEquivalence(issuer, request.TokenPreimage, request.Payload, 0); eqErr == nil {
+				switch equiv {
+				case BindingEquivalence:
+					appErr.Equivalence = "binding"
+				case IDEquivalence:
+					appErr.Equivalence = "id"
+				}
+			}
+
+			return appErr
 		}
 
 		return &AppError{

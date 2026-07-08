@@ -12,6 +12,12 @@ type AppError struct {
 	Cause   error  `json:"-"`
 	Message string `json:"message"`
 	Code    int    `json:"-"`
+
+	// Equivalence is set on duplicate-redemption responses to tell the
+	// caller whether the request is a replay of the original redemption
+	// ("binding") or the same token presented with a different payload
+	// ("id").
+	Equivalence string `json:"equivalence,omitempty"`
 }
 
 // Error returns the error message

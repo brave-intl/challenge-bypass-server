@@ -82,6 +82,11 @@ type blindedTokenRedeemResponse struct {
 	Cohort int32 `json:"cohort"`
 }
 
+type redeemErrorResponse struct {
+	Message     string `json:"message"`
+	Equivalence string `json:"equivalence"`
+}
+
 func TestMain(m *testing.M) {
 	setup()
 	result := m.Run()
@@ -735,7 +740,51 @@ func testHTTPRedemption(
 			body,
 			jsonData,
 		)
+
+		if endpoint == RedeemV3 {
+			var actual redeemErrorResponse
+			require.NoError(t, json.Unmarshal(body, &actual))
+
+			assert.Equal(t, "binding", actual.Equivalence,
+				"Replay of the same request should report binding equivalence")
+		}
 	})
+
+	if endpoint == RedeemV3 {
+		t.Run("duplicate_redemption_different_payload", func(t *testing.T) {
+			differentPayload := "test-different"
+			differentSignature, err := token.UnblindedToken.DeriveVerificationKey().Sign(differentPayload)
+			require.NoError(t, err, "Should be able to sign different payload")
+
+			differentRequest := blindedTokenRedeemRequest{
+				Payload:       differentPayload,
+				TokenPreimage: token.UnblindedToken.Preimage(),
+				Signature:     differentSignature,
+			}
+
+			differentJSON, err := json.Marshal(differentRequest)
+			require.NoError(t, err, "Should marshal different-payload request")
+
+			differentReq, err := http.NewRequest("POST", url, bytes.NewBuffer(differentJSON))
+			require.NoError(t, err, "Should create HTTP request")
+			differentReq.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(differentReq)
+			require.NoError(t, err, "Should make HTTP request")
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err, "Should read response body")
+
+			assert.Equal(t, http.StatusConflict, resp.StatusCode,
+				"Same token with a different payload should be blocked with 409 Conflict")
+
+			var actual redeemErrorResponse
+			require.NoError(t, json.Unmarshal(body, &actual))
+
+			assert.Equal(t, "id", actual.Equivalence,
+				"Same token with a different payload should report id equivalence")
+		})
+	}
 }
 
 func waitForKafka(logger *log.Logger) {
