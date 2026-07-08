@@ -66,6 +66,9 @@ func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(err.Code)
 		// Create the error response
 		errorResponse := map[string]string{"message": err.Message}
+		if err.Equivalence != "" {
+			errorResponse["equivalence"] = err.Equivalence
+		}
 		if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
 			// If we can't encode the error response, log it and send a plain text error
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)
