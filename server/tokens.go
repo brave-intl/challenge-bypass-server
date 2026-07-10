@@ -313,7 +313,7 @@ func (c *Server) blindedTokenRedeemHandlerV3(w http.ResponseWriter, r *http.Requ
 
 	if err := c.RedeemToken(issuer, request.TokenPreimage, request.Payload, 0); err != nil {
 		c.Logger.Error("error redeeming token")
-		if errors.Is(err, errDuplicateRedemption) {
+		if errors.Is(err, ErrDuplicateRedemption) {
 			_, equiv, eqErr := c.CheckRedeemedTokenEquivalence(issuer, request.TokenPreimage, request.Payload, 0)
 
 			// A replay of the original redemption is idempotent, not a conflict.
@@ -437,7 +437,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 		}
 
 		if err := c.RedeemToken(verifiedIssuer, request.TokenPreimage, request.Payload, 0); err != nil {
-			if errors.Is(err, errDuplicateRedemption) {
+			if errors.Is(err, ErrDuplicateRedemption) {
 				return &AppError{
 					Message: err.Error(),
 					Code:    http.StatusConflict,
@@ -523,7 +523,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 		if err := redeemTokenWithDB(tx, token.Issuer, token.TokenPreimage, request.Payload); err != nil {
 			c.Logger.Error(err.Error())
 			_ = tx.Rollback()
-			if err == errDuplicateRedemption {
+			if errors.Is(err, ErrDuplicateRedemption) {
 				return &AppError{
 					Message: err.Error(),
 					Code:    http.StatusConflict,

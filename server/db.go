@@ -58,8 +58,10 @@ type RedemptionV2 struct {
 var (
 	errIssuerNotFound       = errors.New("issuer with the given name does not exist")
 	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
-	errDuplicateRedemption  = errors.New("duplicate Redemption")
-	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
+	// ErrDuplicateRedemption is returned when a token has already been redeemed.
+	// Exported so callers in other packages (e.g. kafka) can match it with errors.Is.
+	ErrDuplicateRedemption = errors.New("duplicate redemption")
+	errRedemptionNotFound  = errors.New("redemption with the given id does not exist")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
@@ -1104,7 +1106,7 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, stringIssuer, payload)
 	if err != nil {
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		return err
 	}

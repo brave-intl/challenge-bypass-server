@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/segmentio/kafka-go"
@@ -305,7 +304,7 @@ func SignedTokenRedeemHandler(
 			// In the unlikely event that there is a race condition that results
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
-			if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			if errors.Is(err, cbpServer.ErrDuplicateRedemption) {
 				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
