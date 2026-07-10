@@ -1,4 +1,4 @@
-FROM rust:1.69 AS rust_builder
+FROM rust:1.85 AS rust_builder
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools
 RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
