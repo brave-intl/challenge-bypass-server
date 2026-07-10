@@ -79,7 +79,13 @@ type blindedTokenRedeemRequest struct {
 }
 
 type blindedTokenRedeemResponse struct {
-	Cohort int32 `json:"cohort"`
+	Cohort      int32  `json:"cohort"`
+	Equivalence string `json:"equivalence"`
+}
+
+type redeemErrorResponse struct {
+	Message     string `json:"message"`
+	Equivalence string `json:"equivalence"`
 }
 
 func TestMain(m *testing.M) {
@@ -152,6 +158,7 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 	})
 
 	t.Run("process_signing_results", func(t *testing.T) {
+		redeemFlowTested := false
 		for i, result := range signingResultSet.Data {
 			t.Logf(
 				"Processing signing result %d/%d",
@@ -197,8 +204,10 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 				continue
 			}
 
-			// Verify the rest of the test. This only needs to run once
-			if i == 0 {
+			// Verify the rest of the test. This only needs to run once,
+			// using the first key that is currently valid.
+			if !redeemFlowTested {
+				redeemFlowTested = true
 				t.Run("verify_and_redeem_token", func(t *testing.T) {
 					var signedToken crypto.SignedToken
 					err := signedToken.UnmarshalText([]byte(result.Signed_tokens[0]))
@@ -258,15 +267,14 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						Signature:       string(stringSignature),
 					}
 
-					duplicateRequestID := requestID + "-duplicate"
 					requestSet := &avroSchema.RedeemRequestSet{
-						Request_id: duplicateRequestID,
+						Request_id: requestID,
 						Data:       []avroSchema.RedeemRequest{redeemRequest},
 					}
 
 					var requestSetBuffer bytes.Buffer
 					err = requestSet.Serialize(&requestSetBuffer)
-					require.NoError(t, err, "Should serialize duplicate request")
+					require.NoError(t, err, "Should serialize redeem request")
 
 					writer := kafka.NewWriter(kafka.WriterConfig{
 						Brokers: []string{kafkaHost},
@@ -316,20 +324,79 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 						result := resultSet.Data[0]
 						assert.NotEmpty(t, result.Issuer_name, "Should have issuer name")
 						assert.Greater(t, result.Issuer_cohort, int32(-1), "Should have valid cohort")
-						assert.Contains(t,
-							[]avroSchema.RedeemResultStatus{
-								avroSchema.RedeemResultStatusOk,
-								avroSchema.RedeemResultStatusIdempotent_redemption,
-							},
+						assert.Equal(t,
+							avroSchema.RedeemResultStatusOk,
 							result.Status,
-							"Redemption should succeed")
+							"First redemption of a fresh token should be ok")
+					})
+
+					t.Run("redeem_idempotent", func(t *testing.T) {
+						// Re-sending the exact same request (same token, same
+						// binding) is a retry and must be idempotent.
+						err = writer.WriteMessages(context.Background(),
+							kafka.Message{
+								Key:   []byte(requestID),
+								Value: requestSetBuffer.Bytes(),
+							},
+						)
+						require.NoError(t, err, "Should write retry request")
+
+						ctx, cancel := context.WithTimeout(
+							context.Background(),
+							responseWaitDuration,
+						)
+						defer cancel()
+
+						message, err := reader.ReadMessage(ctx)
+						require.NoError(t, err, "Should read retry response")
+
+						resultSet, err := avroSchema.DeserializeRedeemResultSet(
+							bytes.NewReader(message.Value),
+						)
+						require.NoError(t, err, "Should deserialize retry response")
+
+						require.Equal(t, requestID, resultSet.Request_id,
+							"Retry response ID should match")
+
+						require.NotEmpty(t, resultSet.Data, "Should have retry results")
+
+						assert.Equal(t,
+							avroSchema.RedeemResultStatusIdempotent_redemption,
+							resultSet.Data[0].Status,
+							"Exact retry should be reported as idempotent")
 					})
 
 					t.Run("redeem_duplicate", func(t *testing.T) {
+						// The same token bound to a different payload is a
+						// double spend and must be flagged as a duplicate.
+						const differentBinding = "test-different-binding"
+
+						duplicateSignature, err := signedUnblindedToken.DeriveVerificationKey().Sign(differentBinding)
+						require.NoError(t, err, "Should sign the different binding")
+
+						duplicateSignatureText, err := duplicateSignature.MarshalText()
+						require.NoError(t, err, "Should marshal the duplicate signature")
+
+						duplicateRequestID := requestID + "-duplicate"
+						duplicateSet := &avroSchema.RedeemRequestSet{
+							Request_id: duplicateRequestID,
+							Data: []avroSchema.RedeemRequest{{
+								Associated_data: testMetadata,
+								Public_key:      result.Issuer_public_key,
+								Token_preimage:  string(tokenPreimage),
+								Binding:         differentBinding,
+								Signature:       string(duplicateSignatureText),
+							}},
+						}
+
+						var duplicateBuffer bytes.Buffer
+						err = duplicateSet.Serialize(&duplicateBuffer)
+						require.NoError(t, err, "Should serialize duplicate request")
+
 						err = writer.WriteMessages(context.Background(),
 							kafka.Message{
 								Key:   []byte(duplicateRequestID),
-								Value: requestSetBuffer.Bytes(),
+								Value: duplicateBuffer.Bytes(),
 							},
 						)
 						require.NoError(t, err, "Should write duplicate request")
@@ -353,11 +420,10 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 
 						require.NotEmpty(t, resultSet.Data, "Should have duplicate results")
 
-						result := resultSet.Data[0]
 						assert.Equal(t,
 							avroSchema.RedeemResultStatusDuplicate_redemption,
-							result.Status,
-							"Duplicate redemption should be detected")
+							resultSet.Data[0].Status,
+							"Same token with a different binding should be a duplicate")
 					})
 				})
 
@@ -365,6 +431,9 @@ func TestKafkaTokenIssuanceAndRedeemFlow(t *testing.T) {
 				break
 			}
 		}
+
+		require.True(t, redeemFlowTested,
+			"no currently-valid signing key in the results; redemption flow was not exercised")
 	})
 }
 
@@ -662,6 +731,29 @@ func testHTTPRedemption(
 		body, err := io.ReadAll(resp.Body)
 		require.NoError(t, err, "Should read response body")
 
+		if endpoint == RedeemV3 {
+			// A replay of the original redemption is idempotent.
+			assert.Equal(
+				t,
+				http.StatusOK,
+				resp.StatusCode,
+				`Replay of the same redemption should be idempotent.
+				Instead received: %s
+				Request: %s`,
+				body,
+				jsonData,
+			)
+
+			var actual blindedTokenRedeemResponse
+			require.NoError(t, json.Unmarshal(body, &actual))
+
+			assert.Equal(t, issuerCohort, actual.Cohort)
+			assert.Equal(t, "binding", actual.Equivalence,
+				"Replay of the same request should report binding equivalence")
+
+			return
+		}
+
 		assert.Equal(
 			t,
 			http.StatusConflict,
@@ -673,6 +765,42 @@ func testHTTPRedemption(
 			jsonData,
 		)
 	})
+
+	if endpoint == RedeemV3 {
+		t.Run("duplicate_redemption_different_payload", func(t *testing.T) {
+			differentPayload := "test-different"
+			differentSignature, err := token.UnblindedToken.DeriveVerificationKey().Sign(differentPayload)
+			require.NoError(t, err, "Should be able to sign different payload")
+
+			differentRequest := blindedTokenRedeemRequest{
+				Payload:       differentPayload,
+				TokenPreimage: token.UnblindedToken.Preimage(),
+				Signature:     differentSignature,
+			}
+
+			differentJSON, err := json.Marshal(differentRequest)
+			require.NoError(t, err, "Should marshal different-payload request")
+
+			differentReq, err := http.NewRequest("POST", url, bytes.NewBuffer(differentJSON))
+			require.NoError(t, err, "Should create HTTP request")
+			differentReq.Header.Set("Content-Type", "application/json")
+
+			resp, err := client.Do(differentReq)
+			require.NoError(t, err, "Should make HTTP request")
+			defer resp.Body.Close()
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err, "Should read response body")
+
+			assert.Equal(t, http.StatusConflict, resp.StatusCode,
+				"Same token with a different payload should be blocked with 409 Conflict")
+
+			var actual redeemErrorResponse
+			require.NoError(t, json.Unmarshal(body, &actual))
+
+			assert.Equal(t, "id", actual.Equivalence,
+				"Same token with a different payload should report id equivalence")
+		})
+	}
 }
 
 func waitForKafka(logger *log.Logger) {

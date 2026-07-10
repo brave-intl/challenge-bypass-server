@@ -12,6 +12,10 @@ type AppError struct {
 	Cause   error  `json:"-"`
 	Message string `json:"message"`
 	Code    int    `json:"-"`
+
+	// Equivalence is set on duplicate-redemption responses when the same
+	// token was redeemed with a different payload previously ("id").
+	Equivalence string `json:"equivalence,omitempty"`
 }
 
 // Error returns the error message
@@ -60,6 +64,9 @@ func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(err.Code)
 		// Create the error response
 		errorResponse := map[string]string{"message": err.Message}
+		if err.Equivalence != "" {
+			errorResponse["equivalence"] = err.Equivalence
+		}
 		if err := json.NewEncoder(w).Encode(errorResponse); err != nil {
 			// If we can't encode the error response, log it and send a plain text error
 			http.Error(w, "Internal Server Error", http.StatusInternalServerError)

@@ -305,7 +305,7 @@ func SignedTokenRedeemHandler(
 			// In the unlikely event that there is a race condition that results
 			// in a duplicate error upon save that was not detected previously
 			// we will check equivalence upon receipt of a duplicate error.
-			if strings.Contains(err.Error(), "Duplicate") {
+			if strings.Contains(strings.ToLower(err.Error()), "duplicate") {
 				_, equivalence, err := server.CheckRedeemedTokenEquivalence(verifiedIssuer, &tokenPreimage, request.Binding, msg.Offset)
 				if err != nil {
 					message := fmt.Sprintf("request %s: failed to check redemption equivalence", tokenRedeemRequestSet.Request_id)
