@@ -1,3 +1,6 @@
+//go:build db
+// +build db
+
 package server
 
 import (

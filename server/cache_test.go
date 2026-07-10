@@ -394,8 +394,7 @@ func TestBootstrapCache(t *testing.T) {
 			require.NotNil(t, caches.Redemptions, "Expected Redemptions cache")
 			require.NotNil(t, caches.IssuerCohort, "Expected IssuerCohort cache")
 
-			issuerCache, ok := caches.Issuer.(*SimpleCache[*model.Issuer])
-			require.True(t, ok, "Expected Issuer cache to be *SimpleCache")
+			issuerCache := caches.Issuer
 			assert.Equal(t, tt.wantExpiration, issuerCache.defaultExpiration,
 				"Expected defaultExpiration for Issuer cache")
 			assert.Equal(t, tt.wantCleanup, issuerCache.cleanupInterval,

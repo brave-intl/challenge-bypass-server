@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 )
 
@@ -53,13 +52,8 @@ type AppHandler func(http.ResponseWriter, *http.Request) *AppError
 // ServeHTTP makes AppHandler satisfy the http.Handler interface
 func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := fn(w, r); err != nil {
-		// Log the error
-		if logger, ok := r.Context().Value("logger").(*slog.Logger); ok && err.Cause != nil {
-			logger.Error("handler error",
-				slog.String("message", err.Message),
-				slog.Any("error", err.Cause))
-		}
-		// Render the error response
+		// Render the error response. Handlers log their own cause before
+		// returning, so there is no logging at this edge.
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(err.Code)
 		// Create the error response
