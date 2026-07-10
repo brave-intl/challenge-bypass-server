@@ -1,15 +1,15 @@
 package btd
 
 import (
+	"encoding/base64"
+	"errors"
 	"log"
 	"testing"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 )
 
-var (
-	testPayload = "Some test payload"
-)
+var testPayload = "Some test payload"
 
 // Generates a small but well-formed ISSUE request for testing.
 func makeTokenIssueRequest() ([]*crypto.Token, []*crypto.BlindedToken, error) {
@@ -145,6 +145,61 @@ func TestTokenRedemption(t *testing.T) {
 	err = VerifyTokenRedemption(preimage3, sig3, testPayload, redeemKeys)
 	if err == nil {
 		t.Fatal("This redemption should not be verified correctly.")
+	}
+}
+
+// TestIdentityPreimageRejected is a regression test for the identity
+// preimage bug: a preimage that hashes to the group identity makes the
+// rederived point (and thus the derived MAC key) a constant independent of the
+// signing key.
+func TestIdentityPreimageRejected(t *testing.T) {
+	sKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const payload = "redeem: 1 BAT reward token"
+
+	// Identity preimage: 64 zero bytes hash to the ristretto identity.
+	preimageB64 := base64.StdEncoding.EncodeToString(make([]byte, 64))
+	preimage := &crypto.TokenPreimage{}
+	if err := preimage.UnmarshalText([]byte(preimageB64)); err != nil {
+		t.Fatal(err)
+	}
+
+	// Identity unblinded token: preimage(64) || W(32), with W set to the
+	// identity's all-zero compressed encoding.
+	identityUnblindedB64 := base64.StdEncoding.EncodeToString(make([]byte, 96))
+	f := &crypto.UnblindedToken{}
+	if err := f.UnmarshalText([]byte(identityUnblindedB64)); err != nil {
+		t.Fatal(err)
+	}
+
+	fSig, err := f.DeriveVerificationKey().Sign(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity check the token is well-formed: without the guard the MAC
+	// matches the server's rederived key, so this is not merely a bad MAC.
+	if identity, err := isIdentityUnblindedToken(sKey.RederiveUnblindedToken(preimage)); err != nil {
+		t.Fatal(err)
+	} else if !identity {
+		t.Fatal("expected the rederived token to be the identity")
+	}
+
+	err = VerifyTokenRedemption(preimage, fSig, payload, []*crypto.SigningKey{sKey})
+	if !errors.Is(err, ErrIdentityPreimage) {
+		t.Fatalf("identity-preimage token must be rejected with ErrIdentityPreimage, got: %v", err)
+	}
+
+	// Key independence: a second, unrelated key must reject it the same way.
+	sKey2, err := crypto.RandomSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyTokenRedemption(preimage, fSig, payload, []*crypto.SigningKey{sKey2}); !errors.Is(err, ErrIdentityPreimage) {
+		t.Fatalf("identity-preimage token must be rejected for any key, got: %v", err)
 	}
 }
 

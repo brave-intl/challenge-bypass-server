@@ -1,6 +1,7 @@
 package btd
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 
@@ -11,6 +12,9 @@ import (
 var (
 	// ErrInvalidMAC - the mac was invalid
 	ErrInvalidMAC = errors.New("binding MAC didn't match derived MAC")
+	// ErrIdentityPreimage - the preimage hashes to the group identity, which
+	// makes the derived point and MAC key independent of the signing key
+	ErrIdentityPreimage = errors.New("token preimage hashes to the identity element")
 	// ErrInvalidBatchProof - the batch proof was invalid
 	ErrInvalidBatchProof = errors.New("new batch proof for signed tokens is invalid")
 
@@ -125,6 +129,17 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 		// Derive the unblinded token using a server's key and the client's preimage.
 		unblindedToken := keys[i].RederiveUnblindedToken(preimage)
 
+		// A preimage that hashes to the group identity makes the rederived
+		// point (and hence the derived MAC key) independent of the signing
+		// key.
+		identityDetected, idErr := isIdentityUnblindedToken(unblindedToken)
+		if idErr != nil {
+			return idErr
+		}
+		if identityDetected {
+			return ErrIdentityPreimage
+		}
+
 		timerUT := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
 
 		// Derive the shared key from the unblinded token.
@@ -153,4 +168,36 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 	}
 
 	return nil
+}
+
+// isIdentityUnblindedToken reports whether the rederived point W of an
+// unblinded token is the ristretto identity element. The token serializes as
+// base64 of preimage(64) || W(32). The identity's compressed encoding is 32
+// zero bytes so W is the identity iff the trailing 32 bytes are all zero.
+func isIdentityUnblindedToken(t *crypto.UnblindedToken) (bool, error) {
+	text, err := t.MarshalText()
+	if err != nil {
+		return false, err
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(string(text))
+	if err != nil {
+		return false, err
+	}
+
+	const (
+		preimageLen = 64
+		pointLen    = 32
+	)
+	if len(raw) != preimageLen+pointLen {
+		return false, fmt.Errorf("unexpected unblinded token length %d", len(raw))
+	}
+
+	for _, b := range raw[preimageLen:] {
+		if b != 0 {
+			return false, nil
+		}
+	}
+
+	return true, nil
 }
