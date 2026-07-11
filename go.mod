@@ -9,7 +9,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.29.14
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.18.4
 	github.com/brave-intl/bat-go/libs v0.0.0-20250515184320-890ea7676fc7
-	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20251210210426-8c4760474929
+	github.com/brave-intl/challenge-bypass-ristretto-ffi v0.0.0-20251210205158-42ee6aca8b47
 	github.com/go-chi/chi/v5 v5.2.4
 	github.com/go-chi/httplog/v3 v3.3.0
 	github.com/golang-migrate/migrate/v4 v4.18.3
