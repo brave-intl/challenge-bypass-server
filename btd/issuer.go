@@ -148,12 +148,12 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 // to the group identity element is rejected per RFC 9497 Section 3.3.1.
 func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
 	for i := range keys {
-		// RederiveUnblindedTokenRfc returns an error only when the preimage maps
-		// to the group identity element (RFC 9497 Section 3.3.1), so treat any
-		// error here as that rejection.
+		// Rederivation fails if the preimage maps to the group identity element
+		// (RFC 9497 Section 3.3.1) or if the signing key or preimage handle is
+		// invalid; either way the redemption cannot be verified.
 		unblindedToken, err := keys[i].RederiveUnblindedTokenRfc(preimage)
 		if err != nil {
-			return ErrIdentityPreimage
+			return fmt.Errorf("rederive rfc unblinded token: %w", err)
 		}
 
 		timerUT := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
