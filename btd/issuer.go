@@ -4,16 +4,23 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// acceptLegacyDerivation controls whether redemptions using the legacy point
+// derivation are accepted alongside the RFC 9497 HashToGroup derivation.
+// Defaults to true; set ACCEPT_LEGACY_TOKENS=false to accept only RFC 9497
+// redemptions.
+var acceptLegacyDerivation = os.Getenv("ACCEPT_LEGACY_TOKENS") != "false"
+
 var (
 	// ErrInvalidMAC - the mac was invalid
 	ErrInvalidMAC = errors.New("binding MAC didn't match derived MAC")
-	// ErrIdentityPreimage - the preimage hashes to the group identity, which
-	// makes the derived point and MAC key independent of the signing key
+	// ErrIdentityPreimage - HashToGroup(preimage) produced the group identity
+	// element, which RFC 9497 Section 3.3.1 requires be rejected (InvalidInputError)
 	ErrIdentityPreimage = errors.New("token preimage hashes to the identity element")
 	// ErrInvalidBatchProof - the batch proof was invalid
 	ErrInvalidBatchProof = errors.New("new batch proof for signed tokens is invalid")
@@ -120,6 +127,67 @@ func ApproveTokens(blindedTokens []*crypto.BlindedToken, key *crypto.SigningKey)
 // and MAC according a set of keys.
 // Keys keeps a set of private keys that are ever used to sign the token so we can rotate private key easily.
 func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
+	if !acceptLegacyDerivation {
+		// Accept only RFC 9497 HashToGroup redemptions.
+		return verifyTokenRedemptionRFC(preimage, signature, payload, keys)
+	}
+
+	err := verifyTokenRedemption(preimage, signature, payload, keys)
+	if err == nil || errors.Is(err, ErrIdentityPreimage) {
+		return err
+	}
+
+	// Clients that derive the point with RFC 9497 HashToGroup (RFC 9380
+	// hash_to_ristretto255) verify here; the derivation above serves clients
+	// that derive it directly.
+	if rfcErr := verifyTokenRedemptionRFC(preimage, signature, payload, keys); rfcErr == nil {
+		return nil
+	}
+
+	return err
+}
+
+// verifyTokenRedemptionRFC verifies a redemption whose point is derived with
+// RFC 9497 HashToGroup (hash_to_ristretto255) and whose verification key is the
+// RFC 9497 finalization over the preimage and that point. A preimage that maps
+// to the group identity element is rejected per RFC 9497 Section 3.3.1.
+func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
+	var valid bool
+	for i := range keys {
+		verifyTokenRedemptionCounter.Add(1)
+
+		// Rederive the unblinded token with the RFC HashToGroup point
+		// derivation. This rejects a preimage that maps to the group identity.
+		unblindedToken, err := keys[i].RederiveUnblindedTokenRfc(preimage)
+		if err != nil {
+			return ErrIdentityPreimage
+		}
+
+		timerUT := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
+		sharedKey := unblindedToken.DeriveVerificationKeyRfc()
+		_ = timerUT.ObserveDuration()
+
+		timerVrf := prometheus.NewTimer(verifyTokenSignatureDuration)
+		ok, err := sharedKey.Verify(signature, payload)
+		if err != nil {
+			_ = timerVrf.ObserveDuration()
+			return err
+		}
+		_ = timerVrf.ObserveDuration()
+
+		if ok {
+			valid = true
+			break
+		}
+	}
+
+	if !valid {
+		return fmt.Errorf("%s, payload: %s", ErrInvalidMAC.Error(), payload)
+	}
+	return nil
+}
+
+func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
 	var valid bool
 	var err error
 
@@ -129,9 +197,8 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 		// Derive the unblinded token using a server's key and the client's preimage.
 		unblindedToken := keys[i].RederiveUnblindedToken(preimage)
 
-		// A preimage that hashes to the group identity makes the rederived
-		// point (and hence the derived MAC key) independent of the signing
-		// key.
+		// Reject a preimage whose derived point is the group identity element,
+		// per RFC 9497 Section 3.3.1 (InvalidInputError).
 		identityDetected, idErr := isIdentityUnblindedToken(unblindedToken)
 		if idErr != nil {
 			return idErr
