@@ -123,26 +123,23 @@ func ApproveTokens(blindedTokens []*crypto.BlindedToken, key *crypto.SigningKey)
 // and MAC according a set of keys.
 // Keys keeps a set of private keys that are ever used to sign the token so we can rotate private key easily.
 func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
+	verifyTokenRedemptionCounter.Add(1)
+
 	if !acceptLegacyDerivation {
 		// Accept only RFC 9497 HashToGroup redemptions.
 		return verifyTokenRedemptionRFC(preimage, signature, payload, keys)
 	}
 
+	// Try the legacy derivation first. Only a MAC mismatch means the token may
+	// instead use the RFC 9497 HashToGroup (RFC 9380 hash_to_ristretto255)
+	// derivation, so fall back to that path in that case alone; any other error
+	// (including an identity preimage) is terminal.
 	err := verifyTokenRedemption(preimage, signature, payload, keys)
-	if err == nil || errors.Is(err, ErrIdentityPreimage) {
+	if !errors.Is(err, ErrInvalidMAC) {
 		return err
 	}
 
-	// Clients that derive the point with RFC 9497 HashToGroup (RFC 9380
-	// hash_to_ristretto255) verify here; the derivation above serves clients
-	// that derive it directly. Surface an identity-element rejection from this
-	// derivation too, mirroring the legacy check above.
-	rfcErr := verifyTokenRedemptionRFC(preimage, signature, payload, keys)
-	if rfcErr == nil || errors.Is(rfcErr, ErrIdentityPreimage) {
-		return rfcErr
-	}
-
-	return err
+	return verifyTokenRedemptionRFC(preimage, signature, payload, keys)
 }
 
 // verifyTokenRedemptionRFC verifies a redemption whose point is derived with
@@ -150,12 +147,10 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 // RFC 9497 finalization over the preimage and that point. A preimage that maps
 // to the group identity element is rejected per RFC 9497 Section 3.3.1.
 func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
-	var valid bool
 	for i := range keys {
-		verifyTokenRedemptionCounter.Add(1)
-
-		// Rederive the unblinded token with the RFC HashToGroup point
-		// derivation. This rejects a preimage that maps to the group identity.
+		// RederiveUnblindedTokenRfc returns an error only when the preimage maps
+		// to the group identity element (RFC 9497 Section 3.3.1), so treat any
+		// error here as that rejection.
 		unblindedToken, err := keys[i].RederiveUnblindedTokenRfc(preimage)
 		if err != nil {
 			return ErrIdentityPreimage
@@ -174,15 +169,11 @@ func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.
 		_ = timerVrf.ObserveDuration()
 
 		if ok {
-			valid = true
-			break
+			return nil
 		}
 	}
 
-	if !valid {
-		return fmt.Errorf("%s, payload: %s", ErrInvalidMAC.Error(), payload)
-	}
-	return nil
+	return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
 }
 
 func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
@@ -190,8 +181,6 @@ func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 	var err error
 
 	for i := range keys {
-		verifyTokenRedemptionCounter.Add(1)
-
 		// Derive the unblinded token using a server's key and the client's preimage.
 		unblindedToken := keys[i].RederiveUnblindedToken(preimage)
 
@@ -229,7 +218,7 @@ func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 	}
 
 	if !valid {
-		return fmt.Errorf("%s, payload: %s", ErrInvalidMAC.Error(), payload)
+		return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
 	}
 
 	return nil
