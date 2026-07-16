@@ -318,3 +318,140 @@ func TestLegacyDerivationDisabled(t *testing.T) {
 		t.Fatalf("RFC redemption must still verify when legacy derivation is disabled: %v", err)
 	}
 }
+
+// TestTokenRedemptionWrongDerivationRejected is a full end-to-end test showing
+// that a verification key built from the wrong derivation path fails validation
+// under BOTH server verification methods (RFC and legacy), and is therefore
+// rejected by VerifyTokenRedemption. The token's unblinded point is derived
+// with the RFC 9497 HashToGroup path; deriving its verification key with the
+// legacy finalization instead yields a signature that pairs with neither
+// method: the RFC method uses a different finalization, and the legacy method
+// rederives a different unblinded point.
+func TestTokenRedemptionWrongDerivationRejected(t *testing.T) {
+	sKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue and unblind a token to obtain a genuine preimage.
+	tokens, blindedTokens, err := makeTokenIssueRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedTokens, dleqProof, err := ApproveTokens(blindedTokens, sKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientUnblindedTokens, err := dleqProof.VerifyAndUnblind(tokens, blindedTokens, signedTokens, sKey.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	preimage := clientUnblindedTokens[0].Preimage()
+
+	// The RFC unblinded point W = k * hash_to_ristretto255(preimage).
+	rfcToken, err := sKey.RederiveUnblindedTokenRfc(preimage)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []*crypto.SigningKey{sKey}
+
+	// Sanity: the correctly derived RFC verification key verifies, so any
+	// rejection below is due to the derivation mismatch, not a bad token.
+	correctSig, err := rfcToken.DeriveVerificationKeyRfc().Sign(testPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyTokenRedemptionRFC(preimage, correctSig, testPayload, keys); err != nil {
+		t.Fatalf("sanity: correctly derived RFC key should verify: %v", err)
+	}
+	// The same token verifies through the dual-accept entry point when its
+	// verification key is generated correctly.
+	if err := VerifyTokenRedemption(preimage, correctSig, testPayload, keys); err != nil {
+		t.Fatalf("same token with a correctly derived key must verify: %v", err)
+	}
+
+	// Wrong derivation: the RFC token, but with its verification key derived
+	// using the legacy finalization.
+	wrongSig, err := rfcToken.DeriveVerificationKey().Sign(testPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// It verifies under neither server method.
+	if err := verifyTokenRedemptionRFC(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("RFC verification must reject a wrong-derivation verification key")
+	}
+	if err := verifyTokenRedemption(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("legacy verification must reject a wrong-derivation verification key")
+	}
+
+	// And the dual-accept entry point, which tries both, rejects it.
+	if err := VerifyTokenRedemption(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("VerifyTokenRedemption must reject a wrong-derivation verification key")
+	}
+}
+
+// TestTokenRedemptionWrongDerivationRejectedLegacy is the legacy counterpart of
+// TestTokenRedemptionWrongDerivationRejected: a token blinded and unblinded with
+// the legacy derivation verifies when its verification key uses the legacy
+// finalization, and is rejected under BOTH server methods when the key is built
+// with the RFC 9497 finalization instead.
+func TestTokenRedemptionWrongDerivationRejectedLegacy(t *testing.T) {
+	sKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Issue and unblind a token; the FFI blinds with the legacy derivation, so
+	// this client unblinded token's point is W = k * from_uniform_bytes(preimage).
+	tokens, blindedTokens, err := makeTokenIssueRequest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedTokens, dleqProof, err := ApproveTokens(blindedTokens, sKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientUnblindedTokens, err := dleqProof.VerifyAndUnblind(tokens, blindedTokens, signedTokens, sKey.PublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	clientUnblindedToken := clientUnblindedTokens[0]
+	preimage := clientUnblindedToken.Preimage()
+
+	keys := []*crypto.SigningKey{sKey}
+
+	// Correct derivation (legacy finalization) verifies, including through the
+	// dual-accept entry point.
+	correctSig, err := clientUnblindedToken.DeriveVerificationKey().Sign(testPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := verifyTokenRedemption(preimage, correctSig, testPayload, keys); err != nil {
+		t.Fatalf("sanity: correctly derived legacy key should verify: %v", err)
+	}
+	if err := VerifyTokenRedemption(preimage, correctSig, testPayload, keys); err != nil {
+		t.Fatalf("same token with a correctly derived key must verify: %v", err)
+	}
+
+	// Wrong derivation: the legacy token, but with its verification key derived
+	// using the RFC 9497 finalization.
+	wrongSig, err := clientUnblindedToken.DeriveVerificationKeyRfc().Sign(testPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// It verifies under neither server method.
+	if err := verifyTokenRedemption(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("legacy verification must reject a wrong-derivation verification key")
+	}
+	if err := verifyTokenRedemptionRFC(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("RFC verification must reject a wrong-derivation verification key")
+	}
+
+	// And the dual-accept entry point, which tries both, rejects it.
+	if err := VerifyTokenRedemption(preimage, wrongSig, testPayload, keys); err == nil {
+		t.Fatal("VerifyTokenRedemption must reject a wrong-derivation verification key")
+	}
+}
