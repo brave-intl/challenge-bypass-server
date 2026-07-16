@@ -139,9 +139,11 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 
 	// Clients that derive the point with RFC 9497 HashToGroup (RFC 9380
 	// hash_to_ristretto255) verify here; the derivation above serves clients
-	// that derive it directly.
-	if rfcErr := verifyTokenRedemptionRFC(preimage, signature, payload, keys); rfcErr == nil {
-		return nil
+	// that derive it directly. Surface an identity-element rejection from this
+	// derivation too, mirroring the legacy check above.
+	rfcErr := verifyTokenRedemptionRFC(preimage, signature, payload, keys)
+	if rfcErr == nil || errors.Is(rfcErr, ErrIdentityPreimage) {
+		return rfcErr
 	}
 
 	return err
