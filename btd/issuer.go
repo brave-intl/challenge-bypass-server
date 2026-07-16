@@ -10,10 +10,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// acceptLegacyDerivation controls whether redemptions using the legacy point
-// derivation are accepted alongside the RFC 9497 HashToGroup derivation.
-// Defaults to true; set ACCEPT_LEGACY_TOKENS=false to accept only RFC 9497
-// redemptions.
 var acceptLegacyDerivation = os.Getenv("ACCEPT_LEGACY_TOKENS") != "false"
 
 var (
