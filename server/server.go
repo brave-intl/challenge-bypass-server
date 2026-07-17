@@ -81,6 +81,19 @@ var (
 		},
 		[]string{"action"},
 	)
+	manageIssuerCallTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cbp_api_manage_issuer_total",
+			Help: "Number of calls to manage issuer HTTP endpoint",
+		},
+		[]string{"action"},
+	)
+	rateLimitExceededTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "cbp_api_rate_limit_exceeded_total",
+			Help: "Number of requests rejected due to rate limiting",
+		},
+	)
 )
 
 // init - Register Metrics for Server
@@ -106,6 +119,9 @@ func init() {
 		v3IssuerCallTotal,
 		// Cron
 		cronTotal,
+		// Management API
+		manageIssuerCallTotal,
+		rateLimitExceededTotal,
 	)
 }
 
@@ -291,6 +307,31 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			// V3 Issuer Routes
 			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
 			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+
+			// =========== Management API Routes ===========
+			// Create rate limiter for management endpoints
+			// Default: 60 requests per minute per IP
+			managementRateLimiter := NewRateLimiter(60, 1*time.Minute)
+			// Start cleanup goroutine to prevent memory leaks (cleanup every hour)
+			managementRateLimiter.CleanupOldLimiters(1 * time.Hour)
+
+			// Apply rate limiting to all management routes
+			r.Route("/api/v1/manage", func(r chi.Router) {
+				r.Use(c.RateLimitMiddleware(managementRateLimiter))
+
+				// Issuer Management Routes
+				r.Method("GET", "/issuers", AppHandler(c.manageListIssuersHandler))
+				r.Method("GET", "/issuers/{id}", AppHandler(c.manageGetIssuerHandler))
+				r.Method("POST", "/issuers", AppHandler(c.manageCreateIssuerHandler))
+				r.Method("DELETE", "/issuers/{id}", AppHandler(c.manageDeleteIssuerHandler))
+
+				// Key Management Routes
+				r.Method("GET", "/issuers/{id}/keys", AppHandler(c.manageListKeysHandler))
+				r.Method("GET", "/issuers/{id}/keys/{keyId}", AppHandler(c.manageGetKeyHandler))
+				r.Method("POST", "/issuers/{id}/keys", AppHandler(c.manageCreateKeyHandler))
+				r.Method("DELETE", "/issuers/{id}/keys/{keyId}", AppHandler(c.manageDeleteKeyHandler))
+				r.Method("POST", "/issuers/{id}/keys/rotate", AppHandler(c.manageRotateKeysHandler))
+			})
 		})
 	})
 

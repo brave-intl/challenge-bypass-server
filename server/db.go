@@ -60,6 +60,7 @@ var (
 	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
 	errDuplicateRedemption  = errors.New("duplicate Redemption")
 	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
+	errKeyNotFound          = errors.New("key with the given id does not exist")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
@@ -475,6 +476,67 @@ func (c *Server) FetchAllIssuers() ([]model.Issuer, error) {
 	return results, nil
 }
 
+// fetchIssuerByID fetches a single issuer by its UUID.
+// This is a simpler variant of fetchIssuer without caching or metrics,
+// primarily used by the management API.
+func (c *Server) fetchIssuerByID(issuerID string) (*model.Issuer, error) {
+	issuer, err := c.fetchIssuer(issuerID)
+	if err != nil {
+		// Unwrap ProcessingError to return the underlying error
+		var procErr *utils.ProcessingError
+		if errors.As(err, &procErr) {
+			if errors.Is(procErr.OriginalError, errIssuerNotFound) {
+				return nil, errIssuerNotFound
+			}
+			return nil, procErr.OriginalError
+		}
+		return nil, err
+	}
+	return issuer, nil
+}
+
+// deleteIssuerByID deletes an issuer and its keys by UUID
+func (c *Server) deleteIssuerByID(issuerID string) (bool, error) {
+	tx, err := c.db.Begin()
+	if err != nil {
+		return false, err
+	}
+
+	defer func() {
+		if err != nil {
+			tx.Rollback()
+		}
+	}()
+
+	// Delete associated keys first
+	_, err = tx.Exec(`DELETE FROM v3_issuer_keys WHERE issuer_id = $1`, issuerID)
+	if err != nil {
+		return false, err
+	}
+
+	// Delete the issuer
+	result, err := tx.Exec(`DELETE FROM v3_issuers WHERE issuer_id = $1`, issuerID)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return false, err
+	}
+
+	// Invalidate caches
+	if c.caches != nil {
+		c.caches.Issuers.Delete("all")
+	}
+
+	return rowsAffected > 0, nil
+}
+
 func (c *Server) fetchIssuerKeysForIssuer(issuerID string) ([]model.IssuerKeys, error) {
 	query := `SELECT signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
               FROM v3_issuer_keys 
@@ -506,6 +568,470 @@ func (c *Server) fetchIssuerKeysForIssuer(issuerID string) ([]model.IssuerKeys, 
 		)
 		if err != nil {
 			return nil, err
+		}
+
+		if publicKey.Valid {
+			key.PublicKey = &publicKey.String
+		}
+
+		if issuerIDStr.Valid {
+			id, err := uuid.Parse(issuerIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			key.IssuerID = &id
+		}
+
+		keys = append(keys, key)
+	}
+
+	return keys, rows.Err()
+}
+
+// fetchAllIssuerKeys fetches all keys for an issuer, optionally including expired ones
+func (c *Server) fetchAllIssuerKeys(issuerID string, includeExpired bool) ([]model.IssuerKeys, error) {
+	var query string
+	if includeExpired {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	} else {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                   AND (end_at > now() OR end_at IS NULL)
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	}
+
+	rows, err := c.dbr.Query(query, issuerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanIssuerKeys(rows)
+}
+
+// fetchAllIssuerKeysTx fetches all issuer keys within a transaction
+func fetchAllIssuerKeysTx(tx *sql.Tx, issuerID string, includeExpired bool) ([]model.IssuerKeys, error) {
+	var query string
+	if includeExpired {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	} else {
+		query = `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+                 FROM v3_issuer_keys
+                 WHERE issuer_id=$1
+                   AND (end_at > now() OR end_at IS NULL)
+                 ORDER BY end_at ASC NULLS LAST, start_at ASC, created_at ASC`
+	}
+
+	rows, err := tx.Query(query, issuerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	return scanIssuerKeys(rows)
+}
+
+// fetchKeyByID fetches a single key by its ID
+func (c *Server) fetchKeyByID(issuerID, keyID string) (*model.IssuerKeys, error) {
+	query := `SELECT key_id, signing_key, public_key, cohort, issuer_id, start_at, end_at, created_at
+              FROM v3_issuer_keys 
+              WHERE issuer_id=$1 AND key_id=$2`
+
+	row := c.dbr.QueryRow(query, issuerID, keyID)
+
+	var key model.IssuerKeys
+	var keyIDStr sql.NullString
+	var publicKey sql.NullString
+	var issuerIDStr sql.NullString
+
+	err := row.Scan(
+		&keyIDStr,
+		&key.SigningKey,
+		&publicKey,
+		&key.Cohort,
+		&issuerIDStr,
+		&key.StartAt,
+		&key.EndAt,
+		&key.CreatedAt,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errKeyNotFound
+		}
+		return nil, err
+	}
+
+	if keyIDStr.Valid {
+		id, err := uuid.Parse(keyIDStr.String)
+		if err != nil {
+			return nil, err
+		}
+		key.ID = &id
+	}
+
+	if publicKey.Valid {
+		key.PublicKey = &publicKey.String
+	}
+
+	if issuerIDStr.Valid {
+		id, err := uuid.Parse(issuerIDStr.String)
+		if err != nil {
+			return nil, err
+		}
+		key.IssuerID = &id
+	}
+
+	return &key, nil
+}
+
+// createIssuerKey creates a new key for an issuer
+func (c *Server) createIssuerKey(issuerID string, key *model.IssuerKeys) (*model.IssuerKeys, error) {
+	query := `INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+              VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING key_id, created_at`
+
+	var keyIDStr string
+	var createdAt time.Time
+
+	err := c.db.QueryRow(
+		query,
+		issuerID,
+		key.SigningKey,
+		key.PublicKey,
+		key.Cohort,
+		key.StartAt,
+		key.EndAt,
+	).Scan(&keyIDStr, &createdAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return nil, err
+	}
+	key.ID = &id
+	key.CreatedAt = &createdAt
+
+	return key, nil
+}
+
+// createIssuerKeyTx creates an issuer key within a transaction
+func createIssuerKeyTx(tx *sql.Tx, issuerID string, key *model.IssuerKeys) (*model.IssuerKeys, error) {
+	query := `INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+              VALUES ($1, $2, $3, $4, $5, $6)
+              RETURNING key_id, created_at`
+
+	var keyIDStr string
+	var createdAt time.Time
+
+	err := tx.QueryRow(
+		query,
+		issuerID,
+		key.SigningKey,
+		key.PublicKey,
+		key.Cohort,
+		key.StartAt,
+		key.EndAt,
+	).Scan(&keyIDStr, &createdAt)
+
+	if err != nil {
+		return nil, err
+	}
+
+	id, err := uuid.Parse(keyIDStr)
+	if err != nil {
+		return nil, err
+	}
+	key.ID = &id
+	key.CreatedAt = &createdAt
+
+	return key, nil
+}
+
+// deleteKeyByID deletes a key by its ID
+func (c *Server) deleteKeyByID(issuerID, keyID string) (bool, error) {
+	result, err := c.db.Exec(
+		`DELETE FROM v3_issuer_keys WHERE issuer_id = $1 AND key_id = $2`,
+		issuerID, keyID,
+	)
+	if err != nil {
+		return false, err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+
+	return rowsAffected > 0, nil
+}
+
+// updateKeyEndAt updates the end_at timestamp for a key
+func (c *Server) updateKeyEndAt(issuerID, keyID string, endAt *time.Time) error {
+	_, err := c.db.Exec(
+		`UPDATE v3_issuer_keys SET end_at = $1 WHERE issuer_id = $2 AND key_id = $3`,
+		endAt, issuerID, keyID,
+	)
+	return err
+}
+
+// updateKeyEndAtTx updates a key's end_at timestamp within a transaction
+func updateKeyEndAtTx(tx *sql.Tx, issuerID, keyID string, endAt *time.Time) error {
+	_, err := tx.Exec(
+		`UPDATE v3_issuer_keys SET end_at = $1 WHERE issuer_id = $2 AND key_id = $3`,
+		endAt, issuerID, keyID,
+	)
+	return err
+}
+
+// rotateIssuerKeys creates new keys for an issuer based on its configuration
+// and updates the expiration of existing active keys to overlap with the new keys.
+// The overlap parameter specifies the ISO 8601 duration for the overlap period.
+// This operation is performed within a database transaction to prevent race conditions.
+func (c *Server) rotateIssuerKeys(issuer *model.Issuer, count int, overlapDuration string) (created, updated []model.IssuerKeys, err error) {
+	if issuer.Version != 3 {
+		// For v1/v2 issuers, just create a single key without time bounds
+		key, err := c.createSingleKey(issuer, nil, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []model.IssuerKeys{*key}, nil, nil
+	}
+
+	// Parse overlap duration (default to 1 month if not specified)
+	if overlapDuration == "" {
+		overlapDuration = "P1M" // 1 month default
+	}
+	overlap, err := timeutils.ParseDuration(overlapDuration)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse overlap duration: %w", err)
+	}
+
+	// Validate overlap duration is within reasonable bounds
+	// Calculate the actual duration by applying it to a reference time
+	now := time.Now().UTC()
+	overlapEnd, err := overlap.From(now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to calculate overlap duration: %w", err)
+	}
+	overlapDurationTime := overlapEnd.Sub(now)
+
+	// Overlap must be between 1 hour and 6 months (180 days)
+	minOverlap := 1 * time.Hour
+	maxOverlap := 180 * 24 * time.Hour // 6 months
+	if overlapDurationTime < minOverlap {
+		return nil, nil, fmt.Errorf("overlap duration must be at least 1 hour, got %v", overlapDurationTime)
+	}
+	if overlapDurationTime > maxOverlap {
+		return nil, nil, fmt.Errorf("overlap duration must be at most 6 months, got %v", overlapDurationTime)
+	}
+
+	// Parse issuer duration
+	var duration *timeutils.ISODuration
+	if issuer.Duration != nil && *issuer.Duration != "" {
+		duration, err = timeutils.ParseDuration(*issuer.Duration)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse issuer duration: %w", err)
+		}
+	} else {
+		return nil, nil, fmt.Errorf("issuer must have a duration set for key rotation")
+	}
+
+	// Begin transaction to ensure atomicity
+	tx, err := c.db.Begin()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			if rbErr := tx.Rollback(); rbErr != nil {
+				c.Logger.Error("failed to rollback transaction", "error", rbErr, "original_error", err)
+			}
+		}
+	}()
+
+	// Find active keys (keys that haven't expired yet) within the transaction
+	existingKeys, err := fetchAllIssuerKeysTx(tx, issuer.ID.String(), false)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	now = time.Now().UTC()
+	var createdKeys []model.IssuerKeys
+	var updatedKeys []model.IssuerKeys
+
+	// Determine the start time for the first new key
+	// For rotation, we ALWAYS start from now to begin the overlap period immediately
+	startTime := now
+
+	// Find the most recent currently-active key (not future keys)
+	// This is the key we'll update to expire during the overlap period
+	var mostRecentActiveKey *model.IssuerKeys
+	if len(existingKeys) > 0 {
+		// Find the most recent currently-active key (one that has started and hasn't expired)
+		for i := len(existingKeys) - 1; i >= 0; i-- {
+			key := &existingKeys[i]
+			// Check if key is currently active (has started and hasn't expired)
+			isCurrentlyActive := isKeyActive(key) &&
+				(key.StartAt == nil || !key.StartAt.After(now))
+
+			if isCurrentlyActive {
+				mostRecentActiveKey = key
+				break
+			}
+		}
+	}
+
+	// Create the requested number of keys
+	for i := 0; i < count; i++ {
+		// Calculate end time for this new key
+		endTime, err := duration.From(startTime)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to calculate end time: %w", err)
+		}
+
+		// For the first new key, update the most recent active key if it exists
+		if i == 0 && mostRecentActiveKey != nil && mostRecentActiveKey.ID != nil {
+			// Calculate when this old key should expire
+			// It should expire after the new key starts: new_key_start + overlap_duration
+			newEndAt, err := overlap.From(startTime)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to calculate overlap end time: %w", err)
+			}
+
+			// Ensure the new end time is before the new key's end time
+			if newEndAt.After(*endTime) {
+				newEndAt = endTime
+			}
+
+			// Update the key's end_at in the database within the transaction
+			err = updateKeyEndAtTx(tx, issuer.ID.String(), mostRecentActiveKey.ID.String(), newEndAt)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to update key end_at: %w", err)
+			}
+			// Update the in-memory key for the response
+			mostRecentActiveKey.EndAt = newEndAt
+			updatedKeys = append(updatedKeys, *mostRecentActiveKey)
+		}
+
+		// Create a copy of startTime to avoid pointer aliasing issues
+		keyStartTime := startTime
+
+		// Create the new key within the transaction
+		key, err := c.createSingleKeyTx(tx, issuer, &keyStartTime, endTime)
+		if err != nil {
+			return nil, nil, err
+		}
+		createdKeys = append(createdKeys, *key)
+
+		// Move start time forward for the next key
+		startTime = *endTime
+	}
+
+	// Commit the transaction
+	if err = tx.Commit(); err != nil {
+		return nil, nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	return createdKeys, updatedKeys, nil
+}
+
+// createSingleKey creates a single key with the given time bounds
+func (c *Server) createSingleKey(issuer *model.Issuer, startAt, endAt *time.Time) (*model.IssuerKeys, error) {
+	signingKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signing key: %w", err)
+	}
+
+	signingKeyTxt, err := signingKey.MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signing key: %w", err)
+	}
+
+	pubKeyTxt, err := signingKey.PublicKey().MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	key := &model.IssuerKeys{
+		SigningKey: signingKeyTxt,
+		PublicKey:  ptr.FromString(string(pubKeyTxt)),
+		Cohort:     issuer.IssuerCohort,
+		IssuerID:   issuer.ID,
+		StartAt:    startAt,
+		EndAt:      endAt,
+	}
+
+	return c.createIssuerKey(issuer.ID.String(), key)
+}
+
+// createSingleKeyTx creates a single key with the given time bounds within a transaction
+func (c *Server) createSingleKeyTx(tx *sql.Tx, issuer *model.Issuer, startAt, endAt *time.Time) (*model.IssuerKeys, error) {
+	signingKey, err := crypto.RandomSigningKey()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate signing key: %w", err)
+	}
+
+	signingKeyTxt, err := signingKey.MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal signing key: %w", err)
+	}
+
+	pubKeyTxt, err := signingKey.PublicKey().MarshalText()
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	key := &model.IssuerKeys{
+		SigningKey: signingKeyTxt,
+		PublicKey:  ptr.FromString(string(pubKeyTxt)),
+		Cohort:     issuer.IssuerCohort,
+		IssuerID:   issuer.ID,
+		StartAt:    startAt,
+		EndAt:      endAt,
+	}
+
+	return createIssuerKeyTx(tx, issuer.ID.String(), key)
+}
+
+// scanIssuerKeys scans rows into IssuerKeys slice
+func scanIssuerKeys(rows *sql.Rows) ([]model.IssuerKeys, error) {
+	var keys []model.IssuerKeys
+	for rows.Next() {
+		var key model.IssuerKeys
+		var keyIDStr sql.NullString
+		var publicKey sql.NullString
+		var issuerIDStr sql.NullString
+
+		err := rows.Scan(
+			&keyIDStr,
+			&key.SigningKey,
+			&publicKey,
+			&key.Cohort,
+			&issuerIDStr,
+			&key.StartAt,
+			&key.EndAt,
+			&key.CreatedAt,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		if keyIDStr.Valid {
+			id, err := uuid.Parse(keyIDStr.String)
+			if err != nil {
+				return nil, err
+			}
+			key.ID = &id
 		}
 
 		if publicKey.Valid {
