@@ -4,16 +4,19 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"os"
 
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+var acceptLegacyDerivation = os.Getenv("ACCEPT_LEGACY_TOKENS") != "false"
+
 var (
 	// ErrInvalidMAC - the mac was invalid
 	ErrInvalidMAC = errors.New("binding MAC didn't match derived MAC")
-	// ErrIdentityPreimage - the preimage hashes to the group identity, which
-	// makes the derived point and MAC key independent of the signing key
+	// ErrIdentityPreimage - HashToGroup(preimage) produced the group identity
+	// element, which RFC 9497 Section 3.3.1 requires be rejected (InvalidInputError)
 	ErrIdentityPreimage = errors.New("token preimage hashes to the identity element")
 	// ErrInvalidBatchProof - the batch proof was invalid
 	ErrInvalidBatchProof = errors.New("new batch proof for signed tokens is invalid")
@@ -120,18 +123,69 @@ func ApproveTokens(blindedTokens []*crypto.BlindedToken, key *crypto.SigningKey)
 // and MAC according a set of keys.
 // Keys keeps a set of private keys that are ever used to sign the token so we can rotate private key easily.
 func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
+	verifyTokenRedemptionCounter.Add(1)
+
+	if !acceptLegacyDerivation {
+		// Accept only RFC 9497 HashToGroup redemptions.
+		return verifyTokenRedemptionRFC(preimage, signature, payload, keys)
+	}
+
+	// Try the legacy derivation first. Only a MAC mismatch means the token may
+	// instead use the RFC 9497 HashToGroup (RFC 9380 hash_to_ristretto255)
+	// derivation, so fall back to that path in that case alone; any other error
+	// (including an identity preimage) is terminal.
+	err := verifyTokenRedemption(preimage, signature, payload, keys)
+	if !errors.Is(err, ErrInvalidMAC) {
+		return err
+	}
+
+	return verifyTokenRedemptionRFC(preimage, signature, payload, keys)
+}
+
+// verifyTokenRedemptionRFC verifies a redemption whose point is derived with
+// RFC 9497 HashToGroup (hash_to_ristretto255) and whose verification key is the
+// RFC 9497 finalization over the preimage and that point. A preimage that maps
+// to the group identity element is rejected per RFC 9497 Section 3.3.1.
+func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
+	for i := range keys {
+		// Rederivation fails if the preimage maps to the group identity element
+		// (RFC 9497 Section 3.3.1) or if the signing key or preimage handle is
+		// invalid; either way the redemption cannot be verified.
+		unblindedToken, err := keys[i].RederiveUnblindedTokenRfc(preimage)
+		if err != nil {
+			return fmt.Errorf("rederive rfc unblinded token: %w", err)
+		}
+
+		timerUT := prometheus.NewTimer(verifyTokenDeriveKeyDuration)
+		sharedKey := unblindedToken.DeriveVerificationKeyRfc()
+		_ = timerUT.ObserveDuration()
+
+		timerVrf := prometheus.NewTimer(verifyTokenSignatureDuration)
+		ok, err := sharedKey.Verify(signature, payload)
+		if err != nil {
+			_ = timerVrf.ObserveDuration()
+			return err
+		}
+		_ = timerVrf.ObserveDuration()
+
+		if ok {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
+}
+
+func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.VerificationSignature, payload string, keys []*crypto.SigningKey) error {
 	var valid bool
 	var err error
 
 	for i := range keys {
-		verifyTokenRedemptionCounter.Add(1)
-
 		// Derive the unblinded token using a server's key and the client's preimage.
 		unblindedToken := keys[i].RederiveUnblindedToken(preimage)
 
-		// A preimage that hashes to the group identity makes the rederived
-		// point (and hence the derived MAC key) independent of the signing
-		// key.
+		// Reject a preimage whose derived point is the group identity element,
+		// per RFC 9497 Section 3.3.1 (InvalidInputError).
 		identityDetected, idErr := isIdentityUnblindedToken(unblindedToken)
 		if idErr != nil {
 			return idErr
@@ -164,7 +218,7 @@ func VerifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 	}
 
 	if !valid {
-		return fmt.Errorf("%s, payload: %s", ErrInvalidMAC.Error(), payload)
+		return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
 	}
 
 	return nil
