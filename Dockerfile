@@ -1,11 +1,9 @@
-FROM rust:1.85 AS rust_builder
+FROM rust:1.69 AS rust_builder
 RUN rustup target add x86_64-unknown-linux-musl
 RUN apt-get update && apt-get install -y musl-tools
 RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
-# Keep in lockstep with the challenge-bypass-ristretto-ffi version in go.mod so
-# the compiled static lib exports match the cgo bindings.
-RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
+RUN git checkout 1.0.1
 RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
 
 FROM golang:1.24 AS go_builder
