@@ -146,9 +146,9 @@ OUTER:
 			)
 			kafkaErrorTotal.Inc()
 			var processingError *utils.ProcessingError
-			if errors.As(err, &processingError) {
+			if errors.As(appErr, &processingError) {
 				if processingError.Temporary {
-					return err
+					return appErr
 				}
 			}
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
@@ -415,6 +415,21 @@ OUTER:
 			var signingKey *crypto.SigningKey
 			if len(issuer.Keys) > 0 {
 				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
+			}
+
+			if signingKey == nil {
+				reqLogger.Error(
+					"invalid issuer, must have a usable signing key",
+					"issuerType", issuer.IssuerType,
+				)
+				kafkaErrorTotal.Inc()
+				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
+					Signed_tokens:     nil,
+					Issuer_public_key: "",
+					Status:            issuerError,
+					Associated_data:   request.Associated_data,
+				})
+				continue OUTER
 			}
 
 			reqLogger.Debug("approving tokens", slog.Any("tokens", blindedTokens))

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -95,7 +96,7 @@ func (c *Server) GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*m
 func (c *Server) getIssuers(ctx context.Context, issuerType string) ([]model.Issuer, *AppError) {
 	issuer, err := c.fetchIssuerByType(ctx, issuerType)
 	if err != nil {
-		if errors.Is(err, errIssuerNotFound) {
+		if errors.Is(err, errIssuerNotFound) || errors.Is(err, sql.ErrNoRows) {
 			return nil, &AppError{
 				Message: "Issuer not found",
 				Code:    404,

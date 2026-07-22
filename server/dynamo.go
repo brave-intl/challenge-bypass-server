@@ -124,7 +124,7 @@ func (c *Server) fetchRedemptionV2FromTable(id uuid.UUID, tableName string) (*Re
 	err = dynamodbattribute.UnmarshalMap(result.Item, &redemption)
 	if err != nil {
 		c.Logger.Error("Unable to unmarshal redemption")
-		panic(err)
+		return nil, err
 	}
 
 	if redemption.IssuerID == "" || redemption.ID == "" {
