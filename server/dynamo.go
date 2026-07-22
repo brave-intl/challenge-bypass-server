@@ -168,7 +168,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	if err != nil {
 		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
 			c.Logger.Error("Duplicate redemption")
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
 		return err
@@ -194,7 +194,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	if err != nil {
 		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
 			c.Logger.Error("Duplicate redemption")
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
 		return err

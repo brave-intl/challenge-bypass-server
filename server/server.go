@@ -112,7 +112,6 @@ func init() {
 // Server - base server type
 type Server struct {
 	ListenPort   int          `json:"listen_port,omitempty"`
-	MaxTokens    int          `json:"max_tokens,omitempty"`
 	DBConfigPath string       `json:"db_config_path"`
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB

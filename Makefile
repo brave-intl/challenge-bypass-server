@@ -17,7 +17,7 @@ docker-test:
 	--key-schema AttributeName=id,KeyType=HASH \
 	--billing-mode PAY_PER_REQUEST \
 	--table-name redemptions --endpoint-url http://dynamodb:8000 --region us-west-2 ) \
-	&& go test -v -tags='!integration' ./..."
+	&& go test -v -tags=db ./..."
 
 docker-lint:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
