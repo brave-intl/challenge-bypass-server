@@ -8,7 +8,7 @@ WORKDIR /src
 RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
 RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
 
-FROM golang:1.24
+FROM golang:1.26
 WORKDIR /app
 COPY . .
 

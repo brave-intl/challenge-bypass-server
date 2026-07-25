@@ -8,7 +8,7 @@ WORKDIR /src
 RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
 RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
 
-FROM golang:1.24 AS go_builder
+FROM golang:1.26 AS go_builder
 RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
 RUN curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin latest
 RUN mkdir /src
