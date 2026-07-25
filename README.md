@@ -36,7 +36,7 @@ The project includes comprehensive integration tests that verify the entire syst
 #### What the Integration Tests Do
 
 The integration tests:
-- Spin up a complete environment with PostgreSQL, Kafka, Zookeeper, LocalStack (for DynamoDB), and the application
+- Spin up a complete environment with PostgreSQL, Kafka (KRaft mode), LocalStack (for DynamoDB), and the application
 - Test end-to-end flows including:
   - Token redemption flows through Kafka
   - Token signing flows through Kafka
@@ -59,7 +59,7 @@ make integration-test TEST_NAME=TestTokenIssuanceViaKafkaAndRedeemViaHTTPFlow
 This command will:
 1. Clean up any existing test containers
 2. Build all required services
-3. Start the test environment (PostgreSQL, Kafka, Zookeeper, LocalStack)
+3. Start the test environment (PostgreSQL, Kafka, LocalStack)
 4. Wait for all services to be healthy and ready (~30 seconds)
 5. Build and run the test suite
 6. Automatically clean up all containers and volumes after completion
