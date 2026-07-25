@@ -94,7 +94,7 @@ services:
       retries: 10
 
   localstack:
-    image: amazon/dynamodb-local:2.5.0
+    image: amazon/dynamodb-local:3.3.0
     ports:
       - "8000:8000"
     healthcheck:
