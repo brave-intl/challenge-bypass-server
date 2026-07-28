@@ -29,7 +29,7 @@ RUN go build -ldflags "\
     -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
-FROM ubuntu:22.04
+FROM ubuntu:26.04
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt update && apt install -y ca-certificates awscli less && rm -rf /var/lib/apt/lists/*
 RUN update-ca-certificates
