@@ -106,6 +106,8 @@ func init() {
 		v3IssuerCallTotal,
 		// Cron
 		cronTotal,
+		// Errors by type (shared across HTTP + Kafka)
+		metrics.ErrorsByType,
 	)
 }
 

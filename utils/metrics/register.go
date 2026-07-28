@@ -2,9 +2,37 @@ package metrics
 
 import (
 	"errors"
+	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+// ErrorsByType counts errors broken down by a bounded "reason" label so
+// operators can graph error volume by failure mode. For HTTP errors the
+// "endpoint" (chi route pattern) and "code" (HTTP status) labels are also set;
+// they are empty for non-HTTP (Kafka/processing) errors.
+//
+// The reason label MUST be a bounded, static string. Never pass a raw error
+// message or anything containing request-scoped data (request IDs, tokens),
+// or Prometheus cardinality will explode.
+var ErrorsByType = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "cbp_errors_by_type_total",
+		Help: "Errors by bounded reason label (plus endpoint/code for HTTP errors).",
+	},
+	[]string{"reason", "endpoint", "code"},
+)
+
+// CountError records a non-HTTP (Kafka/processing) error under a bounded reason.
+func CountError(reason string) {
+	ErrorsByType.WithLabelValues(reason, "", "").Inc()
+}
+
+// CountHTTPError records an HTTP handler error under the given route pattern and
+// status code. The reason is fixed to "http" so HTTP errors group together.
+func CountHTTPError(endpoint string, code int) {
+	ErrorsByType.WithLabelValues("http", endpoint, strconv.Itoa(code)).Inc()
+}
 
 // When the service panics and restarts we get a prometheus error indicating that our
 // collectors are already registered. To handle this case, we check if a registration
