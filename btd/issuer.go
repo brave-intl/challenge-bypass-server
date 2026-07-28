@@ -28,6 +28,14 @@ var (
 		Help: "counter for number of times redemption token verification happens",
 	})
 
+	// verifyTokenRedemptionByDerivationCounter counts successful redemption
+	// verifications split by which derivation verified them (rfc or legacy), so
+	// adoption of the RFC 9497 derivation can be tracked over time.
+	verifyTokenRedemptionByDerivationCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crypto_verify_redemption_token_derivation_counter",
+		Help: "counter for successful redemption token verifications by derivation (rfc or legacy)",
+	}, []string{"derivation"})
+
 	verifyTokenDeriveKeyDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "crypto_derive_verify_token_key_duration",
 		Help:    "duration for deriving a token verification key",
@@ -74,8 +82,14 @@ func init() {
 	prometheus.MustRegister(signTokenCounter)
 
 	prometheus.MustRegister(verifyTokenRedemptionCounter)
+	prometheus.MustRegister(verifyTokenRedemptionByDerivationCounter)
 	prometheus.MustRegister(verifyTokenDeriveKeyDuration)
 	prometheus.MustRegister(verifyTokenSignatureDuration)
+
+	// Instantiate both series at 0 so they exist before the first redemption of
+	// each derivation is observed.
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("rfc")
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("legacy")
 }
 
 // ApproveTokens applies the issuer's secret key to each token in the request.
@@ -169,6 +183,7 @@ func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.
 		_ = timerVrf.ObserveDuration()
 
 		if ok {
+			verifyTokenRedemptionByDerivationCounter.WithLabelValues("rfc").Inc()
 			return nil
 		}
 	}
@@ -221,6 +236,7 @@ func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 		return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
 	}
 
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("legacy").Inc()
 	return nil
 }
 
