@@ -14,6 +14,7 @@ import (
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/segmentio/kafka-go"
 )
 
@@ -57,6 +58,7 @@ func SignedBlindedTokenIssuerHandler(
 	blindedTokenRequestSet, err := avroSchema.DeserializeSigningRequestSet(bytes.NewReader(data))
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("deserialize-request")
 		return handlePermanentIssuanceError(
 			ctx,
 			fmt.Sprintf("failed arvo deserialization"),
@@ -88,6 +90,7 @@ func SignedBlindedTokenIssuerHandler(
 			blindedTokenRequestSet.Request_id,
 		)
 		kafkaErrorTotal.Inc()
+		metrics.CountError("unexpected-multiple-requests")
 		return handlePermanentIssuanceError(
 			ctx,
 			message,
@@ -110,6 +113,7 @@ OUTER:
 		if request.Blinded_tokens == nil {
 			reqLogger.Error("blinded tokens is empty")
 			kafkaErrorTotal.Inc()
+			metrics.CountError("empty-blinded-tokens")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -124,6 +128,7 @@ OUTER:
 		if request.Issuer_cohort > math.MaxInt16 || request.Issuer_cohort < math.MinInt16 {
 			reqLogger.Error("invalid cohort")
 			kafkaErrorTotal.Inc()
+			metrics.CountError("invalid-cohort")
 			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 				Signed_tokens:     nil,
 				Issuer_public_key: "",
@@ -145,6 +150,7 @@ OUTER:
 				slog.Any("error", appErr),
 			)
 			kafkaErrorTotal.Inc()
+			metrics.CountError("issuer-lookup")
 			var processingError *utils.ProcessingError
 			if errors.As(err, &processingError) {
 				if processingError.Temporary {
@@ -176,6 +182,7 @@ OUTER:
 					len(request.Blinded_tokens)%(issuer.Buffer+issuer.Overlap),
 				)
 				kafkaErrorTotal.Inc()
+				metrics.CountError("invalid-token-count")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -203,6 +210,7 @@ OUTER:
 					slog.Any("error", err),
 				)
 				kafkaErrorTotal.Inc()
+				metrics.CountError("unmarshal-blinded-token")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -231,10 +239,12 @@ OUTER:
 					// perform a rotation in an attempt to get that last key
 					if err := server.RotateIssuersV3(); err != nil {
 						kafkaErrorTotal.Inc()
+						metrics.CountError("issuer-rotation")
 						// temporary error returned, rotation failed, try again next time
 						return errors.New("failed to rotate issuer: not enough keys for signing request")
 					}
 					kafkaErrorTotal.Inc()
+					metrics.CountError("issuer-rotation")
 					// temporary error returned, have the message retried as we just performed a rotation
 					return fmt.Errorf("num keys %d: error invalid number of blindedTokens, not enough keys for signing request",
 						len(issuer.Keys))
@@ -274,6 +284,7 @@ OUTER:
 				end := i + numT
 				if end > len(blindedTokens) {
 					kafkaErrorTotal.Inc()
+					metrics.CountError("token-range-overflow")
 					return fmt.Errorf("request %s: error invalid token step length",
 						blindedTokenRequestSet.Request_id)
 				}
@@ -283,6 +294,7 @@ OUTER:
 				signedTokens, DLEQProof, err := btd.ApproveTokens(blindedTokensSlice, signingKey)
 				if err != nil {
 					kafkaErrorTotal.Inc()
+					metrics.CountError("approve-tokens")
 					// @TODO: If one token fails they will all fail. Assess this behavior
 					reqLogger.Error(
 						"could not approve new tokens",
@@ -305,6 +317,7 @@ OUTER:
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal dleq proof: %s", blindedTokenRequestSet.Request_id, err)
 					kafkaErrorTotal.Inc()
+					metrics.CountError("marshal-proof")
 					return handlePermanentIssuanceError(
 						ctx,
 						message,
@@ -327,6 +340,7 @@ OUTER:
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
 						kafkaErrorTotal.Inc()
+						metrics.CountError("marshal-blinded-token")
 						return handlePermanentIssuanceError(
 							ctx,
 							message,
@@ -351,6 +365,7 @@ OUTER:
 					if err != nil {
 						message := fmt.Sprintf("request %s: could not marshal new tokens to bytes: %s", blindedTokenRequestSet.Request_id, err)
 						kafkaErrorTotal.Inc()
+						metrics.CountError("marshal-signed-token")
 						return handlePermanentIssuanceError(
 							ctx,
 							message,
@@ -375,6 +390,7 @@ OUTER:
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal signing key: %s", blindedTokenRequestSet.Request_id, err)
 					kafkaErrorTotal.Inc()
+					metrics.CountError("marshal-public-key")
 					return handlePermanentIssuanceError(
 						ctx,
 						message,
@@ -429,6 +445,7 @@ OUTER:
 				)
 
 				kafkaErrorTotal.Inc()
+				metrics.CountError("approve-tokens")
 				blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
 					Signed_tokens:     nil,
 					Issuer_public_key: "",
@@ -445,6 +462,7 @@ OUTER:
 				message := fmt.Sprintf("request %s: could not marshal dleq proof: %s",
 					blindedTokenRequestSet.Request_id, err)
 				kafkaErrorTotal.Inc()
+				metrics.CountError("marshal-proof")
 				return handlePermanentIssuanceError(
 					ctx,
 					message,
@@ -467,6 +485,7 @@ OUTER:
 				if err != nil {
 					message := fmt.Sprintf("request %s: could not marshal blinded token slice to bytes: %s", blindedTokenRequestSet.Request_id, err)
 					kafkaErrorTotal.Inc()
+					metrics.CountError("marshal-blinded-token")
 					return handlePermanentIssuanceError(
 						ctx,
 						message,
@@ -491,6 +510,7 @@ OUTER:
 				if err != nil {
 					message := fmt.Sprintf("error could not marshal new tokens to bytes: %s", err)
 					kafkaErrorTotal.Inc()
+					metrics.CountError("marshal-signed-token")
 					return handlePermanentIssuanceError(
 						ctx,
 						message,
@@ -514,6 +534,7 @@ OUTER:
 			if err != nil {
 				message := fmt.Sprintf("error could not marshal signing key: %s", err)
 				kafkaErrorTotal.Inc()
+				metrics.CountError("marshal-public-key")
 				return handlePermanentIssuanceError(
 					ctx,
 					message,
@@ -556,6 +577,7 @@ OUTER:
 			resultSet,
 		)
 		kafkaErrorTotal.Inc()
+		metrics.CountError("serialize-result")
 		return handlePermanentIssuanceError(
 			ctx,
 			message,
@@ -582,6 +604,7 @@ OUTER:
 			slog.Any("resultSet", resultSet),
 		)
 		kafkaErrorTotal.Inc()
+		metrics.CountError("emit")
 		return err
 	}
 	reqLogger.Debug("emitted", slog.Any("resultSet", resultSet))
@@ -658,6 +681,7 @@ func handlePermanentIssuanceError(
 	if err := Emit(ctx, producer, toEmit, logger); err != nil {
 		logger.Error("failed to emit")
 		kafkaErrorTotal.Inc()
+		metrics.CountError("emit")
 	}
 	// TODO: consider returning err here as failing to emit error should not
 	// commit messages the same way as failing to emit a success does not
