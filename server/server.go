@@ -106,13 +106,14 @@ func init() {
 		v3IssuerCallTotal,
 		// Cron
 		cronTotal,
+		// Errors by type (shared across HTTP + Kafka)
+		metrics.ErrorsByType,
 	)
 }
 
 // Server - base server type
 type Server struct {
 	ListenPort   int          `json:"listen_port,omitempty"`
-	MaxTokens    int          `json:"max_tokens,omitempty"`
 	DBConfigPath string       `json:"db_config_path"`
 	Logger       *slog.Logger `json:",omitempty"`
 	dynamo       *dynamodb.DynamoDB

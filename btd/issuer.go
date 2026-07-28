@@ -28,6 +28,29 @@ var (
 		Help: "counter for number of times redemption token verification happens",
 	})
 
+	// verifyTokenRedemptionByDerivationCounter counts successful redemption
+	// verifications split by which derivation verified them (rfc or legacy), so
+	// adoption of the RFC 9497 derivation can be tracked over time.
+	verifyTokenRedemptionByDerivationCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crypto_verify_redemption_token_derivation_counter",
+		Help: "counter for successful redemption token verifications by derivation (rfc or legacy)",
+	}, []string{"derivation"})
+
+	// tokensIssuedByIssuerCounter counts signed (issued) tokens by issuer type so
+	// issuance can be tracked per SKU/product. The issuer type is the SKU
+	// identifier.
+	tokensIssuedByIssuerCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crypto_tokens_issued_by_issuer_counter",
+		Help: "count of signed (issued) tokens by issuer type",
+	}, []string{"issuer_type"})
+
+	// tokensRedeemedByIssuerCounter counts successfully redeemed tokens by issuer
+	// type so redemption can be tracked per SKU/product.
+	tokensRedeemedByIssuerCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "crypto_tokens_redeemed_by_issuer_counter",
+		Help: "count of successfully redeemed tokens by issuer type",
+	}, []string{"issuer_type"})
+
 	verifyTokenDeriveKeyDuration = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Name:    "crypto_derive_verify_token_key_duration",
 		Help:    "duration for deriving a token verification key",
@@ -74,8 +97,35 @@ func init() {
 	prometheus.MustRegister(signTokenCounter)
 
 	prometheus.MustRegister(verifyTokenRedemptionCounter)
+	prometheus.MustRegister(verifyTokenRedemptionByDerivationCounter)
 	prometheus.MustRegister(verifyTokenDeriveKeyDuration)
 	prometheus.MustRegister(verifyTokenSignatureDuration)
+
+	prometheus.MustRegister(tokensIssuedByIssuerCounter)
+	prometheus.MustRegister(tokensRedeemedByIssuerCounter)
+
+	// Instantiate both series at 0 so they exist before the first redemption of
+	// each derivation is observed.
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("rfc")
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("legacy")
+}
+
+// CountIssuedTokens records that n tokens were issued (signed) for the given
+// issuer type. The issuer type identifies the SKU/product the tokens belong to.
+func CountIssuedTokens(issuerType string, n int) {
+	if n <= 0 {
+		return
+	}
+	tokensIssuedByIssuerCounter.WithLabelValues(issuerType).Add(float64(n))
+}
+
+// CountRedeemedTokens records that n tokens were successfully redeemed for the
+// given issuer type.
+func CountRedeemedTokens(issuerType string, n int) {
+	if n <= 0 {
+		return
+	}
+	tokensRedeemedByIssuerCounter.WithLabelValues(issuerType).Add(float64(n))
 }
 
 // ApproveTokens applies the issuer's secret key to each token in the request.
@@ -169,6 +219,7 @@ func verifyTokenRedemptionRFC(preimage *crypto.TokenPreimage, signature *crypto.
 		_ = timerVrf.ObserveDuration()
 
 		if ok {
+			verifyTokenRedemptionByDerivationCounter.WithLabelValues("rfc").Inc()
 			return nil
 		}
 	}
@@ -221,6 +272,7 @@ func verifyTokenRedemption(preimage *crypto.TokenPreimage, signature *crypto.Ver
 		return fmt.Errorf("%w, payload: %s", ErrInvalidMAC, payload)
 	}
 
+	verifyTokenRedemptionByDerivationCounter.WithLabelValues("legacy").Inc()
 	return nil
 }
 

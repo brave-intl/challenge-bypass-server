@@ -58,8 +58,10 @@ type RedemptionV2 struct {
 var (
 	errIssuerNotFound       = errors.New("issuer with the given name does not exist")
 	errIssuerCohortNotFound = errors.New("issuer with the given name and cohort does not exist")
-	errDuplicateRedemption  = errors.New("duplicate Redemption")
-	errRedemptionNotFound   = errors.New("redemption with the given id does not exist")
+	// ErrDuplicateRedemption is returned when a token has already been redeemed.
+	// Exported so callers in other packages (e.g. kafka) can match it with errors.Is.
+	ErrDuplicateRedemption = errors.New("duplicate redemption")
+	errRedemptionNotFound  = errors.New("redemption with the given id does not exist")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
@@ -603,7 +605,7 @@ func (c *Server) fetchIssuerKeys(fetchedIssuers []model.Issuer) ([]model.Issuer,
 }
 
 // RotateIssuers is the function that rotates
-func (c *Server) rotateIssuers() error {
+func (c *Server) rotateIssuers() (err error) {
 	cfg := c.dbConfig
 
 	tx, err := c.db.Begin()
@@ -613,7 +615,8 @@ func (c *Server) rotateIssuers() error {
 
 	defer func() {
 		if err != nil {
-			err = tx.Rollback()
+			// preserve the original error; a rollback failure must not mask it
+			_ = tx.Rollback()
 			return
 		}
 		err = tx.Commit()
@@ -684,7 +687,7 @@ func (c *Server) DeleteIssuerKeys(duration string) (int64, error) {
 }
 
 // rotateIssuersV3 is the function implementation that rotates time aware issuers
-func (c *Server) rotateIssuersV3() error {
+func (c *Server) rotateIssuersV3() (err error) {
 	tx, err := c.db.Begin()
 	if err != nil {
 		return err
@@ -692,7 +695,8 @@ func (c *Server) rotateIssuersV3() error {
 
 	defer func() {
 		if err != nil {
-			err = tx.Rollback()
+			// preserve the original error; a rollback failure must not mask it
+			_ = tx.Rollback()
 			return
 		}
 		err = tx.Commit()
@@ -1104,7 +1108,7 @@ func redeemTokenWithDB(db Queryable, stringIssuer string, preimage *crypto.Token
 		`INSERT INTO redemptions(id, issuer_type, ts, payload) VALUES ($1, $2, NOW(), $3)`, preimageTxt, stringIssuer, payload)
 	if err != nil {
 		if err, ok := err.(*pq.Error); ok && err.Code == "23505" { // unique constraint violation
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		return err
 	}
@@ -1126,7 +1130,7 @@ func (c *Server) fetchRedemption(issuerType, id string) (*Redemption, error) {
 
 	queryTimer := prometheus.NewTimer(fetchRedemptionDBDuration)
 	rows, err := c.dbr.Query(
-		`SELECT id, issuer_id, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
+		`SELECT id, issuer_type, ts, payload FROM redemptions WHERE id = $1 AND issuer_type = $2`, id, issuerType)
 	queryTimer.ObserveDuration()
 
 	if err != nil {

@@ -126,6 +126,7 @@ func StartConsumers(
 		idempotentRedemptionTotal,
 		rebootFromPanicTotal,
 		kafkaErrorTotal,
+		metrics.ErrorsByType,
 	)
 
 	if len(brokers) < 1 {
@@ -135,6 +136,7 @@ func StartConsumers(
 	redeemDialer, err := getDialer(ctx, logger)
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("dialer-init")
 		return fmt.Errorf("failed to get redeem dialer: %w", err)
 	}
 	redeemWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
@@ -146,6 +148,7 @@ func StartConsumers(
 	signDialer, err := getDialer(ctx, logger)
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("dialer-init")
 		return fmt.Errorf("failed to get sign dialer: %w", err)
 	}
 	signWriter := kafkaGo.NewWriter(kafkaGo.WriterConfig{
@@ -189,6 +192,7 @@ func StartConsumers(
 	reader, err := newConsumer(ctx, topics, adsConsumerGroupV1, logger)
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("consumer-init")
 		return fmt.Errorf("failed to get shared consumer dialer: %w", err)
 	}
 
@@ -201,6 +205,7 @@ func StartConsumers(
 			// If readAndCommitBatchPipelineResults returns an error.
 			close(batchPipeline)
 			kafkaErrorTotal.Inc()
+			metrics.CountError("batch-pipeline")
 			return err
 		}
 	}
@@ -223,12 +228,14 @@ func readAndCommitBatchPipelineResults(
 
 	if msgCtx.err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("batch-process")
 		a.Outage(ctx, msgCtx.err)
 		return fmt.Errorf("temporary failure encountered: %w", msgCtx.err)
 	}
 	logger.Debug("committing offset", "offset", msgCtx.msg.Offset)
 	if err := reader.CommitMessages(ctx, msgCtx.msg); err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("commit-offset")
 		return fmt.Errorf("failed to commit: %w", err)
 	}
 	return nil
@@ -262,6 +269,7 @@ func processMessagesIntoBatchPipeline(ctx context.Context,
 				logger.Debug("batch complete")
 			} else if errors.Is(err, context.DeadlineExceeded) {
 				kafkaErrorTotal.Inc()
+				metrics.CountError("read-timeout")
 				a.Crash(ctx, err)
 				panic("failed to fetch kafka messages and closed channel")
 			}
@@ -310,6 +318,7 @@ func runMessageProcessor(
 	// received message.
 	logger.Error("topic received whose topic is not configured", slog.Any("topic", msg.Topic))
 	kafkaErrorTotal.Inc()
+	metrics.CountError("unknown-topic")
 }
 
 // NewConsumer returns a Kafka reader configured for the given topic and group.
@@ -323,6 +332,7 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 	dialer, err := getDialer(ctx, logger)
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("dialer-init")
 		return nil, err
 	}
 	// kafka-go's ReaderConfig requires the old style log.Logger
@@ -367,6 +377,7 @@ func Emit(
 			slog.Any("error", err),
 		)
 		kafkaErrorTotal.Inc()
+		metrics.CountError("marshal-message-key")
 		marshaledMessageKey = []byte("default")
 	}
 
@@ -379,6 +390,7 @@ func Emit(
 	)
 	if err != nil {
 		kafkaErrorTotal.Inc()
+		metrics.CountError("emit")
 		return fmt.Errorf("failed to write messages: %w", err)
 	}
 
@@ -406,6 +418,7 @@ func getDialer(ctx context.Context, logger *slog.Logger) (*kafkaGo.Dialer, error
 
 		if err != nil {
 			kafkaErrorTotal.Inc()
+			metrics.CountError("aws-config")
 			return nil, fmt.Errorf("failed to setup aws config: %w", err)
 		}
 

@@ -124,7 +124,7 @@ func (c *Server) fetchRedemptionV2FromTable(id uuid.UUID, tableName string) (*Re
 	err = dynamodbattribute.UnmarshalMap(result.Item, &redemption)
 	if err != nil {
 		c.Logger.Error("Unable to unmarshal redemption")
-		panic(err)
+		return nil, err
 	}
 
 	if redemption.IssuerID == "" || redemption.ID == "" {
@@ -168,7 +168,7 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	if err != nil {
 		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
 			c.Logger.Error("Duplicate redemption")
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
 		return err
@@ -194,7 +194,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 	if err != nil {
 		if err, ok := err.(awserr.Error); ok && err.Code() == "ConditionalCheckFailedException" { // unique constraint violation
 			c.Logger.Error("Duplicate redemption")
-			return errDuplicateRedemption
+			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
 		return err

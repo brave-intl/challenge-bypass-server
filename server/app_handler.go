@@ -3,8 +3,10 @@ package server
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
+
+	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
+	"github.com/go-chi/chi/v5"
 )
 
 // AppError defines an application error with cause, message and HTTP status code
@@ -53,13 +55,12 @@ type AppHandler func(http.ResponseWriter, *http.Request) *AppError
 // ServeHTTP makes AppHandler satisfy the http.Handler interface
 func (fn AppHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := fn(w, r); err != nil {
-		// Log the error
-		if logger, ok := r.Context().Value("logger").(*slog.Logger); ok && err.Cause != nil {
-			logger.Error("handler error",
-				slog.String("message", err.Message),
-				slog.Any("error", err.Cause))
-		}
-		// Render the error response
+		// Count the error by endpoint (chi route pattern) and status code so
+		// it shows up in the by-type error graph. RoutePattern is bounded; the
+		// raw URL path is not, so it must never be used as a label.
+		metrics.CountHTTPError(chi.RouteContext(r.Context()).RoutePattern(), err.Code)
+		// Render the error response. Handlers log their own cause before
+		// returning, so there is no logging at this edge.
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(err.Code)
 		// Create the error response

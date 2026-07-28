@@ -52,6 +52,8 @@ func main() {
 			a.Crash(serverCtx, err)
 			panic(err)
 		}
+		// LoadConfigFile returns a fresh Server whose Logger is nil; restore it.
+		srv.Logger = logger
 	}
 
 	if port := os.Getenv("PORT"); port != "" {
@@ -111,14 +113,15 @@ func main() {
 
 func startKafka(srv server.Server, logger *slog.Logger, a alerter) {
 	ctx := context.Background()
-	logger.Debug("Initializing Kafka consumers")
-	err := kafka.StartConsumers(ctx, &srv, logger, a)
-
-	if err != nil {
+	for {
+		logger.Debug("Initializing Kafka consumers")
+		err := kafka.StartConsumers(ctx, &srv, logger, a)
+		if err == nil {
+			return
+		}
 		logger.Error("startkafka", slog.Any("error", err))
 		a.Outage(ctx, err)
-		// If err is something then start consumer again
+		// If err is something then start the consumers again.
 		time.Sleep(10 * time.Second)
-		startKafka(srv, logger, a)
 	}
 }

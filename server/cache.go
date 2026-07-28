@@ -12,12 +12,6 @@ type CachingConfig struct {
 	ExpirationSec int  `json:"expirationSec"`
 }
 
-type Cache[T any] interface {
-	Get(k string) (T, bool)
-	Delete(k string)
-	SetDefault(k string, x T)
-}
-
 // Clock interface allows us to mock time in tests
 type Clock interface {
 	Now() time.Time
@@ -125,10 +119,10 @@ func (c *SimpleCache[T]) SetDefault(k string, x T) {
 }
 
 type CacheCollection struct {
-	Issuer       Cache[*model.Issuer]
-	Issuers      Cache[[]model.Issuer]
-	Redemptions  Cache[*Redemption]
-	IssuerCohort Cache[[]model.Issuer]
+	Issuer       *SimpleCache[*model.Issuer]
+	Issuers      *SimpleCache[[]model.Issuer]
+	Redemptions  *SimpleCache[*Redemption]
+	IssuerCohort *SimpleCache[[]model.Issuer]
 }
 
 func bootstrapCache(cfg DBConfig) *CacheCollection {
