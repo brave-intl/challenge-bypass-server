@@ -229,6 +229,7 @@ func SignedTokenRedeemHandler(
 				verified = true
 				verifiedIssuer = &issuer
 				verifiedCohort = int32(issuer.IssuerCohort)
+				btd.CountRedeemedTokens(issuer.IssuerType, 1)
 			} else {
 				reqLogger.Error("failed to verify", slog.Any("error", err))
 			}
