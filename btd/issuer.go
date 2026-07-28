@@ -38,7 +38,7 @@ var (
 
 	// tokensIssuedByIssuerCounter counts signed (issued) tokens by issuer type so
 	// issuance can be tracked per SKU/product. The issuer type is the SKU
-	// identifier; mapping it to a product name happens downstream (e.g. Grafana).
+	// identifier.
 	tokensIssuedByIssuerCounter = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "crypto_tokens_issued_by_issuer_counter",
 		Help: "count of signed (issued) tokens by issuer type",
