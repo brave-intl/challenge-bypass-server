@@ -297,6 +297,8 @@ OUTER:
 					break OUTER
 				}
 
+				btd.CountIssuedTokens(issuer.IssuerType, len(signedTokens))
+
 				reqLogger.Debug("marshalling proof")
 
 				marshaledDLEQProof, err := DLEQProof.MarshalText()
@@ -435,6 +437,8 @@ OUTER:
 				})
 				continue OUTER
 			}
+
+			btd.CountIssuedTokens(issuer.IssuerType, len(signedTokens))
 
 			marshaledDLEQProof, err := DLEQProof.MarshalText()
 			if err != nil {
