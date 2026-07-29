@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_v3_issuer_keys_issuer_end_start;
