@@ -1,12 +1,19 @@
 FROM rust:1.97 AS rust_builder
-RUN rustup target add x86_64-unknown-linux-musl
+ARG TARGETARCH
 RUN apt-get update && apt-get install -y musl-tools
 RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
 # Keep in lockstep with the challenge-bypass-ristretto-ffi version in go.mod so
 # the compiled static lib exports match the cgo bindings.
 RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
-RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) RUST_TARGET=x86_64-unknown-linux-musl ;; \
+      arm64) RUST_TARGET=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    rustup target add "${RUST_TARGET}"; \
+    CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target="${RUST_TARGET}" --release --crate-type staticlib
 
 FROM golang:1.26 AS go_builder
 RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
@@ -15,7 +22,9 @@ RUN mkdir /src
 WORKDIR /src
 COPY . .
 RUN go mod download
-COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
+# Wildcard avoids repeating the arch/triple mapping here; exactly one musl
+# target dir exists in rust_builder.
+COPY --from=rust_builder /src/target/*-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
 
 ARG VERSION
 ARG COMMIT
