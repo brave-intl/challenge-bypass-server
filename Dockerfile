@@ -16,10 +16,12 @@ RUN set -eux; \
     CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target="${RUST_TARGET}" --release --crate-type staticlib
 
 FROM golang:1.26 AS go_builder
-RUN mkdir /src
 WORKDIR /src
-COPY . .
+# Resolve modules in their own layer so editing source does not re-download the
+# dependency graph on every build.
+COPY go.mod go.sum ./
 RUN go mod download
+COPY . .
 # Wildcard avoids repeating the arch/triple mapping here; exactly one musl
 # target dir exists in rust_builder.
 COPY --from=rust_builder /src/target/*-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
