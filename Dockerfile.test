@@ -10,13 +10,14 @@ RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-mus
 
 FROM golang:1.26
 WORKDIR /app
+# Resolve modules in their own layer so editing source does not re-download the
+# dependency graph on every build. testify and kafka-go are already required by
+# go.mod, so no `go get` (which would rewrite go.mod) is needed.
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 
 # Copy the Rust FFI library from the rust builder stage
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
-
-RUN go mod download
-RUN go get github.com/stretchr/testify/assert
-RUN go get github.com/segmentio/kafka-go
 
 CMD ["go", "test", "-tags", "integration", "./integration-tests", "-v"]
