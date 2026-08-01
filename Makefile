@@ -19,6 +19,12 @@ docker-test:
 	--table-name redemptions --endpoint-url http://dynamodb:8000 --region us-west-2 ) \
 	&& go test -v -tags=db ./..."
 
+# Ad-hoc aws CLI against the compose services. The dynamodb endpoint is preset
+# by the aws-cli service, so only the command itself is needed, e.g.
+#   make docker-aws AWS_ARGS="dynamodb list-tables"
+docker-aws:
+	docker compose --profile tools run --rm aws-cli $(AWS_ARGS)
+
 docker-lint:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
 
