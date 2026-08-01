@@ -25,8 +25,8 @@ docker-test:
 docker-aws:
 	docker compose --profile tools run --rm aws-cli $(AWS_ARGS)
 
-docker-lint:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
+.PHONY: docker-lint
+docker-lint: lint
 
 docker-build:
 	docker build \
