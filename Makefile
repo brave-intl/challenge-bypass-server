@@ -6,7 +6,7 @@ docker-psql:
 	docker compose exec postgres psql -U btokens
 
 docker-dev:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass /bin/bash
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass /bin/sh
 
 # The db-tagged suite recreates the dynamodb "redemptions" table itself (see
 # utils/test/dynamodb.go), so no aws CLI is needed here.
