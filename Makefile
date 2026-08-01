@@ -8,16 +8,11 @@ docker-psql:
 docker-dev:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass /bin/bash
 
+# The db-tagged suite recreates the dynamodb "redemptions" table itself (see
+# utils/test/dynamodb.go), so no aws CLI is needed here.
 docker-test:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass bash -c \
-	"export AWS_PAGER='' && (aws dynamodb delete-table \
-	--table-name redemptions --endpoint-url http://dynamodb:8000 --region us-west-2  || \
-	aws dynamodb create-table \
-	--attribute-definitions AttributeName=id,AttributeType=S \
-	--key-schema AttributeName=id,KeyType=HASH \
-	--billing-mode PAY_PER_REQUEST \
-	--table-name redemptions --endpoint-url http://dynamodb:8000 --region us-west-2 ) \
-	&& go test -v -tags=db ./..."
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass \
+	go test -v -tags=db ./...
 
 # Ad-hoc aws CLI against the compose services. The dynamodb endpoint is preset
 # by the aws-cli service, so only the command itself is needed, e.g.
