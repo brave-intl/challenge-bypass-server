@@ -17,7 +17,6 @@ RUN set -eux; \
 
 FROM golang:1.26 AS go_builder
 RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
-RUN curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin latest
 RUN mkdir /src
 WORKDIR /src
 COPY . .
