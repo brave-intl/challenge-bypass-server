@@ -16,7 +16,6 @@ RUN set -eux; \
     CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target="${RUST_TARGET}" --release --crate-type staticlib
 
 FROM golang:1.26 AS go_builder
-RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
 RUN mkdir /src
 WORKDIR /src
 COPY . .
@@ -39,8 +38,7 @@ CMD ["/src/challenge-bypass-server"]
 
 FROM ubuntu:26.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt update && apt install -y ca-certificates awscli less && rm -rf /var/lib/apt/lists/*
-RUN update-ca-certificates
+RUN apt update && apt install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=go_builder /src/challenge-bypass-server /bin/
 COPY migrations /src/migrations
 EXPOSE 2416

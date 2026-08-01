@@ -15,7 +15,6 @@ COPY . .
 # Copy the Rust FFI library from the rust builder stage
 COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
 
-RUN apt-get update && apt-get install -y postgresql-client
 RUN go mod download
 RUN go get github.com/stretchr/testify/assert
 RUN go get github.com/segmentio/kafka-go
