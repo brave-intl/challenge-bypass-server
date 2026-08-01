@@ -23,7 +23,11 @@ docker-lint:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
 
 docker-build:
-	docker build -t brave/challenge-bypass:$$(git rev-parse --short HEAD) .
+	docker build \
+	--build-arg VERSION=$$(git describe --tags --always --dirty) \
+	--build-arg COMMIT=$$(git rev-parse --short HEAD) \
+	--build-arg BUILD_TIME=$$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+	-t brave/challenge-bypass:$$(git rev-parse --short HEAD) .
 	docker tag brave/challenge-bypass:$$(git rev-parse --short HEAD) brave/challenge-bypass:latest
 
 docker-release:
