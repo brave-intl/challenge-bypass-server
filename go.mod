@@ -4,7 +4,7 @@ go 1.24.0
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
-	github.com/aws/aws-sdk-go v1.55.7
+	github.com/aws/aws-sdk-go v1.55.8
 	github.com/aws/aws-sdk-go-v2 v1.42.1
 	github.com/aws/aws-sdk-go-v2/config v1.32.30
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.60.1
