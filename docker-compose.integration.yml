@@ -117,7 +117,7 @@ services:
         done
 
   localstack:
-    image: amazon/dynamodb-local:3.3.0
+    image: amazon/dynamodb-local:3.3.1
     ports:
       - "8000:8000"
     healthcheck:
