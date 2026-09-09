@@ -43,11 +43,15 @@ services:
       - "8000:8000"
   challenge-bypass:
     container_name: challenge-bypass
-    image: challenge-bypass-builder 
+    image: challenge-bypass-builder
+    # Built locally from the go_builder stage and never published, so skip the
+    # registry lookup Compose would otherwise attempt before falling back to
+    # building. Compose still builds the image when it is missing.
+    pull_policy: never
     restart: always
     build:
       context: .
-      target: go_builder 
+      target: go_builder
     ports:
       - "2416:2416"
     environment:
