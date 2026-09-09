@@ -16,12 +16,12 @@ RUN set -eux; \
     CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target="${RUST_TARGET}" --release --crate-type staticlib
 
 FROM golang:1.26 AS go_builder
-RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
-RUN curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin latest
-RUN mkdir /src
 WORKDIR /src
-COPY . .
+# Resolve modules in their own layer so editing source does not re-download the
+# dependency graph on every build.
+COPY go.mod go.sum ./
 RUN go mod download
+COPY . .
 # Wildcard avoids repeating the arch/triple mapping here; exactly one musl
 # target dir exists in rust_builder.
 COPY --from=rust_builder /src/target/*-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
@@ -40,8 +40,7 @@ CMD ["/src/challenge-bypass-server"]
 
 FROM ubuntu:26.04
 ARG DEBIAN_FRONTEND=noninteractive
-RUN apt update && apt install -y ca-certificates awscli less && rm -rf /var/lib/apt/lists/*
-RUN update-ca-certificates
+RUN apt update && apt install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=go_builder /src/challenge-bypass-server /bin/
 COPY migrations /src/migrations
 EXPOSE 2416
