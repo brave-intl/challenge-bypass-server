@@ -21,17 +21,20 @@ type alerter interface {
 	Generic(ctx context.Context, err error)
 }
 
+// Build information, overridden at link time with
+// `-ldflags "-X main.Version=..."`. These must stay at package scope: -X only
+// rewrites package-level string variables, and silently does nothing otherwise.
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+	Commit    = "none"
+)
+
 func main() {
 	// Server setup
 	var (
 		configFile string
 		err        error
-	)
-	// Build information - populated at build time
-	var (
-		Version   = "dev"
-		BuildTime = "unknown"
-		Commit    = "none"
 	)
 
 	serverCtx, logger := server.SetupLogger(context.Background(), Version, BuildTime, Commit)

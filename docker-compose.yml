@@ -41,6 +41,25 @@ services:
       - cb
     ports: 
       - "8000:8000"
+  # On-demand AWS CLI on the cb network, for poking at the local dynamodb. It is
+  # behind a profile so `docker compose up` never pulls or starts it:
+  #   docker compose --profile tools run --rm aws-cli dynamodb list-tables
+  aws-cli:
+    image: amazon/aws-cli:2.36.11
+    profiles:
+      - tools
+    environment:
+      - AWS_ACCESS_KEY_ID=dummy
+      - AWS_SECRET_ACCESS_KEY=dummy
+      - AWS_REGION=us-west-2
+      - AWS_PAGER=
+      # Point dynamodb calls at the local container so --endpoint-url never has
+      # to be passed by hand. Scoped to dynamodb rather than AWS_ENDPOINT_URL so
+      # calls to other services are not silently redirected here.
+      - AWS_ENDPOINT_URL_DYNAMODB=http://dynamodb:8000
+    networks:
+      - cb
+
   challenge-bypass:
     container_name: challenge-bypass
     image: challenge-bypass-builder
