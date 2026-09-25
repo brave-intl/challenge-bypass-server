@@ -1,0 +1,1 @@
+DROP INDEX CONCURRENTLY IF EXISTS idx_v3_issuers_v3_rotation;
