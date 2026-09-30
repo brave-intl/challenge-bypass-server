@@ -17,7 +17,7 @@ docker-test:
 	--key-schema AttributeName=id,KeyType=HASH \
 	--billing-mode PAY_PER_REQUEST \
 	--table-name redemptions --endpoint-url http://dynamodb:8000 --region us-west-2 ) \
-	&& go test -v -tags=db ./..."
+	&& go test -v -tags=db,act ./..."
 
 docker-lint:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass golangci-lint run
@@ -86,10 +86,13 @@ integration-test-logs:
 .PHONY: docker-integration-test
 docker-integration-test: integration-test
 
-# ACT (Anonymous Credit Tokens) static library; link with `go build -tags act`.
+# ACT (Anonymous Credit Tokens): builds the combined Rust static library
+# (ristretto FFI + ACT) into act/ffi/lib under the ristretto library name, so
+# `go build -tags act` / `go test -tags act` link it with no extra flags.
 .PHONY: act-ffi
 act-ffi:
-	cd act/ffi && cargo build --release --locked
+	cd act/ffi && cargo build --release --locked && mkdir -p lib && \
+	cp "$${CARGO_TARGET_DIR:-target}/release/libcbp_act_ffi.a" lib/libchallenge_bypass_ristretto_ffi.a
 
 .PHONY: act-test
 act-test: act-ffi

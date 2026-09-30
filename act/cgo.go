@@ -3,10 +3,16 @@
 package act
 
 /*
-#cgo LDFLAGS: -L${SRCDIR}/ffi/target/release -lcbp_act_ffi -lm -ldl -lpthread
+#cgo LDFLAGS: -L${SRCDIR}/ffi/lib -lchallenge_bypass_ristretto_ffi -lm -ldl -lpthread
 #include "ffi/act.h"
 */
 import "C"
+
+// Linking: act/ffi builds ONE static library that bundles
+// challenge-bypass-ristretto-ffi with the ACT bindings (two Rust staticlibs in
+// a static binary collide on libstd). It is installed under the ristretto
+// name, libchallenge_bypass_ristretto_ffi.a, the same archive the ristretto Go
+// bindings link. `make act-ffi` puts it in ffi/lib.
 
 import (
 	"runtime"

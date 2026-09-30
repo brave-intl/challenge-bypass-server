@@ -305,6 +305,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, router := c.setupRouter(ctx, logger)
+	// ACT hold sweeper runs with the API (not cron: CRON_ENABLED=false in the
+	// ECS deployments). Safe on every replica: holds are claimed with SKIP LOCKED.
+	c.startACTSweeper(ctx)
 
 	ServeMetrics()
 

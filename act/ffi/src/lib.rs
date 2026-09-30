@@ -20,6 +20,10 @@ use anonymous_credit_tokens::{
 };
 use rand_core::OsRng;
 
+// Re-export so every challenge-bypass-ristretto-ffi C symbol lands in this
+// staticlib; the Go ristretto bindings link against it under that crate's name.
+pub use challenge_bypass_ristretto_ffi;
+
 /// Bit length of credit amounts. Balances and charges must be < 2^L.
 /// Spend proofs are 32 * (14 + 4L) bytes, so L = 32 gives ~4.5 KB proofs.
 pub const L: usize = 32;

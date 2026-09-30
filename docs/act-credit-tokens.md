@@ -19,6 +19,7 @@ ACT sits alongside the existing VOPRF tokens (`/v1`–`/v3`) and doesn't change 
 5. [HTTP API](#http-api)
 6. [Wire formats and parameters](#wire-formats-and-parameters)
 7. [Operating it](#operating-it)
+8. [Staging test runbook](#staging-test-runbook)
 
 ## How it works
 
@@ -224,30 +225,30 @@ CPU; proving a spend takes about 4.6 ms on the client (`go test -tags act -bench
 The crypto is Rust (`act/ffi`), linked through cgo only with the `act` build
 tag. Default builds compile a stub, and every ACT route returns 501.
 
+`act/ffi` builds **one** static library that bundles
+`challenge-bypass-ristretto-ffi` (pinned by git rev in `act/ffi/Cargo.toml`)
+with the ACT bindings. It's installed under the ristretto library's name. Two
+separate Rust static libraries can't be linked into one static binary, because
+each carries its own libstd and they fail with duplicate symbols. **Keep the
+ristretto rev in `act/ffi/Cargo.toml` in lockstep with `go.mod`.**
+
 ```sh
-make act-ffi                     # builds act/ffi/target/release/libcbp_act_ffi.a
-go build -tags act .             # links it
-go test -tags act ./act/ ./server/   # server tests need DATABASE_URL
+make act-ffi                         # -> act/ffi/lib/libchallenge_bypass_ristretto_ffi.a
+go build -tags act .                 # links it, no extra flags
+go test -tags act ./act/ ./server/   # server ACT tests need DATABASE_URL
 ```
 
-The Dockerfile doesn't build ACT yet. To ship it, add a stage like:
-
-```dockerfile
-FROM rust:1.96 AS act_builder
-RUN rustup target add x86_64-unknown-linux-musl && apt-get update && apt-get install -y musl-tools
-COPY act/ffi /act
-WORKDIR /act
-RUN cargo build --release --target x86_64-unknown-linux-musl --locked
-# in go_builder:
-COPY --from=act_builder /act/target/x86_64-unknown-linux-musl/release/libcbp_act_ffi.a /usr/lib/
-# and add `act` to -tags
-```
+The Docker image builds with ACT by default: `BUILD_TAGS` includes `act`. Build
+with `--build-arg BUILD_TAGS="osusergo netgo static_build"` to leave it out; the
+bundled library still provides the ristretto symbols. The image also ships
+`/bin/act-smoke`.
 
 ### Configuration
 
 | Env | Default | Meaning |
 |---|---|---|
 | `ACT_HOLD_TIMEOUT` | `15m` | holds older than this are settled at cost 0 by the minutely sweeper |
+| `ACT_SWEEPER_ENABLED` | `true` | the sweeper runs in every API process, whatever `CRON_ENABLED` says (claims use `SKIP LOCKED`, so replicas don't collide) |
 | `ENV` | `development` | feeds the default `params` deployment field |
 
 ### Storage
@@ -274,6 +275,68 @@ COPY --from=act_builder /act/target/x86_64-unknown-linux-musl/release/libcbp_act
 `cbp_api_act_total{action, outcome}`. Actions: `createIssuer`, `getIssuer`, `issue`,
 `spend`, `getSpend`, `refund`, `sweep`. Watch `spend{outcome="double_spend"}` and
 `sweep{outcome="settled"}` (a rising count means services aren't settling holds).
+
+## Staging test runbook
+
+Staging deploys from `master`. AWS CodePipeline builds the repo-root
+`Dockerfile` (no build args) into ECR `challenge-bypass-stg` and rolls out the
+`challenge-bypass` and `challenge-bypass-kafka` ECS services. Terraform lives in
+`devops/terraform/ads/ads_deployment/`. No terraform change is needed:
+
+- The ACT schema is applied at startup by both services (its own
+  `act_schema_migrations` table on the existing Aurora DB).
+- Defaults cover everything. `ENV=staging` gives params
+  `brave:challenge-bypass-server:staging:2026-09-30`.
+- The API is internal-only (`cbp-internal.aws-internal.bravesoftware.com`, ALB
+  reachable from the ads security group). `ENV` isn't `production`, so bearer
+  auth isn't enforced in staging.
+
+### 1. After the deploy lands
+
+Check the logs of both services for a clean start. A migration failure panics
+at boot.
+
+### 2. Run the smoke test inside a running task
+
+```sh
+aws ecs execute-command --cluster <ads-rewards cluster> --task <challenge-bypass task id> \
+  --container <container name from the task definition> --interactive \
+  --command "/bin/act-smoke -url http://localhost:2416 -check-sweep 20m"
+```
+
+If ECS Exec isn't enabled on the service, run a one-off task from the same task
+definition and network configuration with the command overridden to
+`/bin/act-smoke -url https://cbp-internal.aws-internal.bravesoftware.com -check-sweep 20m`.
+
+It creates the issuer `act-smoke-<date>` (expires in 48 h), then checks:
+
+- issue
+- hold
+- idempotent retry
+- double spend (409)
+- refund at actual cost
+- recovery by nullifier
+- conflicting settle (409)
+- spending the refunded credential
+- the sweeper settling an abandoned hold at cost 0 (`-check-sweep`)
+
+Every line reads `PASS`, the last line is `OK: ...`, and the exit code is 0.
+
+### 3. Metrics to watch
+
+`cbp_api_act_total`: `spend/ok`, `refund/ok` and `sweep/settled` should appear.
+Any `*/error` count needs its logs checked.
+
+### 4. Roll back or disable
+
+- Redeploy the previous image, or rebuild with `BUILD_TAGS` without `act`
+  (routes then return 501).
+- `ACT_SWEEPER_ENABLED=false` stops only the sweeper.
+- The `act_*` tables are separate and can be left in place.
+- **Prod note:** prod is released by merging `master` into `prod`, so this
+  image, with ACT enabled but no issuers, goes along with the next prod
+  release. Creating no issuers there keeps ACT inert, or set `BUILD_TAGS` for
+  prod.
 
 [draft-schlesinger-cfrg-act]: https://datatracker.ietf.org/doc/draft-schlesinger-cfrg-act/
 [draft-schlesinger-privacypass-act]: https://datatracker.ietf.org/doc/html/draft-schlesinger-privacypass-act-01

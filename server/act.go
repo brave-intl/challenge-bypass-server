@@ -71,8 +71,9 @@ func (c *Server) mountACTRoutes(r chi.Router) {
 }
 
 // startACTSweeper settles abandoned holds every minute until ctx ends.
+// Disable with ACT_SWEEPER_ENABLED=false.
 func (c *Server) startACTSweeper(ctx context.Context) {
-	if !act.Available() {
+	if !act.Available() || os.Getenv("ACT_SWEEPER_ENABLED") == "false" {
 		return
 	}
 	timeout := actHoldTimeout()
