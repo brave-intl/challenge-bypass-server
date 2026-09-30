@@ -322,9 +322,7 @@ func (l lockedIssuer) status(now time.Time) adminapi.Status {
 	return adminapi.DeriveStatus(now, nullableTime(l.expiresAt), l.stopIssuingAt)
 }
 
-// txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
-// returns them keyed by id. Missing ids → errAdminNotFound.
-func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
+func txSelectIssuersForUpdate(ctx context.Context, tx *sql.Tx, ids []uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
 	rows, err := tx.QueryContext(ctx, `
         SELECT i.issuer_id, i.issuer_type, i.version, i.buffer, i.overlap, i.duration, i.valid_from, i.expires_at
         FROM v3_issuers i WHERE i.issuer_id = ANY($1)
@@ -332,17 +330,25 @@ func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.
 	if err != nil {
 		return nil, err
 	}
+	defer rows.Close()
 	out := map[uuid.UUID]*lockedIssuer{}
 	for rows.Next() {
 		l := &lockedIssuer{}
 		if err := rows.Scan(&l.id, &l.name, &l.version, &l.buffer, &l.overlap, &l.duration, &l.validFrom, &l.expiresAt); err != nil {
-			rows.Close()
 			return nil, err
 		}
 		out[l.id] = l
 	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
+	return out, rows.Err()
+}
+
+// txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
+// returns them keyed by id. Missing ids → errAdminNotFound.
+func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
+	// The rows must be closed before the per-issuer queries below run on the
+	// same transaction, hence the separate function.
+	out, err := txSelectIssuersForUpdate(ctx, tx, ids)
+	if err != nil {
 		return nil, err
 	}
 	for _, id := range ids {

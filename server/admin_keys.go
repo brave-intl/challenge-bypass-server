@@ -104,7 +104,7 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 				adminAuthError(w, http.StatusUnauthorized, "signature must be present")
 				return
 			}
-			ctx, keyID, err := verifier.VerifyRequest(r)
+			_, keyID, err := verifier.VerifyRequest(r)
 			if err != nil {
 				adminAuthError(w, http.StatusForbidden, "request signature verification failure")
 				return
@@ -123,7 +123,7 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 				adminAuthError(w, http.StatusRequestTimeout, "date is invalid")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(ctx, adminKeyIDKey{}, keyID)))
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKeyIDKey{}, keyID)))
 		})
 	}
 }
