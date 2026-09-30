@@ -85,3 +85,12 @@ integration-test-logs:
 # Alias for consistency with existing naming convention
 .PHONY: docker-integration-test
 docker-integration-test: integration-test
+
+# ACT (Anonymous Credit Tokens) static library; link with `go build -tags act`.
+.PHONY: act-ffi
+act-ffi:
+	cd act/ffi && cargo build --release --locked
+
+.PHONY: act-test
+act-test: act-ffi
+	go test -tags act ./act/ ./server/ -run 'ACT|Credit|Verify'

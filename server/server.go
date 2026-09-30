@@ -292,6 +292,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			// V3 Issuer Routes
 			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
 			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+
+			// =========== ACT (Anonymous Credit Tokens) Routes ===========
+			c.mountACTRoutes(r)
 		})
 	})
 

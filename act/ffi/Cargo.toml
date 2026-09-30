@@ -1,0 +1,21 @@
+[package]
+name = "cbp-act-ffi"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "C ABI over anonymous-credit-tokens for challenge-bypass-server"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Pinned exactly: wire formats (CBOR) and proof sizes depend on this version.
+anonymous-credit-tokens = "=0.4.2"
+blake3 = "1.8.1"
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "unwind"

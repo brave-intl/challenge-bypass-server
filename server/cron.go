@@ -101,4 +101,6 @@ func (s *Server) StartCronJobs(ctx context.Context) {
 	})
 
 	scheduler.Start(ctx)
+
+	s.startACTSweeper(ctx)
 }
