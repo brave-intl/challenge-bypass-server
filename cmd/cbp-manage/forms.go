@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -101,9 +102,12 @@ func (m model) openCreate() model {
 			if req.Version, err = atoiField("version", v[1]); err != nil {
 				return confirmReq{}, err
 			}
-			c, err := atoiField("cohort", v[2])
+			c, err := int64(0), error(nil) // blank = server default cohort
+			if cs := strings.TrimSpace(v[2]); cs != "" {
+				c, err = strconv.ParseInt(cs, 10, 16)
+			}
 			if err != nil {
-				return confirmReq{}, err
+				return confirmReq{}, fmt.Errorf("cohort must be a number between %d and %d", math.MinInt16, math.MaxInt16)
 			}
 			req.Cohort = int16(c)
 			if req.MaxTokens, err = atoiField("max_tokens", v[3]); err != nil {

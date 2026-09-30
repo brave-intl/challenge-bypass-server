@@ -1,6 +1,6 @@
 module github.com/brave-intl/challenge-bypass-server
 
-go 1.24.2
+go 1.25.0
 
 require (
 	github.com/actgardner/gogen-avro/v10 v10.2.1
@@ -22,7 +22,7 @@ require (
 	github.com/segmentio/kafka-go v0.4.38
 	github.com/segmentio/kafka-go/sasl/aws_msk_iam_v2 v0.1.0
 	github.com/stretchr/testify v1.10.0
-	golang.org/x/crypto v0.45.0
+	golang.org/x/crypto v0.55.0
 )
 
 require (
@@ -76,8 +76,8 @@ require (
 	github.com/satori/go.uuid v1.2.0 // indirect
 	github.com/stretchr/objx v0.5.2 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
-	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/text v0.31.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.41.0 // indirect
 	google.golang.org/protobuf v1.36.7 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

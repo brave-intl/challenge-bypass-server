@@ -178,3 +178,15 @@ func TestRetireWizardOffersOnlyActiveReplacementsAndRequiresTypedName(t *testing
 		t.Fatal("default overlap below 90 days")
 	}
 }
+
+func TestCreateFormRejectsCohortOverflow(t *testing.T) {
+	m := newModel(&fakeAPI{}).openCreate()
+	vals := []string{"x", "1", "70000", "40", "", "", "", "", ""}
+	if _, err := m.form.build(m, vals); err == nil || !strings.Contains(err.Error(), "cohort") {
+		t.Fatalf("cohort 70000 must be rejected, got %v", err)
+	}
+	vals[2] = ""
+	if _, err := m.form.build(m, vals); err != nil {
+		t.Fatalf("blank cohort must fall back to the server default, got %v", err)
+	}
+}
