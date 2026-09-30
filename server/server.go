@@ -121,7 +121,8 @@ type Server struct {
 	db           *sql.DB // Database writer instance
 	dbr          *sql.DB // Database reader instance
 
-	caches *CacheCollection
+	caches    *CacheCollection
+	adminKeys *adminKeystore
 }
 
 // DefaultServer on port
@@ -226,6 +227,16 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 	r := chi.NewRouter()
 	c.Logger = logger
 
+	adminLines := adminKeysForEnv(os.Getenv("ENV"))
+	if adminLines == nil {
+		logger.Warn("no admin operator keys for this ENV; /v1/admin will deny all requests", "env", os.Getenv("ENV"))
+	}
+	adminKeys, err := newAdminKeystore(adminLines)
+	if err != nil {
+		panic(err) // malformed hardcoded key: a code bug, caught by tests
+	}
+	c.adminKeys = adminKeys
+
 	// Kick rotate v3 issuers on start
 	if err := c.rotateIssuersV3(); err != nil {
 		// @TODO: Alert here once merged
@@ -256,6 +267,12 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 
 		// Metrics endpoint
 		r.Method("GET", "/metrics", promhttp.Handler())
+
+		// Operator admin API: ed25519 signed requests in every environment.
+		r.Route("/v1/admin", func(r chi.Router) {
+			r.Use(adminSignatureMwr(c.adminKeys))
+			c.adminRoutes(r)
+		})
 
 		// Authenticated Routes
 		r.Group(func(r chi.Router) {

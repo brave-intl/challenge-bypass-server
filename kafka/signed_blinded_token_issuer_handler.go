@@ -166,6 +166,19 @@ OUTER:
 			continue OUTER
 		}
 
+		// Retired issuers only redeem. Reject, never route to the replacement.
+		if !issuer.IsIssuing(time.Now()) {
+			reqLogger.Warn("sign request for retired issuer", slog.Any("issuer", request.Issuer_type))
+			metrics.CountError("issuer-retired")
+			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
+				Signed_tokens:     nil,
+				Issuer_public_key: "",
+				Status:            issuerInvalid,
+				Associated_data:   request.Associated_data,
+			})
+			continue OUTER
+		}
+
 		reqLogger.Info("checking if issuer is version 3", slog.Any("issuer", issuer))
 		// if this is a time aware issuer, make sure the request contains the appropriate number of blinded tokens
 		if issuer.Version == 3 && issuer.Buffer > 0 {

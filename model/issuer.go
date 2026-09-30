@@ -34,6 +34,10 @@ type Issuer struct {
 	Duration             *string      `json:"duration" db:"duration"`
 	RedemptionRepository string       `json:"-" db:"redemption_repository"`
 	Keys                 []IssuerKeys `json:"keys" db:"-"`
+
+	// StopIssuingAt is set when the issuer is retired (issuer_retirements).
+	// Loaded only on the sign path; nil means not retired.
+	StopIssuingAt *time.Time `json:"-" db:"-"`
 }
 
 func (x *Issuer) ExpiresAtTime() time.Time {
@@ -48,6 +52,11 @@ func (x *Issuer) HasExpired(now time.Time) bool {
 	expt := x.ExpiresAtTime()
 
 	return !expt.IsZero() && expt.Before(now)
+}
+
+// IsIssuing reports whether the issuer may still sign tokens at now.
+func (x *Issuer) IsIssuing(now time.Time) bool {
+	return x.StopIssuingAt == nil || now.Before(*x.StopIssuingAt)
 }
 
 func (x *Issuer) FindSigningKeys(now time.Time) ([]*crypto.SigningKey, error) {
