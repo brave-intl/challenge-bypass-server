@@ -292,6 +292,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			// V3 Issuer Routes
 			r.Method("GET", "/v3/issuer/{type}", AppHandler(c.issuerHandlerV3))
 			r.Method("POST", "/v3/issuer", AppHandler(c.issuerV3CreateHandler))
+
+			// =========== ACT (Anonymous Credit Tokens) Routes ===========
+			c.mountACTRoutes(r)
 		})
 	})
 
@@ -302,6 +305,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, router := c.setupRouter(ctx, logger)
+	// ACT hold sweeper runs with the API (not cron: CRON_ENABLED=false in the
+	// ECS deployments). Safe on every replica: holds are claimed with SKIP LOCKED.
+	c.startACTSweeper(ctx)
 
 	ServeMetrics()
 

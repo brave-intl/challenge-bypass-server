@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS act_spends;
+DROP TABLE IF EXISTS act_issuers;

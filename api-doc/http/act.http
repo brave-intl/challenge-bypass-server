@@ -1,0 +1,50 @@
+# Anonymous Credit Tokens. See docs/act-credit-tokens.md.
+# Binary fields are base64 CBOR produced by the client library.
+
+POST http://localhost:2416/v1/act/issuer
+Content-Type: application/json
+# Authorization: Bearer {{token}}
+
+{
+    "name": "leo-premium-2026-10",
+    "max_credits": 1000000,
+    "expires_at": "2026-11-01T00:00:00Z"
+}
+
+###
+
+GET http://localhost:2416/v1/act/issuer/leo-premium-2026-10
+Content-Type: application/json
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-10/issue
+Content-Type: application/json
+
+{
+    "request": "{{base64 CBOR IssuanceRequest}}",
+    "credits": 500000
+}
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-10/spend
+Content-Type: application/json
+
+{
+    "proof": "{{base64 CBOR SpendProof}}"
+}
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-10/spend/{{nullifier}}/refund
+Content-Type: application/json
+
+{
+    "cost": 1234
+}
+
+###
+
+GET http://localhost:2416/v1/act/issuer/leo-premium-2026-10/spend/{{nullifier}}
+Content-Type: application/json
