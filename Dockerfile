@@ -1,21 +1,25 @@
-FROM rust:1.96 AS rust_builder
-RUN rustup target add x86_64-unknown-linux-musl
-RUN apt-get update && apt-get install -y musl-tools
+FROM rust:1.98-alpine3.24 AS rust_builder
+# musl is this image's native target on both amd64 and arm64, so the staticlib
+# needs no cross-target setup and always lands in target/release.
+RUN apk add --no-cache git
 RUN git clone https://github.com/brave-intl/challenge-bypass-ristretto-ffi /src
 WORKDIR /src
 # Keep in lockstep with the challenge-bypass-ristretto-ffi version in go.mod so
 # the compiled static lib exports match the cgo bindings.
 RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
-RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --target=x86_64-unknown-linux-musl --release --crate-type staticlib
+RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --release --crate-type staticlib
 
-FROM golang:1.26 AS go_builder
-RUN apt-get update && apt-get install -y ca-certificates postgresql-client python3-pip awscli
-RUN curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(go env GOPATH)/bin latest
-RUN mkdir /src
+FROM golang:1.26-alpine3.24 AS go_builder
+# cgo needs a C toolchain to link against the Rust staticlib; on musl that is
+# gcc + musl-dev.
+RUN apk add --no-cache gcc musl-dev
 WORKDIR /src
-COPY . .
+# Resolve modules in their own layer so editing source does not re-download the
+# dependency graph on every build.
+COPY go.mod go.sum ./
 RUN go mod download
-COPY --from=rust_builder /src/target/x86_64-unknown-linux-musl/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
+COPY . .
+COPY --from=rust_builder /src/target/release/libchallenge_bypass_ristretto_ffi.a /usr/lib/libchallenge_bypass_ristretto_ffi.a
 
 ARG VERSION
 ARG COMMIT
@@ -29,10 +33,9 @@ RUN go build -ldflags "\
     -o challenge-bypass-server main.go
 CMD ["/src/challenge-bypass-server"]
 
-FROM ubuntu:26.04
-ARG DEBIAN_FRONTEND=noninteractive
-RUN apt update && apt install -y ca-certificates awscli less && rm -rf /var/lib/apt/lists/*
-RUN update-ca-certificates
+FROM alpine:3.24
+# No apk install: the base already ships the CA bundle that crypto/x509 reads
+# (ca-certificates-bundle), and the binary is static, so it needs nothing else.
 COPY --from=go_builder /src/challenge-bypass-server /bin/
 COPY migrations /src/migrations
 EXPOSE 2416
