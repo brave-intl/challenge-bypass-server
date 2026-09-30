@@ -68,6 +68,26 @@ const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rota
                        valid_from, buffer, days_out, overlap, issuer_cohort,
                        redemption_repository, version, max_tokens, duration`
 
+// schemaVersion is the migration version this build needs.
+const schemaVersion uint = 8
+
+// migrateSchema migrates up to target, and never down: when the database is
+// already at or past target (a newer release ran, then this one was rolled
+// back to), it logs and returns. Plain m.Migrate(target) would fail there
+// because the newer migration files are not in this image.
+func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
+	v, dirty, err := m.Version()
+	if err == nil && !dirty && v >= target {
+		logger.Info("database schema at or ahead of this build; skipping migrations",
+			"db_version", v, "build_version", target)
+		return nil
+	}
+	if err := m.Migrate(target); err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+	return nil
+}
+
 // LoadDBConfig loads config into server variable
 func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
@@ -135,8 +155,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 	if err != nil {
 		panic(err)
 	}
-	err = m.Migrate(7)
-	if err != migrate.ErrNoChange && err != nil {
+	if err := migrateSchema(m, schemaVersion, logger); err != nil {
 		panic(err)
 	}
 
@@ -377,6 +396,21 @@ func (c *Server) fetchIssuersByCohort(
 	issuersWithKey, err := c.fetchIssuerKeys(fetchedIssuers)
 	if err != nil {
 		return nil, err
+	}
+
+	// Retirement lives in its own table (v3_issuers is not altered, see
+	// migration 0008). One PK lookup per cache miss; cached with the issuer.
+	for i := range issuersWithKey {
+		var stop pq.NullTime
+		err := c.dbr.QueryRow(`SELECT stop_issuing_at FROM issuer_retirements WHERE issuer_id = $1`,
+			issuersWithKey[i].ID).Scan(&stop)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, utils.ProcessingErrorFromError(err, true)
+		}
+		if stop.Valid {
+			t := stop.Time
+			issuersWithKey[i].StopIssuingAt = &t
+		}
 	}
 
 	if c.caches != nil {
@@ -627,6 +661,8 @@ func (c *Server) rotateIssuers() (err error) {
               AND last_rotated_at < NOW() - $1 * INTERVAL '1 day'
               AND expires_at < NOW() + $1 * INTERVAL '1 day'
               AND version <= 2
+              AND NOT EXISTS (SELECT 1 FROM issuer_retirements r
+                              WHERE r.issuer_id = v3_issuers.issuer_id AND r.stop_issuing_at <= now())
               FOR UPDATE SKIP LOCKED`, issuerColumns)
 
 	rows, err := tx.Query(query, cfg.DefaultDaysBeforeExpiry)
@@ -716,6 +752,8 @@ func (c *Server) rotateIssuersV3() (err error) {
           AND (SELECT max(end_at) FROM v3_issuer_keys WHERE issuer_id=v3_issuers.issuer_id) < now()
                 + buffer * duration::interval
                 + overlap * duration::interval - 1 * duration::interval
+          AND NOT EXISTS (SELECT 1 FROM issuer_retirements r
+                          WHERE r.issuer_id = v3_issuers.issuer_id AND r.stop_issuing_at <= now())
         FOR UPDATE SKIP LOCKED`, issuerColumns)
 
 	rows, err := tx.Query(query)
@@ -837,68 +875,64 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 	return rows, nil
 }
 
-// createIssuer - creation of a v3 issuer
+// createV3Issuer - creation of a v3 issuer
 func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	defer incrementTotal(createIssuerTotal)
-
-	if issuer.MaxTokens == 0 {
-		issuer.MaxTokens = 40
-	}
-
-	validFrom := issuer.ValidFrom
-	if issuer.ValidFrom == nil {
-		validFrom = ptr.FromTime(time.Now())
-	}
 
 	tx, err := c.db.Begin()
 	if err != nil {
 		return err
 	}
-
 	defer func() {
 		if err != nil {
-			err = tx.Rollback()
+			// preserve the original error; a rollback failure must not mask it
+			_ = tx.Rollback()
 			return
 		}
 		err = tx.Commit()
 	}()
 
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
+	defer queryTimer.ObserveDuration()
+
+	_, err = txCreateV3Issuer(c.Logger, tx, issuer)
+	return err
+}
+
+// txCreateV3Issuer inserts the issuer and its initial keys on tx.
+func txCreateV3Issuer(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {
+	if issuer.MaxTokens == 0 {
+		issuer.MaxTokens = 40
+	}
+	validFrom := issuer.ValidFrom
+	if validFrom == nil {
+		validFrom = ptr.FromTime(time.Now())
+	}
 
 	var issuerIDStr string
-	err = tx.QueryRow(`
+	err := tx.QueryRow(`
         INSERT INTO v3_issuers
             (issuer_type, issuer_cohort, max_tokens, version, expires_at,
              buffer, duration, overlap, valid_from)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING issuer_id`,
-		issuer.IssuerType,
-		issuer.IssuerCohort,
-		issuer.MaxTokens,
-		issuer.Version,
-		issuer.ExpiresAt,
-		issuer.Buffer,
-		issuer.Duration,
-		issuer.Overlap,
-		validFrom,
+		issuer.IssuerType, issuer.IssuerCohort, issuer.MaxTokens, issuer.Version,
+		issuer.ExpiresAt, issuer.Buffer, issuer.Duration, issuer.Overlap, validFrom,
 	).Scan(&issuerIDStr)
-
 	if err != nil {
-		return fmt.Errorf("failed to get v3 issuer id: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to get v3 issuer id: %w", err)
 	}
 
 	id, err := uuid.Parse(issuerIDStr)
 	if err != nil {
-		return fmt.Errorf("failed to parse issuer id: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to parse issuer id: %w", err)
 	}
 	issuer.ID = &id
 
-	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
-		return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
+	if err := txPopulateIssuerKeys(logger, tx, issuer); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to populate v3 issuer keys: %w", err)
 	}
-
-	queryTimer.ObserveDuration()
-	return nil
+	return id, nil
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer

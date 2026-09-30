@@ -105,6 +105,11 @@ func (c *SimpleCache[T]) Delete(k string) {
 	c.items.Delete(k)
 }
 
+// Clear removes every item.
+func (c *SimpleCache[T]) Clear() {
+	c.items.Clear()
+}
+
 // SetDefault adds an item to the cache with the default expiration time
 func (c *SimpleCache[T]) SetDefault(k string, x T) {
 	var expiration int64 = 0

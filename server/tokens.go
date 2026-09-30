@@ -103,6 +103,9 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 		if appErr != nil {
 			return appErr
 		}
+		if !issuer.IsIssuing(time.Now()) {
+			return retiredIssuerAppError(issuerType)
+		}
 
 		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
@@ -152,6 +155,9 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 		issuer, appErr := c.GetLatestIssuer(issuerType, v1Cohort)
 		if appErr != nil {
 			return appErr
+		}
+		if !issuer.IsIssuing(time.Now()) {
+			return retiredIssuerAppError(issuerType)
 		}
 
 		var request blindedTokenIssueRequest

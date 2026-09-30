@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brave-intl/challenge-bypass-server/adminapi"
 	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/lib/pq"
 
@@ -86,7 +87,7 @@ func (suite *ServerTestSuite) SetupSuite() {
 }
 
 func (suite *ServerTestSuite) SetupTest() {
-	tables := []string{"v3_issuer_keys", "v3_issuers", "redemptions"}
+	tables := []string{"issuer_admin_audit", "issuer_retirements", "v3_issuer_keys", "v3_issuers", "redemptions"}
 
 	for _, table := range tables {
 		_, err := suite.srv.db.Exec(fmt.Sprintf("delete from %s", table))
@@ -712,4 +713,54 @@ func (suite *ServerTestSuite) TestRedeemV3() {
 		suite.Require().Equal(http.StatusOK, response.StatusCode)
 		time.Sleep(1 * time.Second) // wait for next interval to start
 	}
+}
+
+func (suite *ServerTestSuite) TestRetiredIssuerRejectsSignButRedeems() {
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuer(server.URL, "retire-me", v1Cohort)
+	unblinded := suite.createToken(server.URL, "retire-me", publicKey)
+	bulkToken := suite.createToken(server.URL, "retire-me", publicKey)
+	suite.createIssuer(server.URL, "successor", v1Cohort)
+
+	var oldID, newID uuid.UUID
+	suite.Require().NoError(suite.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='retire-me'`).Scan(&oldID))
+	suite.Require().NoError(suite.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='successor'`).Scan(&newID))
+	suite.Require().NoError(suite.srv.adminRetireIssuer(context.Background(), "op", oldID, adminapi.RetireRequest{
+		ReplacementIssuerID: newID.String(), StopIssuingAt: time.Now(), StopRedeemingAt: time.Now().Add(91 * 24 * time.Hour),
+	}, time.Now()))
+	time.Sleep(1100 * time.Millisecond)
+
+	// v1 sign rejected
+	payload := fmt.Sprintf(`{"blinded_tokens":[%q]}`, suite.blindedTokenText())
+	resp, err := suite.request("POST", server.URL+"/v1/blindedToken/retire-me", bytes.NewBufferString(payload))
+	suite.Require().NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+	// v2 sign rejected
+	payloadV2 := fmt.Sprintf(`{"blinded_tokens":[%q],"cohort":1}`, suite.blindedTokenText())
+	resp, err = suite.request("POST", server.URL+"/v2/blindedToken/retire-me", bytes.NewBufferString(payloadV2))
+	suite.Require().NoError(err)
+	suite.Equal(http.StatusBadRequest, resp.StatusCode)
+
+	// redeem of a token issued before retirement still succeeds
+	preimage, sig := suite.prepareRedemption(unblinded, "m")
+	resp, err = suite.attemptRedeem(server.URL, preimage, sig, "retire-me", "m")
+	suite.Require().NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+
+	// bulk redeem (uses GetLatestIssuer, which must stay ungated) still succeeds
+	bp, bs := suite.prepareRedemption(bulkToken, "m")
+	bulk := fmt.Sprintf(`{"payload":"m","tokens":[{"t":%q,"signature":%q,"issuer":"retire-me"}]}`, bp, bs)
+	resp, err = suite.request("POST", server.URL+"/v1/blindedToken/bulk/redemption", bytes.NewBufferString(bulk))
+	suite.Require().NoError(err)
+	suite.Equal(http.StatusOK, resp.StatusCode)
+}
+
+func (suite *ServerTestSuite) blindedTokenText() string {
+	tok, err := crypto.RandomToken()
+	suite.Require().NoError(err)
+	txt, err := tok.Blind().MarshalText()
+	suite.Require().NoError(err)
+	return string(txt)
 }

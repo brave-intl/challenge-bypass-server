@@ -131,6 +131,77 @@ RUN go build -ldflags '-linkmode external -extldflags "-static"' -tags 'osusergo
 CMD ["/src/challenge-bypass-server"]
 ```
 
+## Issuer admin API and cbp-manage
+
+Operators manage issuers with the `cbp-manage` terminal UI. It talks to the
+`/v1/admin` API, which accepts only ed25519-signed requests from an
+allowlist of operator keys. This is the same model as the subscriptions
+support API. Issuers are never deleted. They are retired in favor of a
+replacement.
+
+Rollout, rollback and break-glass procedures:
+[`docs/issuer-admin-rollout.md`](docs/issuer-admin-rollout.md).
+
+### Operator setup
+
+1. Generate a key:
+   `ssh-keygen -t ed25519 -N "" -C you@brave.com -f ~/.config/cbp-manage/id_ed25519`.
+2. Add the `.pub` line to `prodAdminKeys` (production) or `devAdminKeys`
+   (staging and dev) in `server/admin_keys.go`, via a PR. The comment must
+   be your email; it is written to the audit log. It takes effect on
+   deploy.
+3. Check access: `cbp-manage --whoami` prints the email your key maps to.
+4. Run it:
+   `CBP_ADMIN_URL=https://… CBP_ADMIN_PRIVATE_KEY=~/.config/cbp-manage/id_ed25519 go run ./cmd/cbp-manage`.
+   The binary builds without cgo: `CGO_ENABLED=0 go build ./cmd/cbp-manage`.
+
+### Retirement rules (enforced by the server)
+
+A retirement names a replacement issuer, a stop-issuing time and a
+stop-redeeming time. After stop-issuing, sign requests for the issuer are
+**rejected** (HTTP 400, Kafka `issuerInvalid`), never routed to the
+replacement. Switch client configuration to the replacement first.
+Redemption continues until stop-redeeming.
+
+1. The issuer must be active: not already retiring, retired or expired.
+2. The replacement must be a different, active issuer. Its version may
+   differ.
+3. `stop_issuing_at` must not be in the past (up to 60 seconds of clock
+   skew is tolerated).
+4. `stop_redeeming_at` must be at least 90 days after `stop_issuing_at`.
+5. For v3 issuers, `stop_redeeming_at` must also cover the last key window
+   the rotation cron can still create:
+   `stop_issuing_at + (buffer + overlap) × duration`.
+6. The replacement must not expire before `stop_redeeming_at`.
+7. The replacement must already be valid at `stop_issuing_at`.
+8. Chain rule: an issuer that replaced another cannot stop issuing before
+   that other issuer stops redeeming.
+9. The issuer and replacement names must not be prefixes of one another.
+   Kafka resolves issuers by prefix, so `X` would silently route to
+   `X-next`. Admin create rejects such names for the same reason.
+
+To undo: **cancel** works while the issuer is still retiring. **Postpone**
+(a later stop-issuing time) works even after the issuer has retired. Both
+leave redemption the same or longer, never shorter.
+
+v1/v2 keys are not rotated by hand. HTTP redemption only checks the newest
+v1/v2 key, so rotate by creating a replacement issuer and retiring the old
+one.
+
+### Endpoints (all under `/v1/admin`, signed)
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/whoami` | operator email for the signing key |
+| GET | `/issuers` | list with derived status |
+| POST | `/issuers` | create (v1/v2/v3) |
+| GET | `/issuers/{id}` | detail: keys (public only), retirement chain |
+| PATCH | `/issuers/{id}` | `max_tokens`, or a later `expires_at` |
+| POST | `/issuers/{id}/retire` | retire in favor of a replacement |
+| DELETE | `/issuers/{id}/retire` | cancel a retirement that hasn't started |
+| POST | `/issuers/{id}/retire/postpone` | move stop-issuing later |
+| GET | `/audit?issuer_id=&limit=` | audit log, newest first |
+
 ## Deployment
 
 For testing purposes this repo can be deployed to Heroku. The settings set in environment variables `DBCONFIG` and `DATABASE_URL` override other options.

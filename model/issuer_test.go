@@ -407,3 +407,13 @@ func mustRandomSigningKey() []byte {
 
 	return data
 }
+
+func TestIssuer_IsIssuing(t *testing.T) {
+	now := time.Now()
+	past, future := now.Add(-time.Second), now.Add(time.Second)
+
+	should.True(t, (&Issuer{}).IsIssuing(now))
+	should.True(t, (&Issuer{StopIssuingAt: &future}).IsIssuing(now))
+	should.False(t, (&Issuer{StopIssuingAt: &past}).IsIssuing(now))
+	should.False(t, (&Issuer{StopIssuingAt: &now}).IsIssuing(now))
+}
