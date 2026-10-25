@@ -1,4 +1,4 @@
-FROM rust:1.98-alpine3.24 AS rust_builder
+FROM rust:1.99-alpine3.24 AS rust_builder
 # musl is this image's native target on both amd64 and arm64, so the staticlib
 # needs no cross-target setup and always lands in target/release.
 RUN apk add --no-cache git
