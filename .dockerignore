@@ -5,3 +5,7 @@ README.md
 vendor
 *.sql
 .git
+
+# local ACT build outputs (the image builds its own)
+act/ffi/target
+act/ffi/lib

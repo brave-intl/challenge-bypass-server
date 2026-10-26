@@ -140,6 +140,10 @@ func (c *Server) InitDB(logger *slog.Logger) {
 		panic(err)
 	}
 
+	if err := migrateACT(writer); err != nil {
+		panic(err)
+	}
+
 	if cfg.CachingConfig.Enabled {
 		c.caches = bootstrapCache(cfg)
 	}
