@@ -231,16 +231,26 @@ func (s *AdminDBSuite) TestRetireNeedsThreeCalendarMonths() {
 	s.Require().NoError(s.retire(old, repl, stop, stop.AddDate(0, 3, 0)))
 }
 
-// With caching on, pods keep signing from a cached copy for up to the cache
-// period after "retire now", so the overlap is measured from then.
-func (s *AdminDBSuite) TestRetireNowCountsCachePeriod() {
-	old, repl := s.create(v1("cache-old")), s.create(v1("cache-new"))
-	saved := s.srv.dbConfig.CachingConfig
-	s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 3600}
-	defer func() { s.srv.dbConfig.CachingConfig = saved }()
+// After "retire now", sign requests can still succeed until the change
+// reaches the reader replica (allowance maxReplicaLag) and, with caching
+// on, until cached copies expire. The overlap is measured from then.
+func (s *AdminDBSuite) TestRetireNowCountsPropagationDelay() {
 	now := time.Now()
-	s.isRule(s.retire(old, repl, now, adminapi.MinStopRedeeming(now).Add(time.Minute)), "last possible issuance")
-	s.Require().NoError(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour)).Add(time.Minute)))
+	s.Run("replica lag", func() {
+		s.SetupTest()
+		old, repl := s.create(v1("lag-old")), s.create(v1("lag-new"))
+		s.isRule(s.retire(old, repl, now, adminapi.MinStopRedeeming(now).Add(time.Minute)), "last possible issuance")
+		s.Require().NoError(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(maxReplicaLag)).Add(time.Minute)))
+	})
+	s.Run("replica lag plus cache period", func() {
+		s.SetupTest()
+		old, repl := s.create(v1("cache-old")), s.create(v1("cache-new"))
+		saved := s.srv.dbConfig.CachingConfig
+		s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 3600}
+		defer func() { s.srv.dbConfig.CachingConfig = saved }()
+		s.isRule(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour)).Add(time.Minute)), "last possible issuance")
+		s.Require().NoError(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour+maxReplicaLag)).Add(time.Minute)))
+	})
 }
 
 // Postpone keeps 3 calendar months too, on both the explicit and the

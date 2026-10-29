@@ -439,6 +439,10 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 	})
 }
 
+// maxReplicaLag bounds how long a committed retirement can take to reach
+// the reader replica that the sign path reads (fetchStopIssuingAt).
+const maxReplicaLag = 5 * time.Minute
+
 // requireExpiringCache refuses retirement changes when issuer cache entries
 // never expire (CACHE_DURATION_SECS <= 0 makes SimpleCache keep them
 // forever): other pods would never see the change.
@@ -599,15 +603,19 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}
-	// Pods that cached the issuer before this change keep signing until
-	// their entry expires, so measure the overlap from that point.
-	lastIssue := stopIssuing
+	// The sign path reads retirement from the reader replica, and pods that
+	// cached the issuer before this change keep signing until the entry
+	// expires. So issuing can continue until now + replica lag + cache
+	// period; measure the overlap from then if that is later.
+	propagated := now.Add(maxReplicaLag)
 	if cc := c.dbConfig.CachingConfig; cc.Enabled {
 		// ponytail: assumes every pod (HTTP and Kafka) runs this pod's
 		// CACHE_DURATION_SECS; pass the fleet maximum here if they differ.
-		if t := now.Add(time.Duration(cc.ExpirationSec) * time.Second); t.After(lastIssue) {
-			lastIssue = t
-		}
+		propagated = propagated.Add(time.Duration(cc.ExpirationSec) * time.Second)
+	}
+	lastIssue := stopIssuing
+	if propagated.After(lastIssue) {
+		lastIssue = propagated
 	}
 	if min := adminapi.MinStopRedeeming(lastIssue); stopRedeeming.Before(min) {
 		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the last possible issuance", min.Format(time.RFC3339))
