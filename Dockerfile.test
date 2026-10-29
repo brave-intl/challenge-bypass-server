@@ -1,4 +1,4 @@
-FROM rust:1.98-alpine3.24 AS rust_builder
+FROM rust:1.99-alpine3.24 AS rust_builder
 # musl is this image's native target on both amd64 and arm64, so the staticlib
 # needs no cross-target setup and always lands in target/release.
 RUN apk add --no-cache git
@@ -9,7 +9,7 @@ WORKDIR /src
 RUN git checkout 450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2
 RUN CARGO_PROFILE_RELEASE_LTO=true cargo rustc --release --crate-type staticlib
 
-FROM golang:1.26-alpine3.24
+FROM golang:1.27-alpine3.24
 # cgo needs a C toolchain to link against the Rust staticlib; on musl that is
 # gcc + musl-dev.
 RUN apk add --no-cache gcc musl-dev
