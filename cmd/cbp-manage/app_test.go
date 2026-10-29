@@ -13,9 +13,11 @@ import (
 )
 
 type fakeAPI struct {
-	issuers []adminapi.Issuer
-	retired *adminapi.RetireRequest
-	err     error
+	issuers   []adminapi.Issuer
+	retired   *adminapi.RetireRequest
+	postponed *adminapi.PostponeRequest
+	cancelled string
+	err       error
 }
 
 func (f *fakeAPI) ListIssuers(context.Context) ([]adminapi.Issuer, error) { return f.issuers, f.err }
@@ -37,10 +39,12 @@ func (f *fakeAPI) RetireIssuer(_ context.Context, _ string, r adminapi.RetireReq
 	f.retired = &r
 	return &f.issuers[0], nil
 }
-func (f *fakeAPI) CancelRetirement(context.Context, string) (*adminapi.Issuer, error) {
+func (f *fakeAPI) CancelRetirement(_ context.Context, id string) (*adminapi.Issuer, error) {
+	f.cancelled = id
 	return &f.issuers[0], nil
 }
-func (f *fakeAPI) PostponeRetirement(context.Context, string, adminapi.PostponeRequest) (*adminapi.Issuer, error) {
+func (f *fakeAPI) PostponeRetirement(_ context.Context, _ string, r adminapi.PostponeRequest) (*adminapi.Issuer, error) {
+	f.postponed = &r
 	return &f.issuers[0], nil
 }
 func (f *fakeAPI) ListAudit(context.Context, string, int) ([]adminapi.AuditEntry, error) {
@@ -227,7 +231,7 @@ func TestDoneLeavesConfirmScreen(t *testing.T) {
 		t.Fatalf("screen %v, want detail", m.(model).screen)
 	}
 	_ = m.View()
-	m, _ = m.Update(key("x"))
+	_, _ = m.Update(key("x")) // must not panic
 }
 
 // esc on the confirm screen, then esc on the form, must get back to detail.
@@ -275,5 +279,52 @@ func TestCreateFormRejectsCohortOverflow(t *testing.T) {
 	vals[2] = ""
 	if _, err := m.form.build(m, vals); err != nil {
 		t.Fatalf("blank cohort must fall back to the server default, got %v", err)
+	}
+}
+
+func retiringFake() *fakeAPI {
+	stop := time.Now().Add(time.Hour)
+	return &fakeAPI{issuers: []adminapi.Issuer{{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusRetiring, StopIssuingAt: &stop}}}
+}
+
+// Postpone sends only after the typed confirmation, with the form's time.
+func TestPostponeFlow(t *testing.T) {
+	f := retiringFake()
+	var m tea.Model = newModel(f)
+	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
+	m, _ = m.Update(key("p"))
+	m, _ = m.Update(key("enter")) // default +30d
+	m, _ = m.Update(key("enter")) // no typed name
+	if f.postponed != nil {
+		t.Fatal("postpone sent without typed confirmation")
+	}
+	m = typeText(m, "old")
+	var cmd tea.Cmd
+	m, cmd = m.Update(key("enter"))
+	drive(m, cmd)
+	if f.postponed == nil || f.postponed.StopIssuingAt.Before(time.Now().Add(29*24*time.Hour)) {
+		t.Fatalf("postpone not sent with +30d: %+v", f.postponed)
+	}
+}
+
+// Cancel applies only to a retiring issuer and needs the typed name.
+func TestCancelRetirementFlow(t *testing.T) {
+	f := retiringFake()
+	var m tea.Model = newModel(f)
+	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
+	m, _ = m.Update(key("c"))
+	m = typeText(m, "old")
+	var cmd tea.Cmd
+	m, cmd = m.Update(key("enter"))
+	drive(m, cmd)
+	if f.cancelled != "1" {
+		t.Fatalf("cancel not sent: %q", f.cancelled)
+	}
+
+	active := adminapi.Issuer{ID: "2", Name: "a", Version: 1, Status: adminapi.StatusActive}
+	m = drive(newModel(f), func() tea.Msg { return detailMsg{iss: &active} })
+	m, _ = m.Update(key("c"))
+	if m.(model).screen == screenConfirm {
+		t.Fatal("cancel offered for an active issuer")
 	}
 }

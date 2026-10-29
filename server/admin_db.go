@@ -308,6 +308,11 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 
 	var id uuid.UUID
 	err := c.withAdminTx(ctx, func(tx *sql.Tx) error {
+		// Serialize admin creates: two concurrent creates of prefix
+		// siblings (X, X-next) would otherwise both pass the check.
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, adminCreateLock); err != nil {
+			return err
+		}
 		clash, err := txPrefixSibling(ctx, tx, req.Name)
 		if err != nil {
 			return err
@@ -322,6 +327,9 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 	})
 	return id, err
 }
+
+// adminCreateLock is the advisory lock key that serializes admin creates.
+const adminCreateLock = 0x63627069737375 // "cbpissu"
 
 type lockedIssuer struct {
 	id            uuid.UUID
@@ -551,6 +559,19 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 // retired issuer: the emergency switch when clients still depend on it.
 // It never shortens redemption and keeps the replacement's promise.
 func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
+	if err := c.txPostponeRetirement(ctx, operator, id, req, now); err != nil {
+		return err
+	}
+	// The rotation cron skipped this issuer while it was retired, so a v3
+	// issuer may have no key for the current window. Run the cron now so
+	// signing resumes at once; it is idempotent and needs its own tx.
+	if err := c.rotateIssuersV3(); err != nil {
+		c.Logger.Error("postpone: rotating v3 keys failed; the hourly cron will retry", "issuer_id", id.String(), "err", err)
+	}
+	return nil
+}
+
+func (c *Server) txPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
 	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
 		locked, err := txLockIssuers(ctx, tx, id)
 		if err != nil {

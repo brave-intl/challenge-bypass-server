@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -151,4 +152,26 @@ func actions(es []adminapi.AuditEntry) []string {
 		out[i] = e.Action
 	}
 	return out
+}
+
+// A successful mutation drops this pod's cached issuers.
+func (s *AdminHTTPSuite) TestMutationClearsIssuerCache() {
+	ctx := context.Background()
+	iss, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "cached", Version: 1})
+	s.Require().NoError(err)
+
+	saved := s.srv.caches
+	s.srv.caches = bootstrapCache(DBConfig{CachingConfig: CachingConfig{Enabled: true, ExpirationSec: 600}})
+	defer func() { s.srv.caches = saved }()
+	s.srv.caches.Issuer.SetDefault("cached", &model.Issuer{IssuerType: "cached"})
+	s.srv.caches.Issuers.SetDefault("cached", []model.Issuer{{IssuerType: "cached"}})
+	s.srv.caches.IssuerCohort.SetDefault("cached", []model.Issuer{{IssuerType: "cached"}})
+
+	mt := 7
+	_, err = s.client.UpdateIssuer(ctx, iss.ID, adminapi.UpdateIssuerRequest{MaxTokens: &mt})
+	s.Require().NoError(err)
+	_, ok1 := s.srv.caches.Issuer.Get("cached")
+	_, ok2 := s.srv.caches.Issuers.Get("cached")
+	_, ok3 := s.srv.caches.IssuerCohort.Get("cached")
+	s.False(ok1 || ok2 || ok3, "issuer caches must be cleared")
 }

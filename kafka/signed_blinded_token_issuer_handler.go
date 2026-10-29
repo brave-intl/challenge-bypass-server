@@ -635,8 +635,6 @@ OUTER:
 	return nil
 }
 
-// avroIssuerErrorResultFromError returns a ProcessingResult that is constructed from the
-// provided values.
 // retiredSigningResult returns the result for a sign request to an issuer
 // that has stopped issuing at now, and false while it still issues. Retired
 // issuers only redeem: reject, never route to the replacement.
@@ -650,6 +648,8 @@ func retiredSigningResult(issuer *model.Issuer, request avroSchema.SigningReques
 	}, true
 }
 
+// avroIssuerErrorResultFromError returns a ProcessingResult that is constructed from the
+// provided values.
 func avroIssuerErrorResultFromError(
 	message string,
 	marshaledBlindedTokens []string,

@@ -402,3 +402,15 @@ func TestBootstrapCache(t *testing.T) {
 		})
 	}
 }
+
+func TestSimpleCache_Clear(t *testing.T) {
+	c := NewSimpleCache[string](time.Minute, time.Minute)
+	c.SetDefault("a", "1")
+	c.SetDefault("b", "2")
+	c.Clear()
+	for _, k := range []string{"a", "b"} {
+		if _, ok := c.Get(k); ok {
+			t.Errorf("%s survived Clear", k)
+		}
+	}
+}

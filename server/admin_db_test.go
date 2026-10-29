@@ -10,6 +10,7 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -273,6 +274,76 @@ func (s *AdminDBSuite) TestSignPathSeesRetirementWithManyKeys() {
 	k, err := s.srv.GetLatestIssuerKafka("many", 1)
 	s.Require().NoError(err)
 	s.False(k.IsIssuing(time.Now().Add(time.Second)))
+}
+
+// Postponing a retired v3 issuer must give it a key for the current window
+// at once: the cron skipped it while it was retired.
+func (s *AdminDBSuite) TestPostponeV3RestoresCurrentKey() {
+	old := s.create(v3("pk3", time.Now().AddDate(2, 0, 0)))
+	repl := s.create(v1("pkr"))
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 7, 0)))
+	_, err := s.srv.db.Exec(`DELETE FROM v3_issuer_keys WHERE issuer_id = $1`, old)
+	s.Require().NoError(err)
+	_, err = s.srv.db.Exec(`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+        VALUES ($1, 'x', 'y', 1, now() - interval '2 days', now() - interval '1 day')`, old)
+	s.Require().NoError(err)
+	time.Sleep(1100 * time.Millisecond) // retired: stop_issuing_at has passed
+
+	s.Require().NoError(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now()))
+	var current int
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM v3_issuer_keys
+        WHERE issuer_id = $1 AND start_at <= now() AND end_at > now()`, old).Scan(&current))
+	s.Equal(1, current, "postponed v3 issuer needs a key for the current window")
+}
+
+// Admin creates are serialized, so a create that waits on a concurrent one
+// sees the sibling it committed and refuses.
+func (s *AdminDBSuite) TestCreateWaitsForConcurrentCreate() {
+	tx, err := s.srv.db.Begin()
+	s.Require().NoError(err)
+	_, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, adminCreateLock)
+	s.Require().NoError(err)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := s.srv.adminCreateIssuer(s.ctx, "op", v1("race"))
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		_ = tx.Rollback()
+		s.FailNow("create did not wait for the concurrent create", "err: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	s.Require().NoError(s.srv.createIssuer("race-next", v1Cohort, 0, &time.Time{}))
+	s.Require().NoError(tx.Commit())
+	s.isRule(<-done, "prefix")
+}
+
+// The v1/v2 rotation cron must not add keys to a retired issuer.
+func (s *AdminDBSuite) TestRotateV1SkipsRetired() {
+	ret, ctl := s.create(v1("rot-ret")), s.create(v1("rot-ctl"))
+	s.Require().NoError(s.retire(ret, s.create(v1("rot-repl")), time.Now(), time.Now().Add(93*day)))
+	// put both inside the cron's "expires soon, not rotated lately" window
+	_, err := s.srv.db.Exec(`UPDATE v3_issuers SET expires_at = now() + interval '1 day',
+        last_rotated_at = now() - interval '30 days' WHERE issuer_id = ANY($1)`, pq.Array([]uuid.UUID{ret, ctl}))
+	s.Require().NoError(err)
+	time.Sleep(1100 * time.Millisecond) // stop_issuing_at now in the past
+
+	keys := func(id uuid.UUID) (n int) {
+		s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM v3_issuer_keys WHERE issuer_id = $1`, id).Scan(&n))
+		return n
+	}
+	retBefore, ctlBefore := keys(ret), keys(ctl)
+	s.Require().NoError(s.srv.rotateIssuers())
+	s.Equal(retBefore, keys(ret), "retired issuer must not rotate")
+	s.Greater(keys(ctl), ctlBefore, "control issuer rotates")
+}
+
+// The legacy create path used to swallow database errors on rollback.
+func (s *AdminDBSuite) TestLegacyCreateReturnsDBError() {
+	s.Require().NoError(s.srv.createIssuer("dup", v1Cohort, 0, &time.Time{}))
+	s.Error(s.srv.createIssuer("dup", v1Cohort, 0, &time.Time{}), "unique violation must surface")
 }
 
 func (s *AdminDBSuite) TestCancelAfterStopIssuingRejected() {
