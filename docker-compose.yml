@@ -45,7 +45,7 @@ services:
   # behind a profile so `docker compose up` never pulls or starts it:
   #   docker compose --profile tools run --rm aws-cli dynamodb list-tables
   aws-cli:
-    image: amazon/aws-cli:2.36.11
+    image: amazon/aws-cli:2.38.5
     profiles:
       - tools
     environment:
