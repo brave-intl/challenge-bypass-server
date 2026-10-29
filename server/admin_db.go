@@ -38,11 +38,33 @@ func utcTime(t *time.Time) *time.Time {
 	return &u
 }
 
-// prefixRelated reports whether one issuer name is a prefix of the other.
-// Kafka sign lookups match `issuer_type LIKE name || '%'` and prefer the
-// later expiry, so such a pair would silently route one to the other.
-func prefixRelated(a, b string) bool {
-	return strings.HasPrefix(a, b) || strings.HasPrefix(b, a)
+// txPrefixSibling returns another issuer name that a Kafka sign lookup can
+// confuse with name, or "" if there is none. GetLatestIssuerKafka matches
+// `issuer_type LIKE name || '%'` and prefers the later expiry, so such a pair
+// routes one to the other, and changing either one's expires_at can flip
+// which one wins. The check uses LIKE, not a plain prefix compare, because
+// `_` and `%` in a name are wildcards there.
+func txPrefixSibling(ctx context.Context, tx *sql.Tx, name string) (string, error) {
+	var sibling string
+	err := tx.QueryRowContext(ctx, `
+        SELECT issuer_type FROM v3_issuers
+        WHERE issuer_type <> $1
+          AND (issuer_type LIKE $1 || '%' OR $1 LIKE issuer_type || '%')
+        LIMIT 1`, name).Scan(&sibling)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return sibling, err
+}
+
+// txRejectPrefixSibling refuses an expires_at change on an issuer that has a
+// prefix sibling, since the change can reroute the sibling's sign requests.
+func txRejectPrefixSibling(ctx context.Context, tx *sql.Tx, name string) error {
+	sibling, err := txPrefixSibling(ctx, tx, name)
+	if err != nil || sibling == "" {
+		return err
+	}
+	return ruleErr("issuer %q and existing issuer %q match each other in Kafka's prefix lookup, so changing this expiry could reroute sign requests between them", name, sibling)
 }
 
 // nullableTime maps NULL and the 0001-01-01 "no expiry" sentinel to nil.
@@ -277,7 +299,7 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 			// The legacy create path leaves this nil, so the first key
 			// windows land in year 0001 until the rotation cron catches up.
 			// Admin-created issuers get real windows immediately.
-			now := time.Now()
+			now := time.Now().UTC()
 			iss.ValidFrom = &now
 		}
 		d := req.Duration
@@ -286,17 +308,12 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 
 	var id uuid.UUID
 	err := c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		var clash string
-		err := tx.QueryRowContext(ctx, `
-            SELECT issuer_type FROM v3_issuers
-            WHERE issuer_type <> $1
-              AND (left(issuer_type, length($1)) = $1 OR left($1, length(issuer_type)) = issuer_type)
-            LIMIT 1`, req.Name).Scan(&clash)
-		if err == nil {
-			return ruleErr("name %q and existing issuer %q are prefixes of one another; Kafka resolves issuers by prefix, so pick a name that is not", req.Name, clash)
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		clash, err := txPrefixSibling(ctx, tx, req.Name)
+		if err != nil {
 			return err
+		}
+		if clash != "" {
+			return ruleErr("name %q and existing issuer %q match each other in Kafka's prefix lookup (`_` and `%%` are wildcards there), so pick a name that does not", req.Name, clash)
 		}
 		if id, err = txCreateV3Issuer(c.Logger, tx, iss); err != nil {
 			return err
@@ -380,7 +397,13 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 			return err
 		}
 		l := locked[id]
+		if l.status(time.Now()) == adminapi.StatusExpired {
+			return ruleErr("issuer has expired; create a new issuer instead")
+		}
 		if req.ExpiresAt != nil {
+			if err := txRejectPrefixSibling(ctx, tx, l.name); err != nil {
+				return err
+			}
 			cur := nullableTime(l.expiresAt)
 			if cur == nil {
 				return ruleErr("issuer has no expiry; setting one would shorten it")
@@ -442,8 +465,18 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	if stopIssuing.Before(now) {
 		return ruleErr("stop_issuing_at must not be in the past")
 	}
-	if stopRedeeming.Before(stopIssuing.Add(adminapi.MinRetirementOverlap)) {
-		return ruleErr("stop_redeeming_at must be at least 90 days after stop_issuing_at")
+	// Pods that cached the issuer before this change keep signing until
+	// their entry expires, so measure the overlap from that point.
+	lastIssue := stopIssuing
+	if cc := c.dbConfig.CachingConfig; cc.Enabled {
+		// ponytail: assumes every pod (HTTP and Kafka) runs this pod's
+		// CACHE_DURATION_SECS; pass the fleet maximum here if they differ.
+		if t := now.Add(time.Duration(cc.ExpirationSec) * time.Second); t.After(lastIssue) {
+			lastIssue = t
+		}
+	}
+	if min := adminapi.MinStopRedeeming(lastIssue); stopRedeeming.Before(min) {
+		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the last possible issuance", min.Format(time.RFC3339))
 	}
 
 	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
@@ -459,8 +492,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		if st := repl.status(now); st != adminapi.StatusActive {
 			return ruleErr("replacement must be active (it is %s)", st)
 		}
-		if prefixRelated(target.name, repl.name) {
-			return ruleErr("issuer %q and replacement %q are prefixes of one another; Kafka resolves issuers by prefix and would route one to the other", target.name, repl.name)
+		// Covers the replacement too: it is one of the other issuers.
+		if err := txRejectPrefixSibling(ctx, tx, target.name); err != nil {
+			return err
 		}
 		if exp := nullableTime(repl.expiresAt); exp != nil && exp.Before(stopRedeeming) {
 			return ruleErr("replacement expires at %s, before stop_redeeming_at", exp.UTC().Format(time.RFC3339))
@@ -475,7 +509,7 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		err = tx.QueryRowContext(ctx, `
             SELECT max(i.expires_at) FROM issuer_retirements r
             JOIN v3_issuers i ON i.issuer_id = r.issuer_id
-            WHERE r.replacement_issuer_id = $1 AND i.expires_at > $2`, id, now).Scan(&promised)
+            WHERE r.replacement_issuer_id = $1 AND i.expires_at > $2`, id, now.UTC()).Scan(&promised)
 		if err != nil {
 			return err
 		}
@@ -530,6 +564,9 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 		if st == adminapi.StatusExpired {
 			return ruleErr("issuer has expired; create a new issuer instead")
 		}
+		if err := txRejectPrefixSibling(ctx, tx, l.name); err != nil {
+			return err
+		}
 		req.StopIssuingAt = req.StopIssuingAt.UTC().Truncate(time.Second)
 		if req.StopRedeemingAt != nil {
 			t := req.StopRedeemingAt.UTC().Truncate(time.Second)
@@ -539,7 +576,7 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 			return ruleErr("stop_issuing_at must be later than the current %s and not in the past", l.stopIssuingAt.UTC().Format(time.RFC3339))
 		}
 		cur := nullableTime(l.expiresAt) // retired issuers always have one
-		redeem := req.StopIssuingAt.Add(adminapi.MinRetirementOverlap)
+		redeem := adminapi.MinStopRedeeming(req.StopIssuingAt)
 		if cur != nil && cur.After(redeem) {
 			redeem = *cur
 		}
@@ -547,8 +584,8 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 			if cur != nil && req.StopRedeemingAt.Before(*cur) {
 				return ruleErr("stop_redeeming_at would shorten redemption (current %s)", cur.UTC().Format(time.RFC3339))
 			}
-			if req.StopRedeemingAt.Before(req.StopIssuingAt.Add(adminapi.MinRetirementOverlap)) {
-				return ruleErr("stop_redeeming_at must be at least 90 days after stop_issuing_at")
+			if min := adminapi.MinStopRedeeming(req.StopIssuingAt); req.StopRedeemingAt.Before(min) {
+				return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after stop_issuing_at", min.Format(time.RFC3339))
 			}
 			redeem = *req.StopRedeemingAt
 		}

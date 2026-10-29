@@ -399,16 +399,14 @@ func (c *Server) fetchIssuersByCohort(
 	}
 
 	// Retirement lives in its own table (v3_issuers is not altered, see
-	// migration 0008). One PK lookup per cache miss; cached with the issuer.
+	// migration 0008). The query above returns one row per key, so look up
+	// every issuer in one query per cache miss; cached with the issuer.
+	stops, err := c.fetchStopIssuingAt(issuersWithKey)
+	if err != nil {
+		return nil, utils.ProcessingErrorFromError(err, true)
+	}
 	for i := range issuersWithKey {
-		var stop pq.NullTime
-		err := c.dbr.QueryRow(`SELECT stop_issuing_at FROM issuer_retirements WHERE issuer_id = $1`,
-			issuersWithKey[i].ID).Scan(&stop)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, utils.ProcessingErrorFromError(err, true)
-		}
-		if stop.Valid {
-			t := stop.Time
+		if t, ok := stops[*issuersWithKey[i].ID]; ok {
 			issuersWithKey[i].StopIssuingAt = &t
 		}
 	}
@@ -418,6 +416,31 @@ func (c *Server) fetchIssuersByCohort(
 	}
 
 	return issuersWithKey, nil
+}
+
+// fetchStopIssuingAt returns stop_issuing_at for each retired issuer among issuers.
+func (c *Server) fetchStopIssuingAt(issuers []model.Issuer) (map[uuid.UUID]time.Time, error) {
+	ids := make([]uuid.UUID, 0, len(issuers))
+	for _, iss := range issuers {
+		if iss.ID != nil {
+			ids = append(ids, *iss.ID)
+		}
+	}
+	rows, err := c.dbr.Query(`SELECT issuer_id, stop_issuing_at FROM issuer_retirements WHERE issuer_id = ANY($1)`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]time.Time{}
+	for rows.Next() {
+		var id uuid.UUID
+		var stop time.Time
+		if err := rows.Scan(&id, &stop); err != nil {
+			return nil, err
+		}
+		out[id] = stop
+	}
+	return out, rows.Err()
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {

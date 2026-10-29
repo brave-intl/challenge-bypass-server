@@ -111,7 +111,7 @@ func TestListLoadsAndShowsStatus(t *testing.T) {
 func TestDefaultRetireTimes(t *testing.T) {
 	now := time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC)
 	si, sr := defaultRetireTimes(adminapi.Issuer{Version: 1}, now)
-	if !si.Equal(now) || !sr.Equal(now.Add(adminapi.MinRetirementOverlap)) {
+	if !si.Equal(now) || !sr.Equal(adminapi.MinStopRedeeming(now).Add(24*time.Hour)) {
 		t.Fatalf("v1 defaults: %v %v", si, sr)
 	}
 	far := now.AddDate(0, 6, 0)
@@ -174,8 +174,95 @@ func TestRetireWizardOffersOnlyActiveReplacementsAndRequiresTypedName(t *testing
 	if f.retired == nil || f.retired.ReplacementIssuerID != "2" {
 		t.Fatalf("retire not sent correctly: %+v", f.retired)
 	}
-	if f.retired.StopRedeemingAt.Sub(f.retired.StopIssuingAt) < adminapi.MinRetirementOverlap {
-		t.Fatal("default overlap below 90 days")
+	if f.retired.StopRedeemingAt.Before(adminapi.MinStopRedeeming(f.retired.StopIssuingAt)) {
+		t.Fatal("default overlap below 3 months")
+	}
+	if time.Since(f.retired.StopIssuingAt) > time.Second {
+		t.Fatalf("stop_issuing_at must resolve at send time, got %v", f.retired.StopIssuingAt)
+	}
+}
+
+// The wizard's defaults are relative, so they resolve against the clock at
+// send time, however long the operator spends on review.
+func TestRetireDefaultsResolveAtSendTime(t *testing.T) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{
+		{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive},
+		{ID: "2", Name: "new", Version: 1, Status: adminapi.StatusActive},
+	}}
+	m := newModel(f)
+	m.issuers = f.issuers
+	m = m.openRetire(f.issuers[0])
+	si, sr := m.retire.stopIssuing.Value(), m.retire.stopRedeeming.Value()
+	if si != "now" || !strings.HasPrefix(sr, "+") || !strings.HasSuffix(sr, "d") {
+		t.Fatalf("defaults must be relative, got %q %q", si, sr)
+	}
+	later := time.Now().Add(10 * time.Minute)
+	req, err := retireRequest("2", si, sr, later)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !req.StopIssuingAt.Equal(later) {
+		t.Fatalf("stop_issuing_at %v, want the send time %v", req.StopIssuingAt, later)
+	}
+}
+
+func TestRetireRequestNeedsThreeCalendarMonths(t *testing.T) {
+	nov1 := time.Date(2027, 11, 1, 0, 0, 0, 0, time.UTC) // +90d = Jan 30, +3 months = Feb 1
+	if _, err := retireRequest("2", "2027-11-01", "2028-01-30", nov1); err == nil {
+		t.Fatal("90 days short of 3 months must be rejected")
+	}
+	if _, err := retireRequest("2", "2027-11-01", "2028-02-01", nov1); err != nil {
+		t.Fatalf("3 months must pass: %v", err)
+	}
+}
+
+// After a mutation succeeds the TUI must leave the confirm screen at once:
+// rendering screenConfirm with a nil confirm panicked.
+func TestDoneLeavesConfirmScreen(t *testing.T) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive}}}
+	var m tea.Model = newModel(f)
+	m = m.(model).askConfirm(screenDetail, confirmReq{title: "x", run: func() tea.Cmd { return nil }})
+	m, _ = m.Update(doneMsg{&f.issuers[0], "ok"})
+	if m.(model).screen != screenDetail {
+		t.Fatalf("screen %v, want detail", m.(model).screen)
+	}
+	_ = m.View()
+	m, _ = m.Update(key("x"))
+}
+
+// esc on the confirm screen, then esc on the form, must get back to detail.
+func TestFormEscReturnsAfterConfirmEsc(t *testing.T) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{{ID: "1", Name: "old", Version: 1, MaxTokens: 40, Status: adminapi.StatusActive}}}
+	var m tea.Model = newModel(f)
+	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
+	m, _ = m.Update(key("e"))
+	m = typeText(m, "1") // max_tokens 401
+	m, _ = m.Update(key("enter"))
+	if m.(model).screen != screenConfirm {
+		t.Fatalf("expected confirm, got %v (err %q)", m.(model).screen, m.(model).err)
+	}
+	m, _ = m.Update(key("esc"))
+	m, _ = m.Update(key("esc"))
+	if m.(model).screen != screenDetail {
+		t.Fatalf("esc from form went to %v, want detail", m.(model).screen)
+	}
+}
+
+// Command letters typed into the filter must filter, not run.
+func TestFilterTakesCommandLetters(t *testing.T) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{{ID: "1", Name: "quest", Version: 1}, {ID: "2", Name: "brave", Version: 1}}}
+	var m tea.Model = newModel(f)
+	m = drive(m, m.Init())
+	m, _ = m.Update(key("/"))
+	for _, r := range "quest" {
+		var cmd tea.Cmd
+		m, cmd = m.Update(key(string(r)))
+		if cmd != nil {
+			t.Fatalf("%q ran a command while filtering", r)
+		}
+	}
+	if got := m.(model).visible(); len(got) != 1 || got[0].Name != "quest" {
+		t.Fatalf("filter %q: %+v", m.(model).filter, got)
 	}
 }
 

@@ -63,6 +63,7 @@ type model struct {
 	issuers      []adminapi.Issuer
 	table        table.Model
 	filter       string
+	filtering    bool // list keys go to the filter, not to commands
 	cur          *adminapi.Issuer
 	audit        []adminapi.AuditEntry
 	err          string
@@ -172,7 +173,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cur, m.audit, m.err, m.screen = msg.iss, msg.audit, "", screenDetail
 		return m, nil
 	case doneMsg:
-		m.note, m.err, m.confirm = msg.note, "", nil
+		// Leave the confirm screen now: View must never see screenConfirm
+		// with a nil confirm. loadDetail refreshes cur and audit.
+		m.note, m.err, m.confirm, m.cur, m.screen = msg.note, "", nil, msg.iss, screenDetail
 		return m, tea.Batch(m.loadList(), m.loadDetail(msg.iss.ID))
 	case errMsg:
 		m.err = describeErr(msg.err)
@@ -206,7 +209,34 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if m.filtering {
+		switch k.String() {
+		case "esc":
+			m.filtering, m.filter = false, ""
+			m.rebuildTable()
+		case "enter":
+			m.filtering = false
+		case "backspace":
+			if m.filter != "" {
+				m.filter = m.filter[:len(m.filter)-1]
+				m.rebuildTable()
+			}
+		default:
+			if k.Type == tea.KeyRunes {
+				m.filter += string(k.Runes)
+				m.rebuildTable()
+			}
+		}
+		return m, nil
+	}
 	switch k.String() {
+	case "/":
+		m.filtering = true
+		return m, nil
+	case "esc":
+		m.filter = ""
+		m.rebuildTable()
+		return m, nil
 	case "q":
 		return m, tea.Quit
 	case "r":
@@ -219,20 +249,10 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.loadDetail(v[i].ID)
 		}
 		return m, nil
-	case "backspace":
-		if m.filter != "" {
-			m.filter = m.filter[:len(m.filter)-1]
-			m.rebuildTable()
-		}
-		return m, nil
 	case "up", "down", "k", "j", "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd
 		m.table, cmd = m.table.Update(msg)
 		return m, cmd
-	}
-	if k.Type == tea.KeyRunes && k.String() != "/" {
-		m.filter += string(k.Runes)
-		m.rebuildTable()
 	}
 	return m, nil
 }
@@ -317,9 +337,17 @@ func (m model) View() string {
 	var b strings.Builder
 	switch m.screen {
 	case screenList:
-		b.WriteString(titleStyle.Render("Issuers") + "  filter: " + m.filter + "\n")
+		cursor := ""
+		if m.filtering {
+			cursor = "_"
+		}
+		b.WriteString(titleStyle.Render("Issuers") + "  filter: " + m.filter + cursor + "\n")
 		b.WriteString(m.table.View() + "\n")
-		b.WriteString(helpStyle.Render("enter open · type to filter · n new · r refresh · q quit"))
+		if m.filtering {
+			b.WriteString(helpStyle.Render("type to filter · enter done · esc clear"))
+		} else {
+			b.WriteString(helpStyle.Render("enter open · / filter · esc clear filter · n new · r refresh · q quit"))
+		}
 	case screenDetail:
 		b.WriteString(m.detailView())
 	case screenConfirm:

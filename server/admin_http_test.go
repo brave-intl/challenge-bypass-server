@@ -69,7 +69,7 @@ func (s *AdminHTTPSuite) TestLifecycle() {
 	_, err = s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start, StopRedeemingAt: start.Add(10 * 24 * time.Hour)})
 	s.apiErr(err, 422)
 
-	got, err := s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start, StopRedeemingAt: start.Add(91 * 24 * time.Hour)})
+	got, err := s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start, StopRedeemingAt: start.Add(93 * 24 * time.Hour)})
 	s.Require().NoError(err)
 	s.Equal(adminapi.StatusRetiring, got.Status)
 

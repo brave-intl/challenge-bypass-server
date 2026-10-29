@@ -9,8 +9,19 @@ import (
 )
 
 // MinRetirementOverlap is the minimum time a retired issuer keeps redeeming
-// after it stops issuing, while its replacement issues.
+// after it stops issuing, while its replacement issues. MinStopRedeeming
+// also enforces 3 calendar months, which can be shorter (Feb 1 to May 1).
 const MinRetirementOverlap = 90 * 24 * time.Hour
+
+// MinStopRedeeming is the earliest stop_redeeming_at for an issuer that last
+// issues at lastIssue: the later of 3 calendar months and 90 days after it.
+func MinStopRedeeming(lastIssue time.Time) time.Time {
+	m := lastIssue.UTC().AddDate(0, 3, 0)
+	if d := lastIssue.Add(MinRetirementOverlap); d.After(m) {
+		return d
+	}
+	return m
+}
 
 type Status string
 
@@ -98,7 +109,7 @@ type RetireRequest struct {
 
 // PostponeRequest moves stop_issuing_at later on a retiring or retired
 // issuer (the emergency switch). StopRedeemingAt nil = server keeps the
-// later of the current value and StopIssuingAt + 90 days.
+// later of the current value and MinStopRedeeming(StopIssuingAt).
 type PostponeRequest struct {
 	StopIssuingAt   time.Time  `json:"stop_issuing_at"`
 	StopRedeemingAt *time.Time `json:"stop_redeeming_at,omitempty"`

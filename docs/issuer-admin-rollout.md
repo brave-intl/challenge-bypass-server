@@ -206,7 +206,7 @@ requests rejected.
 | State | Undo |
 |---|---|
 | retiring (before `stop_issuing_at`) | `c` cancel retirement. Restores the original expiry. |
-| retired (after `stop_issuing_at`), clients broke | **Postpone**: set a later `stop_issuing_at`. Issuing resumes within the cache period. Stop-redeeming is pushed out to keep ≥ 90 days if needed. Never shortens anything. |
+| retired (after `stop_issuing_at`), clients broke | **Postpone**: set a later `stop_issuing_at`. Issuing resumes within the cache period. Stop-redeeming is pushed out to keep ≥ 3 months (and ≥ 90 days) if needed. Never shortens anything. |
 | need longer redemption | Edit, then extend `expires_at`. |
 | admin API unavailable, clients broke (break-glass) | Run the SQL below. |
 
@@ -227,7 +227,7 @@ COMMIT;
 It takes effect within `CACHE_DURATION_SECS`. `expires_at` (stop redeeming)
 is unchanged, so right afterwards extend it with the TUI's Edit so that it
 is at least:
-- the new `stop_issuing_at` + 90 days, and
+- the new `stop_issuing_at` + 3 months (at least 90 days), and
 - for v3 issuers, the new `stop_issuing_at` + (buffer + overlap) ×
   duration. Tokens are signed for future windows, and the cron keeps
   adding them until the new stop time.

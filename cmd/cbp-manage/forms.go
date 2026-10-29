@@ -23,6 +23,7 @@ type form struct {
 	title  string
 	fields []field
 	focus  int
+	back   screen // where esc on the form returns to
 	// build validates the values and returns the confirm request to show.
 	build func(m model, vals []string) (confirmReq, error)
 }
@@ -77,7 +78,9 @@ func atoiField(label, s string) (int, error) {
 
 func (m model) openForm(s screen, f form) model {
 	f.fields[0].input.Focus()
-	m.form, m.screen, m.back, m.err, m.note = f, s, m.screen, "", ""
+	// Not m.back: the confirm screen overwrites that with the form's screen.
+	f.back = m.screen
+	m.form, m.screen, m.err, m.note = f, s, "", ""
 	return m
 }
 
@@ -201,7 +204,7 @@ func (m model) updateForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	f := &m.form
 	switch k.String() {
 	case "esc":
-		m.screen = m.back
+		m.screen = f.back
 		return m, nil
 	case "tab", "down":
 		f.fields[f.focus].input.Blur()
@@ -245,7 +248,7 @@ func (m model) openPostpone(cur adminapi.Issuer) model {
 		title: "Postpone stop-issuing for " + cur.Name + " (resumes issuing; redemption only ever extends)",
 		fields: []field{
 			newField("stop_issuing_at", "+30d", "later than "+fmtTime(cur.StopIssuingAt)),
-			newField("stop_redeeming_at", "", "blank = keep ≥ 90 days after stop issuing"),
+			newField("stop_redeeming_at", "", "blank = keep ≥ 3 months after stop issuing"),
 		},
 		build: func(m model, v []string) (confirmReq, error) {
 			now := time.Now()
@@ -287,9 +290,10 @@ type retireWizard struct {
 }
 
 // defaultRetireTimes: stop issuing now; stop redeeming at the later of
-// now+90d and (v3) the furthest key window the cron can still create.
+// MinStopRedeeming(now) plus a day (covers the server's cache margin) and
+// (v3) the furthest key window the cron can still create.
 func defaultRetireTimes(target adminapi.Issuer, now time.Time) (time.Time, time.Time) {
-	sr := now.Add(adminapi.MinRetirementOverlap)
+	sr := adminapi.MinStopRedeeming(now).Add(24 * time.Hour)
 	if target.Version >= 3 {
 		if target.LatestKeyEnd != nil && target.LatestKeyEnd.After(sr) {
 			sr = *target.LatestKeyEnd
@@ -335,11 +339,14 @@ func (m model) openRetire(cur adminapi.Issuer) model {
 		m.err = "no active issuer to use as replacement: create one first (list → n)"
 		return m
 	}
+	// Relative defaults, resolved when the request is sent: an absolute
+	// "now" taken here goes stale while the operator reviews and types the
+	// confirmation, and the server allows only a minute of skew.
 	si, sr := defaultRetireTimes(cur, time.Now())
 	w.stopIssuing = textinput.New()
-	w.stopIssuing.SetValue(si.UTC().Format(time.RFC3339))
+	w.stopIssuing.SetValue("now")
 	w.stopRedeeming = textinput.New()
-	w.stopRedeeming.SetValue(sr.UTC().Format(time.RFC3339))
+	w.stopRedeeming.SetValue(fmt.Sprintf("+%dd", int(math.Ceil(sr.Sub(si).Hours()/24))))
 	m.retire, m.back, m.screen, m.err, m.note = w, screenDetail, screenRetire, "", ""
 	return m
 }
@@ -368,30 +375,25 @@ func (m model) updateRetire(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w.step = 2
 			w.stopRedeeming.Focus()
 		case 2:
-			now := time.Now()
-			si, err := parseWhen(w.stopIssuing.Value(), now)
-			if err != nil {
-				m.err = err.Error()
-				return m, nil
-			}
-			sr, err := parseWhen(w.stopRedeeming.Value(), now)
-			if err != nil {
-				m.err = err.Error()
-				return m, nil
-			}
-			if sr.Sub(si) < adminapi.MinRetirementOverlap {
-				m.err = "stop redeeming must be at least 90 days after stop issuing"
-				return m, nil
-			}
 			target, repl := w.target, w.candidates[w.pick]
-			req := adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: si, StopRedeemingAt: sr}
+			siIn, srIn := w.stopIssuing.Value(), w.stopRedeeming.Value()
+			req, err := retireRequest(repl.ID, siIn, srIn, time.Now())
+			if err != nil {
+				m.err = err.Error()
+				return m, nil
+			}
 			return m.askConfirm(screenRetire, confirmReq{
-				title: fmt.Sprintf("Retire %s → replacement %s. %s stops issuing at %s and stops redeeming at %s. Clients must request %s from then on.",
-					target.Name, repl.Name, target.Name, fmtTime(&si), fmtTime(&sr), repl.Name),
+				title: fmt.Sprintf("Retire %s → replacement %s. %s stops issuing at %s (%s) and stops redeeming at %s (%s). Clients must request %s from then on.",
+					target.Name, repl.Name, target.Name, siIn, fmtTime(&req.StopIssuingAt), srIn, fmtTime(&req.StopRedeemingAt), repl.Name),
 				body:          req,
 				typeToConfirm: target.Name,
 				run: func() tea.Cmd {
 					return func() tea.Msg {
+						// Re-resolve "now" and "+Nd" at send time; absolute times are unchanged.
+						req, err := retireRequest(repl.ID, siIn, srIn, time.Now())
+						if err != nil {
+							return errMsg{err}
+						}
 						iss, err := m.api.RetireIssuer(context.Background(), target.ID, req)
 						if err != nil {
 							return errMsg{err}
@@ -423,6 +425,21 @@ func (m model) updateRetire(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func retireRequest(replID, stopIssuing, stopRedeeming string, now time.Time) (adminapi.RetireRequest, error) {
+	si, err := parseWhen(stopIssuing, now)
+	if err != nil {
+		return adminapi.RetireRequest{}, err
+	}
+	sr, err := parseWhen(stopRedeeming, now)
+	if err != nil {
+		return adminapi.RetireRequest{}, err
+	}
+	if sr.Before(adminapi.MinStopRedeeming(si)) {
+		return adminapi.RetireRequest{}, fmt.Errorf("stop redeeming must be at least 3 months (and 90 days) after stop issuing")
+	}
+	return adminapi.RetireRequest{ReplacementIssuerID: replID, StopIssuingAt: si, StopRedeemingAt: sr}, nil
+}
+
 func (m model) retireView() string {
 	w := m.retire
 	var b strings.Builder
@@ -439,7 +456,7 @@ func (m model) retireView() string {
 		b.WriteString("\n2. Stop issuing at: " + w.stopIssuing.View() + "\n")
 	}
 	if w.step >= 2 {
-		b.WriteString("3. Stop redeeming at (≥ 90 days later): " + w.stopRedeeming.View() + "\n")
+		b.WriteString("3. Stop redeeming at (≥ 3 months later): " + w.stopRedeeming.View() + "\n")
 	}
 	b.WriteString("\n" + helpStyle.Render("↑/↓ pick · enter next · esc back · times: now, +90d, 2027-01-01, RFC3339"))
 	return b.String()

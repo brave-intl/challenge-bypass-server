@@ -132,12 +132,12 @@ func (s *AdminDBSuite) isRule(err error, contains string) {
 func (s *AdminDBSuite) TestRetireHappyPathAndCancel() {
 	old, repl := s.create(v1("old")), s.create(v1("new"))
 	start := time.Now().Add(time.Hour)
-	s.Require().NoError(s.retire(old, repl, start, start.Add(91*day)))
+	s.Require().NoError(s.retire(old, repl, start, start.Add(93*day)))
 
 	got, _ := s.srv.adminGetIssuer(s.ctx, old, time.Now())
 	s.Equal(adminapi.StatusRetiring, got.Status)
 	s.Equal(repl.String(), *got.ReplacementID)
-	s.WithinDuration(start.Add(91*day), *got.ExpiresAt, time.Second)
+	s.WithinDuration(start.Add(93*day), *got.ExpiresAt, time.Second)
 	r, _ := s.srv.adminGetIssuer(s.ctx, repl, time.Now())
 	s.Equal([]string{old.String()}, r.Replaces)
 
@@ -156,22 +156,22 @@ func (s *AdminDBSuite) TestRetireRules() {
 	old, repl := s.create(v1("old")), s.create(v1("new"))
 	start := now.Add(time.Minute)
 
-	s.isRule(s.retire(old, old, start, start.Add(91*day)), "replacement")
-	s.ErrorIs(s.retire(old, uuid.New(), start, start.Add(91*day)), errAdminNotFound)
-	s.isRule(s.retire(old, repl, now.Add(-time.Hour), now.Add(91*day)), "stop_issuing_at")
+	s.isRule(s.retire(old, old, start, start.Add(93*day)), "replacement")
+	s.ErrorIs(s.retire(old, uuid.New(), start, start.Add(93*day)), errAdminNotFound)
+	s.isRule(s.retire(old, repl, now.Add(-time.Hour), now.Add(93*day)), "stop_issuing_at")
 	s.isRule(s.retire(old, repl, start, start.Add(89*day)), "90 days")
 
 	// replacement expiring inside the overlap
 	shortRepl := s.create(adminapi.CreateIssuerRequest{Name: "short", Version: 1, ExpiresAt: ptrTime(now.Add(30 * day))})
-	s.isRule(s.retire(old, shortRepl, start, start.Add(91*day)), "replacement expires")
+	s.isRule(s.retire(old, shortRepl, start, start.Add(93*day)), "replacement expires")
 
 	// replacement that is itself retiring (Review Focus 1)
 	third := s.create(v1("third"))
-	s.Require().NoError(s.retire(repl, third, start, start.Add(91*day)))
-	s.isRule(s.retire(old, repl, start, start.Add(91*day)), "replacement must be active")
+	s.Require().NoError(s.retire(repl, third, start, start.Add(93*day)))
+	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "replacement must be active")
 
 	// already retiring target
-	s.isRule(s.retire(repl, third, start, start.Add(91*day)), "already")
+	s.isRule(s.retire(repl, third, start, start.Add(93*day)), "already")
 }
 
 func (s *AdminDBSuite) TestRetireV3CoversFutureWindows() {
@@ -179,7 +179,7 @@ func (s *AdminDBSuite) TestRetireV3CoversFutureWindows() {
 	repl := s.create(v1("v3new"))
 	start := time.Now().Add(time.Minute)
 	// 91 days < start + 6 months of windows → rejected
-	s.isRule(s.retire(old, repl, start, start.Add(91*day)), "key window")
+	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "key window")
 	s.Require().NoError(s.retire(old, repl, start, start.AddDate(0, 6, 2)))
 }
 
@@ -189,7 +189,7 @@ func (s *AdminDBSuite) TestRetireReplacementNotYetValid() {
 	repl := s.create(adminapi.CreateIssuerRequest{Name: "r", Version: 3, Duration: "P1M", Buffer: 1,
 		ValidFrom: &later, ExpiresAt: ptrTime(time.Now().AddDate(2, 0, 0))})
 	start := time.Now().Add(time.Minute)
-	s.isRule(s.retire(old, repl, start, start.Add(91*day)), "valid_from")
+	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "valid_from")
 }
 
 func (s *AdminDBSuite) TestChainRule() {
@@ -201,15 +201,89 @@ func (s *AdminDBSuite) TestChainRule() {
 	s.Require().NoError(s.retire(b, c, start.Add(100*day), start.Add(200*day)))
 }
 
+// The chain rule compares a timestamp-without-zone column with now; a
+// non-UTC now used to be read hours off and skip the promise.
+func (s *AdminDBSuite) TestChainRuleWithNonUTCNow() {
+	a, b, c := s.create(v1("ca")), s.create(v1("cb")), s.create(v1("cc"))
+	start := time.Now().Add(time.Minute)
+	s.Require().NoError(s.retire(a, b, start, start.Add(100*day)))
+	promise := time.Now().Add(2 * time.Hour)
+	_, err := s.srv.db.Exec(`UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, a, promise.UTC())
+	s.Require().NoError(err)
+	ahead := time.Now().In(time.FixedZone("UTC+5", 5*3600))
+	err = s.srv.adminRetireIssuer(s.ctx, "op", b, adminapi.RetireRequest{
+		ReplacementIssuerID: c.String(), StopIssuingAt: start, StopRedeemingAt: start.Add(100 * day),
+	}, ahead)
+	s.isRule(err, "overlap promised")
+}
+
+// The minimum is 3 calendar months when that is longer than 90 days
+// (Nov 1 + 90 days = Jan 30, + 3 months = Feb 1).
+func (s *AdminDBSuite) TestRetireNeedsThreeCalendarMonths() {
+	old, repl := s.create(v1("m3-old")), s.create(v1("m3-new"))
+	stop := time.Date(time.Now().Year()+1, 11, 1, 0, 0, 0, 0, time.UTC)
+	s.isRule(s.retire(old, repl, stop, stop.Add(90*day)), "3 months")
+	s.Require().NoError(s.retire(old, repl, stop, stop.AddDate(0, 3, 0)))
+}
+
+// With caching on, pods keep signing from a cached copy for up to the cache
+// period after "retire now", so the overlap is measured from then.
+func (s *AdminDBSuite) TestRetireNowCountsCachePeriod() {
+	old, repl := s.create(v1("cache-old")), s.create(v1("cache-new"))
+	saved := s.srv.dbConfig.CachingConfig
+	s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 3600}
+	defer func() { s.srv.dbConfig.CachingConfig = saved }()
+	now := time.Now()
+	s.isRule(s.retire(old, repl, now, adminapi.MinStopRedeeming(now).Add(time.Minute)), "last possible issuance")
+	s.Require().NoError(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour)).Add(time.Minute)))
+}
+
+// Postpone keeps 3 calendar months too, on both the explicit and the
+// default stop_redeeming_at.
+func (s *AdminDBSuite) TestPostponeNeedsThreeCalendarMonths() {
+	old, repl := s.create(v1("pm3-old")), s.create(v1("pm3-new"))
+	start := time.Now().Add(time.Minute)
+	s.Require().NoError(s.retire(old, repl, start, start.Add(93*day)))
+	newStop := time.Date(time.Now().Year()+1, 11, 1, 0, 0, 0, 0, time.UTC)
+	short := newStop.Add(90 * day)
+	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: newStop, StopRedeemingAt: &short}, time.Now()), "3 months")
+	s.Require().NoError(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: newStop}, time.Now()))
+	got, _ := s.srv.adminGetIssuer(s.ctx, old, time.Now())
+	s.False(got.ExpiresAt.Before(newStop.AddDate(0, 3, 0)), "default redeem %s must reach 3 months after %s", got.ExpiresAt, newStop)
+}
+
+// Admin-created v3 issuers store valid_from at the right instant. Only
+// meaningful with a non-UTC TZ: go test -run TestAdminDBSuite/TestCreateV3ValidFromIsUTC with TZ=America/New_York.
+func (s *AdminDBSuite) TestCreateV3ValidFromIsUTC() {
+	id := s.create(v3("vf3", time.Now().AddDate(1, 0, 0)))
+	got, err := s.srv.adminGetIssuer(s.ctx, id, time.Now())
+	s.Require().NoError(err)
+	s.WithinDuration(time.Now(), *got.ValidFrom, time.Minute)
+}
+
+// The sign path loads retirement for every row in one query; a v3 issuer
+// has one row per key.
+func (s *AdminDBSuite) TestSignPathSeesRetirementWithManyKeys() {
+	old := s.create(v3("many", time.Now().AddDate(2, 0, 0)))
+	repl := s.create(v1("keys-repl"))
+	var keys int
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM v3_issuer_keys WHERE issuer_id = $1`, old).Scan(&keys))
+	s.Require().Greater(keys, 1)
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 7, 0)))
+	k, err := s.srv.GetLatestIssuerKafka("many", 1)
+	s.Require().NoError(err)
+	s.False(k.IsIssuing(time.Now().Add(time.Second)))
+}
+
 func (s *AdminDBSuite) TestCancelAfterStopIssuingRejected() {
 	old, repl := s.create(v1("o2")), s.create(v1("r2"))
-	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(91*day)))
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(93*day)))
 	s.isRule(s.srv.adminCancelRetirement(s.ctx, "op", old, time.Now().Add(time.Second)), "only while retiring")
 }
 
 func (s *AdminDBSuite) TestPostponeResumesIssuing() {
 	old, repl := s.create(v1("pp-old")), s.create(v1("pp-new"))
-	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(91*day)))
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(93*day)))
 	later := time.Now().Add(time.Second)
 	got, _ := s.srv.adminGetIssuer(s.ctx, old, later)
 	s.Require().Equal(adminapi.StatusRetired, got.Status)
@@ -220,7 +294,7 @@ func (s *AdminDBSuite) TestPostponeResumesIssuing() {
 	got, _ = s.srv.adminGetIssuer(s.ctx, old, later)
 	s.Equal(adminapi.StatusRetiring, got.Status, "issuing again")
 	s.WithinDuration(newStop, *got.StopIssuingAt, time.Second)
-	s.False(got.ExpiresAt.Before(newStop.Add(adminapi.MinRetirementOverlap).Add(-time.Second)), "redeem window pushed to keep 90 days")
+	s.False(got.ExpiresAt.Before(adminapi.MinStopRedeeming(newStop).Add(-time.Second)), "redeem window pushed to keep 3 months")
 	s.False(got.ExpiresAt.Before(before), "never shortens")
 
 	iss, appErr := s.srv.GetLatestIssuer("pp-old", v1Cohort)
@@ -255,7 +329,7 @@ func (s *AdminDBSuite) TestSignPathSeesRetirement() {
 	s.Require().Nil(appErr)
 	s.True(iss.IsIssuing(time.Now()))
 
-	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(91*day)))
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().Add(93*day)))
 	iss, appErr = s.srv.GetLatestIssuer("sgn", v1Cohort)
 	s.Require().Nil(appErr, "lookup still works: bulk redeem uses it")
 	s.False(iss.IsIssuing(time.Now().Add(time.Second)))
@@ -295,7 +369,7 @@ func (s *AdminDBSuite) TestNonUTCTimesStoredAsInstants() {
 
 	repl := s.create(v1("replz"))
 	stop := time.Now().Add(time.Hour).In(west)
-	redeem := stop.Add(91 * day)
+	redeem := stop.Add(93 * day)
 	old := s.create(v1("oldz"))
 	s.Require().NoError(s.retire(old, repl, stop, redeem))
 	got, _ = s.srv.adminGetIssuer(s.ctx, old, time.Now())
@@ -335,5 +409,46 @@ func (s *AdminDBSuite) TestPrefixRelatedNamesRejected() {
 	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='legacy'`).Scan(&a))
 	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='legacy2'`).Scan(&b))
 	start := time.Now().Add(time.Minute)
-	s.isRule(s.retire(a, b, start, start.Add(91*day)), "prefix")
+	s.isRule(s.retire(a, b, start, start.Add(93*day)), "prefix")
+}
+
+// Kafka's lookup is `LIKE name || '%'`, so `_` in a name is a wildcard.
+func (s *AdminDBSuite) TestPrefixCheckTreatsLikeWildcards() {
+	s.create(v1("user_wallet"))
+	_, err := s.srv.adminCreateIssuer(s.ctx, "op", v1("userXwallet-v2"))
+	s.isRule(err, "prefix")
+}
+
+// Changing the expiry of an issuer with a prefix sibling reorders Kafka's
+// `ORDER BY expires_at DESC` match, so retire, postpone and extend refuse it
+// even when the replacement is unrelated.
+func (s *AdminDBSuite) TestExpiryChangeRejectedWithPrefixSibling() {
+	s.Require().NoError(s.srv.createIssuer("foo", v1Cohort, 0, &time.Time{}))
+	s.Require().NoError(s.srv.createIssuer("foo-legacy", v1Cohort, 0, &time.Time{}))
+	var legacy uuid.UUID
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='foo-legacy'`).Scan(&legacy))
+	bar := s.create(v1("bar"))
+	start := time.Now().Add(time.Minute)
+	s.isRule(s.retire(legacy, bar, start, start.Add(93*day)), "prefix")
+
+	soon := time.Now().Add(day)
+	_, err := s.srv.db.Exec(`UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, legacy, soon.UTC())
+	s.Require().NoError(err)
+	later := soon.Add(30 * day)
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", legacy, adminapi.UpdateIssuerRequest{ExpiresAt: &later}), "prefix")
+
+	// postpone: a sibling that appeared after the retirement (legacy create)
+	solo, soloRepl := s.create(v1("solo")), s.create(v1("other"))
+	s.Require().NoError(s.retire(solo, soloRepl, start, start.Add(93*day)))
+	s.Require().NoError(s.srv.createIssuer("solo-x", v1Cohort, 0, &time.Time{}))
+	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", solo, adminapi.PostponeRequest{StopIssuingAt: start.Add(30 * day)}, time.Now()), "prefix")
+}
+
+// An expired issuer must not come back through an expires_at extension.
+func (s *AdminDBSuite) TestUpdateRejectsExpiredIssuer() {
+	id := s.create(v1("gone"))
+	_, err := s.srv.db.Exec(`UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, time.Now().Add(-day).UTC())
+	s.Require().NoError(err)
+	next := time.Now().AddDate(1, 0, 0)
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: &next}), "expired")
 }

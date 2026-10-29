@@ -138,7 +138,7 @@ Redemption continues until stop-redeeming.
    differ.
 3. `stop_issuing_at` must not be in the past (up to 60 seconds of clock
    skew is tolerated).
-4. `stop_redeeming_at` must be at least 90 days after `stop_issuing_at`.
+4. `stop_redeeming_at` must be at least 3 calendar months and at least 90 days after the last possible issuance: `stop_issuing_at`, or now plus `CACHE_DURATION_SECS` if that is later, since pods with a cached copy of the issuer keep signing until it expires.
 5. For v3 issuers, `stop_redeeming_at` must also cover the last key window
    the rotation cron can still create:
    `stop_issuing_at + (buffer + overlap) × duration`.

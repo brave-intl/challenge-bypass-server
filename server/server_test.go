@@ -728,7 +728,7 @@ func (suite *ServerTestSuite) TestRetiredIssuerRejectsSignButRedeems() {
 	suite.Require().NoError(suite.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='retire-me'`).Scan(&oldID))
 	suite.Require().NoError(suite.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='successor'`).Scan(&newID))
 	suite.Require().NoError(suite.srv.adminRetireIssuer(context.Background(), "op", oldID, adminapi.RetireRequest{
-		ReplacementIssuerID: newID.String(), StopIssuingAt: time.Now(), StopRedeemingAt: time.Now().Add(91 * 24 * time.Hour),
+		ReplacementIssuerID: newID.String(), StopIssuingAt: time.Now(), StopRedeemingAt: time.Now().Add(93 * 24 * time.Hour),
 	}, time.Now()))
 	time.Sleep(1100 * time.Millisecond)
 

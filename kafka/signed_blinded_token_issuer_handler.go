@@ -12,6 +12,7 @@ import (
 	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
@@ -166,16 +167,10 @@ OUTER:
 			continue OUTER
 		}
 
-		// Retired issuers only redeem. Reject, never route to the replacement.
-		if !issuer.IsIssuing(time.Now()) {
+		if res, retired := retiredSigningResult(issuer, request, time.Now()); retired {
 			reqLogger.Warn("sign request for retired issuer", slog.Any("issuer", request.Issuer_type))
 			metrics.CountError("issuer-retired")
-			blindedTokenResults = append(blindedTokenResults, avroSchema.SigningResultV2{
-				Signed_tokens:     nil,
-				Issuer_public_key: "",
-				Status:            issuerInvalid,
-				Associated_data:   request.Associated_data,
-			})
+			blindedTokenResults = append(blindedTokenResults, res)
 			continue OUTER
 		}
 
@@ -642,6 +637,19 @@ OUTER:
 
 // avroIssuerErrorResultFromError returns a ProcessingResult that is constructed from the
 // provided values.
+// retiredSigningResult returns the result for a sign request to an issuer
+// that has stopped issuing at now, and false while it still issues. Retired
+// issuers only redeem: reject, never route to the replacement.
+func retiredSigningResult(issuer *model.Issuer, request avroSchema.SigningRequest, now time.Time) (avroSchema.SigningResultV2, bool) {
+	if issuer.IsIssuing(now) {
+		return avroSchema.SigningResultV2{}, false
+	}
+	return avroSchema.SigningResultV2{
+		Status:          avroSchema.SigningResultV2StatusInvalid_issuer,
+		Associated_data: request.Associated_data,
+	}, true
+}
+
 func avroIssuerErrorResultFromError(
 	message string,
 	marshaledBlindedTokens []string,
