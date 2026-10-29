@@ -1,11 +1,10 @@
--- v3_issuers is deliberately not altered: during a rolling deploy, old pods
+-- v3_issuers is deliberately not altered. During a rolling deploy, old pods
 -- scan `SELECT i.*` from it into a fixed column list.
 CREATE TABLE issuer_retirements (
   issuer_id                uuid PRIMARY KEY REFERENCES v3_issuers(issuer_id),
   replacement_issuer_id    uuid NOT NULL REFERENCES v3_issuers(issuer_id),
   stop_issuing_at          timestamptz NOT NULL,
   expires_at_before_retire timestamp NULL,
-  retired_by               text NOT NULL,
   created_at               timestamptz NOT NULL DEFAULT now(),
   CHECK (issuer_id <> replacement_issuer_id)
 );

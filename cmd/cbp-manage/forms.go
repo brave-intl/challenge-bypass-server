@@ -78,7 +78,7 @@ func atoiField(label, s string) (int, error) {
 
 func (m model) openForm(s screen, f form) model {
 	f.fields[0].input.Focus()
-	// Not m.back: the confirm screen overwrites that with the form's screen.
+	// Not m.back, which the confirm screen overwrites with the form's screen.
 	f.back = m.screen
 	m.form, m.screen, m.err, m.note = f, s, "", ""
 	return m
@@ -134,15 +134,9 @@ func (m model) openCreate() model {
 			return confirmReq{
 				title: "Create issuer " + req.Name,
 				body:  req,
-				run: func() tea.Cmd {
-					return func() tea.Msg {
-						iss, err := m.api.CreateIssuer(context.Background(), req)
-						if err != nil {
-							return errMsg{err}
-						}
-						return doneMsg{iss, "created " + iss.Name}
-					}
-				},
+				run: send("created "+req.Name, func(ctx context.Context) (*adminapi.Issuer, error) {
+					return m.api.CreateIssuer(ctx, req)
+				}),
 			}, nil
 		},
 	})
@@ -182,15 +176,9 @@ func (m model) openEdit(cur adminapi.Issuer) model {
 			return confirmReq{
 				title: "Update " + cur.Name,
 				body:  req,
-				run: func() tea.Cmd {
-					return func() tea.Msg {
-						iss, err := m.api.UpdateIssuer(context.Background(), cur.ID, req)
-						if err != nil {
-							return errMsg{err}
-						}
-						return doneMsg{iss, "updated"}
-					}
-				},
+				run: send("updated", func(ctx context.Context) (*adminapi.Issuer, error) {
+					return m.api.UpdateIssuer(ctx, cur.ID, req)
+				}),
 			}, nil
 		},
 	})
@@ -264,15 +252,9 @@ func (m model) openPostpone(cur adminapi.Issuer) model {
 				title:         "Postpone stop-issuing for " + cur.Name,
 				body:          req,
 				typeToConfirm: cur.Name,
-				run: func() tea.Cmd {
-					return func() tea.Msg {
-						iss, err := m.api.PostponeRetirement(context.Background(), cur.ID, req)
-						if err != nil {
-							return errMsg{err}
-						}
-						return doneMsg{iss, "stop-issuing postponed"}
-					}
-				},
+				run: send("stop-issuing postponed", func(ctx context.Context) (*adminapi.Issuer, error) {
+					return m.api.PostponeRetirement(ctx, cur.ID, req)
+				}),
 			}, nil
 		},
 	})
@@ -289,39 +271,23 @@ type retireWizard struct {
 	stopRedeeming textinput.Model
 }
 
-// defaultRetireTimes: stop issuing now; stop redeeming at the later of
-// MinStopRedeeming(now) plus a day (covers the server's cache margin) and
-// (v3) the furthest key window the cron can still create.
+// defaultRetireTimes returns stop issuing now, and stop redeeming at the
+// latest of three times. They are MinStopRedeeming(now) plus a day, which
+// covers the server's replica and cache margin, the latest existing key end,
+// and (v3) the end of every key window the cron can still create.
 func defaultRetireTimes(target adminapi.Issuer, now time.Time) (time.Time, time.Time) {
 	sr := adminapi.MinStopRedeeming(now).Add(24 * time.Hour)
 	if target.Version >= 3 {
 		if target.LatestKeyEnd != nil && target.LatestKeyEnd.After(sr) {
 			sr = *target.LatestKeyEnd
 		}
-		// ponytail: approximates the server's ISO-duration walk with 31-day
-		// months; the server is authoritative and returns the exact minimum.
 		if target.Duration != nil {
-			if n, unit, ok := simpleISO(*target.Duration); ok {
-				w := now.Add(time.Duration(n*(target.Buffer+target.Overlap)) * unit)
-				if w.After(sr) {
-					sr = w
-				}
+			if w, err := adminapi.WindowsEnd(*target.Duration, target.Buffer+target.Overlap, now); err == nil && w.After(sr) {
+				sr = w
 			}
 		}
 	}
 	return now, sr
-}
-
-// simpleISO parses PnD / PnM / PnY / PTnH for the default only.
-func simpleISO(d string) (int, time.Duration, bool) {
-	units := map[string]time.Duration{"D": 24 * time.Hour, "M": 31 * 24 * time.Hour, "Y": 366 * 24 * time.Hour, "H": time.Hour}
-	s := strings.TrimPrefix(strings.TrimPrefix(d, "P"), "T")
-	if len(s) < 2 {
-		return 0, 0, false
-	}
-	u, ok := units[s[len(s)-1:]]
-	n, err := strconv.Atoi(s[:len(s)-1])
-	return n, u, ok && err == nil
 }
 
 func (m model) openRetire(cur adminapi.Issuer) model {
@@ -339,9 +305,9 @@ func (m model) openRetire(cur adminapi.Issuer) model {
 		m.err = "no active issuer to use as replacement: create one first (list → n)"
 		return m
 	}
-	// Relative defaults, resolved when the request is sent: an absolute
-	// "now" taken here goes stale while the operator reviews and types the
-	// confirmation, and the server allows only a minute of skew.
+	// The defaults are relative and resolved when the request is sent. An
+	// absolute "now" taken here goes stale while the operator reviews and
+	// types the confirmation, and the server allows only a minute of skew.
 	si, sr := defaultRetireTimes(cur, time.Now())
 	w.stopIssuing = textinput.New()
 	w.stopIssuing.SetValue("now")
@@ -393,20 +359,14 @@ func (m model) updateRetire(msg tea.Msg) (tea.Model, tea.Cmd) {
 					target.Name, repl.Name, target.Name, siIn, fmtTime(&req.StopIssuingAt), srIn, fmtTime(&req.StopRedeemingAt), repl.Name),
 				body:          req,
 				typeToConfirm: target.Name,
-				run: func() tea.Cmd {
-					return func() tea.Msg {
-						// Re-resolve "now" and "+Nd" at send time; absolute times are unchanged.
-						req, err := retireRequest(repl.ID, siIn, srIn, time.Now())
-						if err != nil {
-							return errMsg{err}
-						}
-						iss, err := m.api.RetireIssuer(context.Background(), target.ID, req)
-						if err != nil {
-							return errMsg{err}
-						}
-						return doneMsg{iss, "retirement scheduled"}
+				run: send("retirement scheduled", func(ctx context.Context) (*adminapi.Issuer, error) {
+					// Re-resolve "now" and "+Nd" at send time. Absolute times are unchanged.
+					req, err := retireRequest(repl.ID, siIn, srIn, time.Now())
+					if err != nil {
+						return nil, err
 					}
-				},
+					return m.api.RetireIssuer(ctx, target.ID, req)
+				}),
 			}), nil
 		}
 		return m, nil

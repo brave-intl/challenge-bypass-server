@@ -71,10 +71,10 @@ const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rota
 // schemaVersion is the migration version this build needs.
 const schemaVersion uint = 8
 
-// migrateSchema migrates up to target, and never down: when the database is
-// already at or past target (a newer release ran, then this one was rolled
-// back to), it logs and returns. Plain m.Migrate(target) would fail there
-// because the newer migration files are not in this image.
+// migrateSchema migrates up to target, and never down. When the database is
+// already at or past target, it logs and returns. That happens when a newer
+// release ran and then this one was rolled back to. Plain m.Migrate(target)
+// would fail there because the newer migration files are not in this image.
 func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
 	v, dirty, err := m.Version()
 	if err == nil && !dirty && v >= target {
@@ -400,7 +400,7 @@ func (c *Server) fetchIssuersByCohort(
 
 	// Retirement lives in its own table (v3_issuers is not altered, see
 	// migration 0008). The query above returns one row per key, so look up
-	// every issuer in one query per cache miss; cached with the issuer.
+	// every issuer in one query per cache miss. It is cached with the issuer.
 	stops, err := c.fetchStopIssuingAt(issuersWithKey)
 	if err != nil {
 		return nil, utils.ProcessingErrorFromError(err, true)
@@ -899,53 +899,34 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createV3Issuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
+func (c *Server) createV3Issuer(issuer model.Issuer) error {
 	defer incrementTotal(createIssuerTotal)
-
-	tx, err := c.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			// preserve the original error; a rollback failure must not mask it
-			_ = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
-
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
 	defer queryTimer.ObserveDuration()
 
-	_, err = txCreateV3Issuer(c.Logger, tx, issuer)
-	return err
+	ctx := context.Background()
+	return c.withTx(ctx, func(tx *sql.Tx) error {
+		_, err := txCreateV3Issuer(ctx, c.Logger, tx, issuer)
+		return err
+	})
 }
 
 // errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
-// confuse with a retired or retiring issuer: requests for the retired one
+// confuse with a retired or retiring issuer. Requests for the retired one
 // would be signed by the new one instead of rejected.
 var errRetiredPrefixSibling = errors.New("name matches a retired issuer in Kafka's prefix lookup")
 
 // txCreateV3Issuer inserts the issuer and its initial keys on tx.
-func txCreateV3Issuer(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {
-	// Serialize with admin creates (adminCreateLock). Only names that clash
-	// with a retired issuer are refused, so legacy naming is otherwise as
-	// before: such issuers exist only since issuer retirement.
-	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, adminCreateLock); err != nil {
+func txCreateV3Issuer(ctx context.Context, logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {
+	// Only names that clash with a retired issuer are refused. Such issuers
+	// exist only since issuer retirement, so legacy naming is otherwise as
+	// before.
+	clash, err := txPrefixSibling(ctx, tx, issuer.IssuerType, true)
+	if err != nil {
 		return uuid.Nil, err
 	}
-	var clash string
-	err := tx.QueryRow(`
-        SELECT i.issuer_type FROM v3_issuers i JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
-        WHERE i.issuer_type <> $1
-          AND (i.issuer_type LIKE $1 || '%' OR $1 LIKE i.issuer_type || '%')
-        LIMIT 1`, issuer.IssuerType).Scan(&clash)
-	if err == nil {
+	if clash != "" {
 		return uuid.Nil, fmt.Errorf("%w: %q and %q", errRetiredPrefixSibling, issuer.IssuerType, clash)
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return uuid.Nil, err
 	}
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40

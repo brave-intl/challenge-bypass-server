@@ -96,7 +96,7 @@ func key(s string) tea.KeyMsg {
 
 func typeText(m tea.Model, s string) tea.Model {
 	for _, r := range s {
-		// cmds dropped on purpose: textinput returns cursor-blink ticks
+		// The cmds are dropped on purpose. textinput returns cursor-blink ticks.
 		m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
 	}
 	return m
@@ -171,10 +171,7 @@ func TestRetireWizardOffersOnlyActiveReplacementsAndRequiresTypedName(t *testing
 	if f.retired != nil {
 		t.Fatal("retire sent without typed confirmation")
 	}
-	m = typeText(m, "old")
-	var cmd tea.Cmd
-	m, cmd = m.Update(key("enter"))
-	drive(m, cmd)
+	confirmTyped(m, "old")
 	if f.retired == nil || f.retired.ReplacementIssuerID != "2" {
 		t.Fatalf("retire not sent correctly: %+v", f.retired)
 	}
@@ -189,12 +186,7 @@ func TestRetireWizardOffersOnlyActiveReplacementsAndRequiresTypedName(t *testing
 // The wizard's defaults are relative, so they resolve against the clock at
 // send time, however long the operator spends on review.
 func TestRetireDefaultsResolveAtSendTime(t *testing.T) {
-	f := &fakeAPI{issuers: []adminapi.Issuer{
-		{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive},
-		{ID: "2", Name: "new", Version: 1, Status: adminapi.StatusActive},
-	}}
-	m := newModel(f)
-	m.issuers = f.issuers
+	f, m := retireSetup()
 	m = m.openRetire(f.issuers[0])
 	si, sr := m.retire.stopIssuing.Value(), m.retire.stopRedeeming.Value()
 	if si != "now" || !strings.HasPrefix(sr, "+") || !strings.HasSuffix(sr, "d") {
@@ -225,7 +217,7 @@ func TestRetireRequestNeedsThreeCalendarMonths(t *testing.T) {
 func TestDoneLeavesConfirmScreen(t *testing.T) {
 	f := &fakeAPI{issuers: []adminapi.Issuer{{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive}}}
 	var m tea.Model = newModel(f)
-	m = m.(model).askConfirm(screenDetail, confirmReq{title: "x", run: func() tea.Cmd { return nil }})
+	m = m.(model).askConfirm(screenDetail, confirmReq{title: "x", run: nil})
 	m, _ = m.Update(doneMsg{&f.issuers[0], "ok"})
 	if m.(model).screen != screenDetail {
 		t.Fatalf("screen %v, want detail", m.(model).screen)
@@ -298,10 +290,7 @@ func TestPostponeFlow(t *testing.T) {
 	if f.postponed != nil {
 		t.Fatal("postpone sent without typed confirmation")
 	}
-	m = typeText(m, "old")
-	var cmd tea.Cmd
-	m, cmd = m.Update(key("enter"))
-	drive(m, cmd)
+	confirmTyped(m, "old")
 	if f.postponed == nil || f.postponed.StopIssuingAt.Before(time.Now().Add(29*24*time.Hour)) {
 		t.Fatalf("postpone not sent with +30d: %+v", f.postponed)
 	}
@@ -313,10 +302,7 @@ func TestCancelRetirementFlow(t *testing.T) {
 	var m tea.Model = newModel(f)
 	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
 	m, _ = m.Update(key("c"))
-	m = typeText(m, "old")
-	var cmd tea.Cmd
-	m, cmd = m.Update(key("enter"))
-	drive(m, cmd)
+	confirmTyped(m, "old")
 	if f.cancelled != "1" {
 		t.Fatalf("cancel not sent: %q", f.cancelled)
 	}
@@ -331,12 +317,7 @@ func TestCancelRetirementFlow(t *testing.T) {
 
 // Esc back to the previous retire step must refocus its input.
 func TestRetireWizardEscRefocusesStep(t *testing.T) {
-	f := &fakeAPI{issuers: []adminapi.Issuer{
-		{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive},
-		{ID: "2", Name: "new", Version: 1, Status: adminapi.StatusActive},
-	}}
-	m := newModel(f)
-	m.issuers = f.issuers
+	f, m := retireSetup()
 	var tm tea.Model = m.openRetire(f.issuers[0])
 	tm, _ = tm.Update(key("enter")) // step 1: stop issuing
 	tm, _ = tm.Update(key("enter")) // step 2: stop redeeming
@@ -349,4 +330,23 @@ func TestRetireWizardEscRefocusesStep(t *testing.T) {
 	if got := tm.(model).retire.stopIssuing.Value(); got != "nowx" {
 		t.Fatalf("stop issuing not editable after esc: %q", got)
 	}
+}
+
+// retireSetup is a model listing two active issuers, "old" and "new".
+func retireSetup() (*fakeAPI, model) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{
+		{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive},
+		{ID: "2", Name: "new", Version: 1, Status: adminapi.StatusActive},
+	}}
+	m := newModel(f)
+	m.issuers = f.issuers
+	return f, m
+}
+
+// confirmTyped types name on the confirm screen, presses enter and runs the
+// resulting command.
+func confirmTyped(m tea.Model, name string) tea.Model {
+	m = typeText(m, name)
+	m, cmd := m.Update(key("enter"))
+	return drive(m, cmd)
 }

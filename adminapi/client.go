@@ -24,8 +24,9 @@ func (e *APIError) Error() string { return fmt.Sprintf("%d: %s", e.Status, e.Mes
 type Client struct {
 	BaseURL string
 	Key     ed25519.PrivateKey
-	HTTP    *http.Client
 }
+
+var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body []byte
@@ -42,13 +43,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	SignRequest(req, body, c.Key, time.Now())
-
-	hc := c.HTTP
-	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
+	if err := SignRequest(req, c.Key, time.Now()); err != nil {
+		return err
 	}
-	resp, err := hc.Do(req)
+
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -82,52 +81,46 @@ func (c *Client) WhoAmI(ctx context.Context) (string, error) {
 }
 
 func (c *Client) ListIssuers(ctx context.Context) ([]Issuer, error) {
-	var out ListIssuersResponse
-	return out.Issuers, c.do(ctx, "GET", "/v1/admin/issuers", nil, &out)
+	var out []Issuer
+	return out, c.do(ctx, "GET", "/v1/admin/issuers", nil, &out)
+}
+
+// issuer calls an endpoint that responds with one issuer. id may be "".
+func (c *Client) issuer(ctx context.Context, method, id, suffix string, in any) (*Issuer, error) {
+	path := "/v1/admin/issuers"
+	if id != "" {
+		path += "/" + url.PathEscape(id) + suffix
+	}
+	var out Issuer
+	return &out, c.do(ctx, method, path, in, &out)
 }
 
 func (c *Client) GetIssuer(ctx context.Context, id string) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "GET", "/v1/admin/issuers/"+url.PathEscape(id), nil, &out)
+	return c.issuer(ctx, "GET", id, "", nil)
 }
 
 func (c *Client) CreateIssuer(ctx context.Context, req CreateIssuerRequest) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "POST", "/v1/admin/issuers", req, &out)
+	return c.issuer(ctx, "POST", "", "", req)
 }
 
 func (c *Client) UpdateIssuer(ctx context.Context, id string, req UpdateIssuerRequest) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "PATCH", "/v1/admin/issuers/"+url.PathEscape(id), req, &out)
+	return c.issuer(ctx, "PATCH", id, "", req)
 }
 
 func (c *Client) RetireIssuer(ctx context.Context, id string, req RetireRequest) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "POST", "/v1/admin/issuers/"+url.PathEscape(id)+"/retire", req, &out)
+	return c.issuer(ctx, "POST", id, "/retire", req)
 }
 
 func (c *Client) CancelRetirement(ctx context.Context, id string) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "DELETE", "/v1/admin/issuers/"+url.PathEscape(id)+"/retire", nil, &out)
+	return c.issuer(ctx, "DELETE", id, "/retire", nil)
 }
 
 func (c *Client) PostponeRetirement(ctx context.Context, id string, req PostponeRequest) (*Issuer, error) {
-	var out Issuer
-	return &out, c.do(ctx, "POST", "/v1/admin/issuers/"+url.PathEscape(id)+"/retire/postpone", req, &out)
+	return c.issuer(ctx, "POST", id, "/retire/postpone", req)
 }
 
 func (c *Client) ListAudit(ctx context.Context, issuerID string, limit int) ([]AuditEntry, error) {
-	q := url.Values{}
-	if issuerID != "" {
-		q.Set("issuer_id", issuerID)
-	}
-	if limit > 0 {
-		q.Set("limit", strconv.Itoa(limit))
-	}
-	path := "/v1/admin/audit"
-	if len(q) > 0 {
-		path += "?" + q.Encode()
-	}
-	var out AuditResponse
-	return out.Entries, c.do(ctx, "GET", path, nil, &out)
+	q := url.Values{"issuer_id": {issuerID}, "limit": {strconv.Itoa(limit)}}
+	var out []AuditEntry
+	return out, c.do(ctx, "GET", "/v1/admin/audit?"+q.Encode(), nil, &out)
 }

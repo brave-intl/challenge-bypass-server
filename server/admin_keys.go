@@ -5,7 +5,6 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,16 +15,14 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Operators allowed to call /v1/admin. One OpenSSH authorized_keys line per
-// operator; the comment is an opaque operator ID (see operatorIDPattern),
-// written to the audit log. Never an email: this repo is public. The mapping
-// from ID to person is kept outside the repo. Adding or removing an operator
+// Operators allowed to call /v1/admin, one OpenSSH authorized_keys line per
+// operator. The comment is an opaque operator ID (see operatorIDPattern),
+// and it is written to the audit log. It is never an email, because this
+// repo is public. The mapping from ID to person is kept outside the repo. Adding or removing an operator
 // is a code change + deploy, the same model as the subscriptions support API.
 var prodAdminKeys = []string{}
 
 var devAdminKeys = []string{}
-
-const maxAdminBodySize = 1 << 20
 
 // adminKeysForEnv returns the operator allowlist for env. An unknown env gets
 // nil, which denies every admin request, rather than failing startup.
@@ -105,7 +102,7 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r.Body = http.MaxBytesReader(w, r.Body, maxAdminBodySize)
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 			if r.Header.Get("Signature") == "" {
 				adminAuthError(w, http.StatusUnauthorized, "signature must be present")
 				return
@@ -135,9 +132,7 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 }
 
 func adminAuthError(w http.ResponseWriter, code int, msg string) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
+	_ = RenderContent(map[string]string{"message": msg}, w, code)
 }
 
 // adminOperator returns the operator ID of the key that signed r.

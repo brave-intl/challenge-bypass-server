@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -21,10 +22,19 @@ func (c *Server) adminRoutes(r chi.Router) {
 	r.Method("GET", "/issuers", AppHandler(c.adminListHandler))
 	r.Method("POST", "/issuers", AppHandler(c.adminCreateHandler))
 	r.Method("GET", "/issuers/{id}", AppHandler(c.adminGetHandler))
-	r.Method("PATCH", "/issuers/{id}", AppHandler(c.adminUpdateHandler))
-	r.Method("POST", "/issuers/{id}/retire", AppHandler(c.adminRetireHandler))
-	r.Method("DELETE", "/issuers/{id}/retire", AppHandler(c.adminCancelRetireHandler))
-	r.Method("POST", "/issuers/{id}/retire/postpone", AppHandler(c.adminPostponeHandler))
+	r.Method("PATCH", "/issuers/{id}", adminMutation(c, "update", c.adminUpdateIssuer))
+	r.Method("POST", "/issuers/{id}/retire", adminMutation(c, "retire",
+		func(ctx context.Context, op string, id uuid.UUID, req adminapi.RetireRequest) error {
+			return c.adminRetireIssuer(ctx, op, id, req, time.Now())
+		}))
+	r.Method("DELETE", "/issuers/{id}/retire", adminMutation(c, "cancel_retire",
+		func(ctx context.Context, op string, id uuid.UUID, _ struct{}) error {
+			return c.adminCancelRetirement(ctx, op, id, time.Now())
+		}))
+	r.Method("POST", "/issuers/{id}/retire/postpone", adminMutation(c, "postpone",
+		func(ctx context.Context, op string, id uuid.UUID, req adminapi.PostponeRequest) error {
+			return c.adminPostponeRetirement(ctx, op, id, req, time.Now())
+		}))
 	r.Method("GET", "/audit", AppHandler(c.adminAuditHandler))
 }
 
@@ -99,7 +109,7 @@ func (c *Server) adminListHandler(w http.ResponseWriter, r *http.Request) *AppEr
 	if err != nil {
 		return c.adminError(r, err)
 	}
-	return c.adminRender(w, http.StatusOK, adminapi.ListIssuersResponse{Issuers: list})
+	return c.adminRender(w, http.StatusOK, list)
 }
 
 func (c *Server) adminGetHandler(w http.ResponseWriter, r *http.Request) *AppError {
@@ -127,79 +137,38 @@ func (c *Server) adminCreateHandler(w http.ResponseWriter, r *http.Request) *App
 	return c.respondIssuer(w, r, id, http.StatusCreated)
 }
 
-func (c *Server) adminUpdateHandler(w http.ResponseWriter, r *http.Request) *AppError {
-	id, appErr := adminIssuerID(r)
-	if appErr != nil {
-		return appErr
+// adminMutation handles a change to one issuer. It decodes a T body (none
+// for struct{}), runs fn as the signing operator, logs the action and
+// responds with the issuer as it now is.
+func adminMutation[T any](c *Server, action string, fn func(ctx context.Context, op string, id uuid.UUID, req T) error) AppHandler {
+	return func(w http.ResponseWriter, r *http.Request) *AppError {
+		id, appErr := adminIssuerID(r)
+		if appErr != nil {
+			return appErr
+		}
+		var req T
+		if _, none := any(req).(struct{}); !none {
+			if appErr := decodeStrict(r, &req); appErr != nil {
+				return appErr
+			}
+		}
+		if err := fn(r.Context(), adminOperator(r, c.adminKeys), id, req); err != nil {
+			return c.adminError(r, err)
+		}
+		c.logAdmin(r, action, id)
+		return c.respondIssuer(w, r, id, http.StatusOK)
 	}
-	var req adminapi.UpdateIssuerRequest
-	if appErr := decodeStrict(r, &req); appErr != nil {
-		return appErr
-	}
-	if err := c.adminUpdateIssuer(r.Context(), adminOperator(r, c.adminKeys), id, req); err != nil {
-		return c.adminError(r, err)
-	}
-	c.logAdmin(r, "update", id)
-	return c.respondIssuer(w, r, id, http.StatusOK)
-}
-
-func (c *Server) adminRetireHandler(w http.ResponseWriter, r *http.Request) *AppError {
-	id, appErr := adminIssuerID(r)
-	if appErr != nil {
-		return appErr
-	}
-	var req adminapi.RetireRequest
-	if appErr := decodeStrict(r, &req); appErr != nil {
-		return appErr
-	}
-	if err := c.adminRetireIssuer(r.Context(), adminOperator(r, c.adminKeys), id, req, time.Now()); err != nil {
-		return c.adminError(r, err)
-	}
-	c.logAdmin(r, "retire", id)
-	return c.respondIssuer(w, r, id, http.StatusOK)
-}
-
-func (c *Server) adminCancelRetireHandler(w http.ResponseWriter, r *http.Request) *AppError {
-	id, appErr := adminIssuerID(r)
-	if appErr != nil {
-		return appErr
-	}
-	if err := c.adminCancelRetirement(r.Context(), adminOperator(r, c.adminKeys), id, time.Now()); err != nil {
-		return c.adminError(r, err)
-	}
-	c.logAdmin(r, "cancel_retire", id)
-	return c.respondIssuer(w, r, id, http.StatusOK)
-}
-
-func (c *Server) adminPostponeHandler(w http.ResponseWriter, r *http.Request) *AppError {
-	id, appErr := adminIssuerID(r)
-	if appErr != nil {
-		return appErr
-	}
-	var req adminapi.PostponeRequest
-	if appErr := decodeStrict(r, &req); appErr != nil {
-		return appErr
-	}
-	if err := c.adminPostponeRetirement(r.Context(), adminOperator(r, c.adminKeys), id, req, time.Now()); err != nil {
-		return c.adminError(r, err)
-	}
-	c.logAdmin(r, "postpone", id)
-	return c.respondIssuer(w, r, id, http.StatusOK)
 }
 
 func (c *Server) adminAuditHandler(w http.ResponseWriter, r *http.Request) *AppError {
-	var issuerID *uuid.UUID
-	if s := r.URL.Query().Get("issuer_id"); s != "" {
-		id, err := uuid.Parse(s)
-		if err != nil {
-			return &AppError{Cause: err, Message: "issuer_id must be a uuid", Code: http.StatusBadRequest}
-		}
-		issuerID = &id
+	issuerID, err := uuid.Parse(r.URL.Query().Get("issuer_id"))
+	if err != nil {
+		return &AppError{Cause: err, Message: "issuer_id must be a uuid", Code: http.StatusBadRequest}
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	entries, err := c.adminListAudit(r.Context(), issuerID, limit)
 	if err != nil {
 		return c.adminError(r, err)
 	}
-	return c.adminRender(w, http.StatusOK, adminapi.AuditResponse{Entries: entries})
+	return c.adminRender(w, http.StatusOK, entries)
 }

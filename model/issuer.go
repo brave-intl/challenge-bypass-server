@@ -36,7 +36,7 @@ type Issuer struct {
 	Keys                 []IssuerKeys `json:"keys" db:"-"`
 
 	// StopIssuingAt is set when the issuer is retired (issuer_retirements).
-	// Loaded only on the sign path; nil means not retired.
+	// It is loaded only on the sign path. Nil means not retired.
 	StopIssuingAt *time.Time `json:"-" db:"-"`
 }
 

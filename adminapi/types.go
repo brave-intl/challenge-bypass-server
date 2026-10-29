@@ -6,21 +6,40 @@ package adminapi
 import (
 	"encoding/json"
 	"time"
-)
 
-// MinRetirementOverlap is the minimum time a retired issuer keeps redeeming
-// after it stops issuing, while its replacement issues. MinStopRedeeming
-// also enforces 3 calendar months, which can be shorter (Feb 1 to May 1).
-const MinRetirementOverlap = 90 * 24 * time.Hour
+	timeutils "github.com/brave-intl/bat-go/libs/time"
+)
 
 // MinStopRedeeming is the earliest stop_redeeming_at for an issuer that last
 // issues at lastIssue: the later of 3 calendar months and 90 days after it.
+// Either can be longer (Feb 1 + 3 months is 89 days).
 func MinStopRedeeming(lastIssue time.Time) time.Time {
 	m := lastIssue.UTC().AddDate(0, 3, 0)
-	if d := lastIssue.Add(MinRetirementOverlap); d.After(m) {
+	if d := lastIssue.Add(90 * 24 * time.Hour); d.After(m) {
 		return d
 	}
 	return m
+}
+
+// WindowsEnd is the end of n v3 key windows of the ISO 8601 duration that
+// start at from, stepped as the rotation cron steps them. An empty duration
+// returns from.
+func WindowsEnd(duration string, n int, from time.Time) (time.Time, error) {
+	if duration == "" {
+		return from, nil
+	}
+	d, err := timeutils.ParseDuration(duration)
+	if err != nil {
+		return time.Time{}, err
+	}
+	for i := 0; i < n; i++ {
+		next, err := d.From(from)
+		if err != nil {
+			return time.Time{}, err
+		}
+		from = *next
+	}
+	return from, nil
 }
 
 type Status string
@@ -50,7 +69,6 @@ type Key struct {
 	ID        string     `json:"id"`
 	PublicKey string     `json:"public_key"`
 	Cohort    int16      `json:"cohort"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
 	StartAt   *time.Time `json:"start_at,omitempty"`
 	EndAt     *time.Time `json:"end_at,omitempty"`
 }
@@ -67,19 +85,11 @@ type Issuer struct {
 	CreatedAt     *time.Time `json:"created_at,omitempty"`
 	ValidFrom     *time.Time `json:"valid_from,omitempty"`
 	ExpiresAt     *time.Time `json:"expires_at,omitempty"` // nil = no expiry
-	LastRotatedAt *time.Time `json:"last_rotated_at,omitempty"`
 	Status        Status     `json:"status"`
 	StopIssuingAt *time.Time `json:"stop_issuing_at,omitempty"`
 	ReplacementID *string    `json:"replacement_issuer_id,omitempty"`
-	RetiredBy     *string    `json:"retired_by,omitempty"`
-	Replaces      []string   `json:"replaces,omitempty"`
-	KeyCount      int        `json:"key_count"`
 	LatestKeyEnd  *time.Time `json:"latest_key_end,omitempty"`
 	Keys          []Key      `json:"keys,omitempty"`
-}
-
-type ListIssuersResponse struct {
-	Issuers []Issuer `json:"issuers"`
 }
 
 type CreateIssuerRequest struct {
@@ -94,7 +104,7 @@ type CreateIssuerRequest struct {
 	Overlap   int        `json:"overlap,omitempty"`    // v3 only
 }
 
-// UpdateIssuerRequest: only these fields are mutable. The server rejects
+// UpdateIssuerRequest holds the only mutable fields. The server rejects
 // unknown fields.
 type UpdateIssuerRequest struct {
 	MaxTokens *int       `json:"max_tokens,omitempty"`
@@ -122,8 +132,4 @@ type AuditEntry struct {
 	Action    string          `json:"action"`
 	IssuerID  *string         `json:"issuer_id,omitempty"`
 	Request   json.RawMessage `json:"request"`
-}
-
-type AuditResponse struct {
-	Entries []AuditEntry `json:"entries"`
 }

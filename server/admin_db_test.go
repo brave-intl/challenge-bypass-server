@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"os"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 
 	timeutils "github.com/brave-intl/bat-go/libs/time"
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
+	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	"github.com/stretchr/testify/suite"
@@ -72,10 +74,9 @@ func (s *AdminDBSuite) TestCreateAndReadWritesAudit() {
 	list, err := s.srv.adminListIssuers(s.ctx, time.Now())
 	s.Require().NoError(err)
 	s.Len(list, 1)
-	s.Equal(1, list[0].KeyCount)
 	s.Empty(list[0].Keys, "list does not embed keys")
 
-	audit, err := s.srv.adminListAudit(s.ctx, &id, 10)
+	audit, err := s.srv.adminListAudit(s.ctx, id, 10)
 	s.Require().NoError(err)
 	s.Require().Len(audit, 1)
 	s.Equal("create", audit[0].Action)
@@ -94,9 +95,9 @@ func (s *AdminDBSuite) TestCreateDuplicateRollsBackAudit() {
 	s.create(v1("dup"))
 	_, err := s.srv.adminCreateIssuer(s.ctx, "op-test", v1("dup"))
 	s.Require().Error(err)
-	audit, err := s.srv.adminListAudit(s.ctx, nil, 10)
-	s.Require().NoError(err)
-	s.Len(audit, 1, "failed create must not leave an audit row")
+	var rows int
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM issuer_admin_audit`).Scan(&rows))
+	s.Equal(1, rows, "failed create must not leave an audit row")
 }
 
 func (s *AdminDBSuite) TestCreateValidation() {
@@ -105,7 +106,7 @@ func (s *AdminDBSuite) TestCreateValidation() {
 		{Name: "x", Version: 4},
 		{Name: "x", Version: 3, Duration: "", Buffer: 1},
 		{Name: "x", Version: 3, Duration: "P1M", Buffer: 0},
-		{Name: "x", Version: 1, ExpiresAt: ptrTime(time.Now().Add(-time.Hour))},
+		{Name: "x", Version: 1, ExpiresAt: ptr.FromTime(time.Now().Add(-time.Hour))},
 	} {
 		_, err := s.srv.adminCreateIssuer(s.ctx, "op", req)
 		var re *adminRuleError
@@ -118,14 +119,47 @@ func (s *AdminDBSuite) TestGetUnknown() {
 	s.ErrorIs(err, errAdminNotFound)
 }
 
-func ptrTime(t time.Time) *time.Time { return &t }
-
 const day = 24 * time.Hour
 
 func (s *AdminDBSuite) retire(id, repl uuid.UUID, stopIssuing, stopRedeeming time.Time) error {
 	return s.srv.adminRetireIssuer(s.ctx, "op-test", id, adminapi.RetireRequest{
 		ReplacementIssuerID: repl.String(), StopIssuingAt: stopIssuing, StopRedeemingAt: stopRedeeming,
 	}, time.Now())
+}
+
+func (s *AdminDBSuite) idOf(name string) (id uuid.UUID) {
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type = $1`, name).Scan(&id))
+	return id
+}
+
+// withCaching turns issuer caching on for the rest of the test.
+func (s *AdminDBSuite) withCaching(expirationSec int) {
+	saved := s.srv.dbConfig.CachingConfig
+	s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: expirationSec}
+	s.T().Cleanup(func() { s.srv.dbConfig.CachingConfig = saved })
+}
+
+// lockTx begins a transaction that takes a lock with query.
+func (s *AdminDBSuite) lockTx(query string, args ...any) *sql.Tx {
+	tx, err := s.srv.db.Begin()
+	s.Require().NoError(err)
+	_, err = tx.Exec(query, args...)
+	s.Require().NoError(err)
+	return tx
+}
+
+// blocked runs fn in the background and checks it is still waiting after
+// 300ms, that is, on a lock tx holds. Its result arrives on the channel.
+func (s *AdminDBSuite) blocked(tx *sql.Tx, fn func() error) <-chan error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		_ = tx.Rollback()
+		s.FailNow("did not wait for the lock", "err: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	return done
 }
 
 func (s *AdminDBSuite) isRule(err error, contains string) {
@@ -143,15 +177,13 @@ func (s *AdminDBSuite) TestRetireHappyPathAndCancel() {
 	s.Equal(adminapi.StatusRetiring, got.Status)
 	s.Equal(repl.String(), *got.ReplacementID)
 	s.WithinDuration(start.Add(93*day), *got.ExpiresAt, time.Second)
-	r, _ := s.srv.adminGetIssuer(s.ctx, repl, time.Now())
-	s.Equal([]string{old.String()}, r.Replaces)
 
 	s.Require().NoError(s.srv.adminCancelRetirement(s.ctx, "op", old, time.Now()))
 	got, _ = s.srv.adminGetIssuer(s.ctx, old, time.Now())
 	s.Equal(adminapi.StatusActive, got.Status)
 	s.Nil(got.ExpiresAt, "cancel restores the no-expiry sentinel")
 
-	audit, _ := s.srv.adminListAudit(s.ctx, &old, 10)
+	audit, _ := s.srv.adminListAudit(s.ctx, old, 10)
 	s.Equal("cancel_retire", audit[0].Action)
 	s.Equal("retire", audit[1].Action)
 }
@@ -167,10 +199,10 @@ func (s *AdminDBSuite) TestRetireRules() {
 	s.isRule(s.retire(old, repl, start, start.Add(89*day)), "90 days")
 
 	// replacement expiring inside the overlap
-	shortRepl := s.create(adminapi.CreateIssuerRequest{Name: "short", Version: 1, ExpiresAt: ptrTime(now.Add(30 * day))})
+	shortRepl := s.create(adminapi.CreateIssuerRequest{Name: "short", Version: 1, ExpiresAt: ptr.FromTime(now.Add(30 * day))})
 	s.isRule(s.retire(old, shortRepl, start, start.Add(93*day)), "replacement expires")
 
-	// replacement that is itself retiring (Review Focus 1)
+	// replacement that is itself retiring
 	third := s.create(v1("third"))
 	s.Require().NoError(s.retire(repl, third, start, start.Add(93*day)))
 	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "replacement must be active")
@@ -192,7 +224,7 @@ func (s *AdminDBSuite) TestRetireReplacementNotYetValid() {
 	old := s.create(v1("o"))
 	later := time.Now().Add(10 * day)
 	repl := s.create(adminapi.CreateIssuerRequest{Name: "r", Version: 3, Duration: "P1M", Buffer: 1,
-		ValidFrom: &later, ExpiresAt: ptrTime(time.Now().AddDate(2, 0, 0))})
+		ValidFrom: &later, ExpiresAt: ptr.FromTime(time.Now().AddDate(2, 0, 0))})
 	start := time.Now().Add(time.Minute)
 	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "valid_from")
 }
@@ -206,7 +238,7 @@ func (s *AdminDBSuite) TestChainRule() {
 	s.Require().NoError(s.retire(b, c, start.Add(100*day), start.Add(200*day)))
 }
 
-// The chain rule compares a timestamp-without-zone column with now; a
+// The chain rule compares a timestamp-without-zone column with now. A
 // non-UTC now used to be read hours off and skip the promise.
 func (s *AdminDBSuite) TestChainRuleWithNonUTCNow() {
 	a, b, c := s.create(v1("ca")), s.create(v1("cb")), s.create(v1("cc"))
@@ -245,9 +277,7 @@ func (s *AdminDBSuite) TestRetireNowCountsPropagationDelay() {
 	s.Run("replica lag plus cache period", func() {
 		s.SetupTest()
 		old, repl := s.create(v1("cache-old")), s.create(v1("cache-new"))
-		saved := s.srv.dbConfig.CachingConfig
-		s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 3600}
-		defer func() { s.srv.dbConfig.CachingConfig = saved }()
+		s.withCaching(3600)
 		s.isRule(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour)).Add(time.Minute)), "last possible issuance")
 		s.Require().NoError(s.retire(old, repl, now, adminapi.MinStopRedeeming(now.Add(time.Hour+maxReplicaLag)).Add(time.Minute)))
 	})
@@ -276,7 +306,7 @@ func (s *AdminDBSuite) TestCreateV3ValidFromIsUTC() {
 	s.WithinDuration(time.Now(), *got.ValidFrom, time.Minute)
 }
 
-// The sign path loads retirement for every row in one query; a v3 issuer
+// The sign path loads retirement for every row in one query. A v3 issuer
 // has one row per key.
 func (s *AdminDBSuite) TestSignPathSeesRetirementWithManyKeys() {
 	old := s.create(v3("many", time.Now().AddDate(2, 0, 0)))
@@ -361,20 +391,10 @@ func (s *AdminDBSuite) TestPostponeLocksReplacement() {
 	s.Require().NoError(s.retire(a, b, time.Now(), time.Now().Add(93*day)))
 	time.Sleep(1100 * time.Millisecond)
 
-	tx, err := s.srv.db.Begin()
-	s.Require().NoError(err)
-	_, err = tx.Exec(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, b)
-	s.Require().NoError(err)
-	done := make(chan error, 1)
-	go func() {
-		done <- s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now())
-	}()
-	select {
-	case err := <-done:
-		_ = tx.Rollback()
-		s.FailNow("postpone did not wait for the replacement's lock", "err: %v", err)
-	case <-time.After(300 * time.Millisecond):
-	}
+	tx := s.lockTx(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, b)
+	done := s.blocked(tx, func() error {
+		return s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now())
+	})
 	s.Require().NoError(tx.Rollback())
 	s.Require().NoError(<-done)
 }
@@ -385,9 +405,7 @@ func (s *AdminDBSuite) TestRetirementChangesNeedExpiringCache() {
 	old, repl := s.create(v1("nc-old")), s.create(v1("nc-new"))
 	start := time.Now().Add(time.Hour)
 	s.Require().NoError(s.retire(old, repl, start, start.Add(93*day)))
-	saved := s.srv.dbConfig.CachingConfig
-	s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 0}
-	defer func() { s.srv.dbConfig.CachingConfig = saved }()
+	s.withCaching(0)
 
 	other := s.create(v1("nc-other"))
 	s.isRule(s.retire(other, repl, start, start.Add(93*day)), "never expire")
@@ -434,24 +452,26 @@ func (s *AdminDBSuite) TestBreakGlassSQL() {
 // Admin creates are serialized, so a create that waits on a concurrent one
 // sees the sibling it committed and refuses.
 func (s *AdminDBSuite) TestCreateWaitsForConcurrentCreate() {
-	tx, err := s.srv.db.Begin()
-	s.Require().NoError(err)
-	_, err = tx.Exec(`SELECT pg_advisory_xact_lock($1)`, adminCreateLock)
-	s.Require().NoError(err)
-
-	done := make(chan error, 1)
-	go func() {
+	tx := s.lockTx(`SELECT pg_advisory_xact_lock($1)`, prefixLock)
+	done := s.blocked(tx, func() error {
 		_, err := s.srv.adminCreateIssuer(s.ctx, "op", v1("race"))
-		done <- err
-	}()
-	select {
-	case err := <-done:
-		_ = tx.Rollback()
-		s.FailNow("create did not wait for the concurrent create", "err: %v", err)
-	case <-time.After(300 * time.Millisecond):
-	}
+		return err
+	})
 	// the concurrent create commits a sibling (inserted under its lock)
-	_, err = tx.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('race-next', 1)`)
+	_, err := tx.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('race-next', 1)`)
+	s.Require().NoError(err)
+	s.Require().NoError(tx.Commit())
+	s.isRule(<-done, "prefix")
+}
+
+// Retire takes the prefix lock too, so a concurrent legacy create of a
+// sibling cannot pass its retired-only check at the same time.
+func (s *AdminDBSuite) TestRetireWaitsForConcurrentCreate() {
+	old, repl := s.create(v1("rw")), s.create(v1("other-rw"))
+	tx := s.lockTx(`SELECT pg_advisory_xact_lock($1)`, prefixLock)
+	start := time.Now().Add(time.Hour)
+	done := s.blocked(tx, func() error { return s.retire(old, repl, start, start.Add(93*day)) })
+	_, err := tx.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('rw-next', 1)`)
 	s.Require().NoError(err)
 	s.Require().NoError(tx.Commit())
 	s.isRule(<-done, "prefix")
@@ -517,15 +537,15 @@ func (s *AdminDBSuite) TestPostponeResumesIssuing() {
 }
 
 func (s *AdminDBSuite) TestUpdateRules() {
-	id := s.create(adminapi.CreateIssuerRequest{Name: "u", Version: 2, ExpiresAt: ptrTime(time.Now().Add(10 * day))})
+	id := s.create(adminapi.CreateIssuerRequest{Name: "u", Version: 2, ExpiresAt: ptr.FromTime(time.Now().Add(10 * day))})
 	mt := 99
 	s.Require().NoError(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{MaxTokens: &mt}))
-	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: ptrTime(time.Now().Add(5 * day))}), "extend")
-	s.Require().NoError(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: ptrTime(time.Now().Add(20 * day))}))
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: ptr.FromTime(time.Now().Add(5 * day))}), "extend")
+	s.Require().NoError(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: ptr.FromTime(time.Now().Add(20 * day))}))
 	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{}), "nothing to update")
 
-	noExp := s.create(v1("noexp")) // Review Focus 2
-	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", noExp, adminapi.UpdateIssuerRequest{ExpiresAt: ptrTime(time.Now().AddDate(5, 0, 0))}), "no expiry")
+	noExp := s.create(v1("noexp"))
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", noExp, adminapi.UpdateIssuerRequest{ExpiresAt: ptr.FromTime(time.Now().AddDate(5, 0, 0))}), "no expiry")
 
 	got, _ := s.srv.adminGetIssuer(s.ctx, id, time.Now())
 	s.Equal(99, got.MaxTokens)
@@ -564,7 +584,7 @@ func (s *AdminDBSuite) TestRotationCronsSkipRetired() {
 	s.Equal(1, n, "retired v3 issuer must not get new keys")
 }
 
-// C1: offsets must not be dropped when storing into timestamp columns.
+// Offsets must not be dropped when storing into timestamp columns.
 func (s *AdminDBSuite) TestNonUTCTimesStoredAsInstants() {
 	west := time.FixedZone("UTC-7", -7*3600)
 	cur := time.Now().Add(10 * day).Truncate(time.Second).UTC()
@@ -584,7 +604,7 @@ func (s *AdminDBSuite) TestNonUTCTimesStoredAsInstants() {
 	s.True(got.ExpiresAt.Equal(redeem.Truncate(time.Second)), "stored %s, want %s", got.ExpiresAt, redeem.UTC())
 }
 
-// C2: postponing a v3 issuer must keep redemption past every key window the
+// Postponing a v3 issuer must keep redemption past every key window the
 // cron can still create before the new stop-issuing time.
 func (s *AdminDBSuite) TestPostponeV3CoversFutureWindows() {
 	old := s.create(v3("pv3", time.Now().AddDate(3, 0, 0))) // P2M, buffer 2, overlap 1 → 6 months of windows
@@ -601,7 +621,7 @@ func (s *AdminDBSuite) TestPostponeV3CoversFutureWindows() {
 	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: newStop.Add(day), StopRedeemingAt: &short}, time.Now()), "key window")
 }
 
-// I1: Kafka resolves issuers by prefix, so prefix-related names must not be
+// Kafka resolves issuers by prefix, so prefix-related names must not be
 // created or paired in a retirement.
 func (s *AdminDBSuite) TestPrefixRelatedNamesRejected() {
 	s.create(v1("pfx"))
@@ -613,11 +633,8 @@ func (s *AdminDBSuite) TestPrefixRelatedNamesRejected() {
 	// pairs that already exist (legacy create path) cannot be retired onto each other
 	s.Require().NoError(s.srv.createIssuer("legacy", v1Cohort, 0, &time.Time{}))
 	s.Require().NoError(s.srv.createIssuer("legacy2", v1Cohort, 0, &time.Time{}))
-	var a, b uuid.UUID
-	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='legacy'`).Scan(&a))
-	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='legacy2'`).Scan(&b))
 	start := time.Now().Add(time.Minute)
-	s.isRule(s.retire(a, b, start, start.Add(93*day)), "prefix")
+	s.isRule(s.retire(s.idOf("legacy"), s.idOf("legacy2"), start, start.Add(93*day)), "prefix")
 }
 
 // Kafka's lookup is `LIKE name || '%'`, so `_` in a name is a wildcard.
@@ -633,8 +650,7 @@ func (s *AdminDBSuite) TestPrefixCheckTreatsLikeWildcards() {
 func (s *AdminDBSuite) TestExpiryChangeRejectedWithPrefixSibling() {
 	s.Require().NoError(s.srv.createIssuer("foo", v1Cohort, 0, &time.Time{}))
 	s.Require().NoError(s.srv.createIssuer("foo-legacy", v1Cohort, 0, &time.Time{}))
-	var legacy uuid.UUID
-	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type='foo-legacy'`).Scan(&legacy))
+	legacy := s.idOf("foo-legacy")
 	bar := s.create(v1("bar"))
 	start := time.Now().Add(time.Minute)
 	s.isRule(s.retire(legacy, bar, start, start.Add(93*day)), "prefix")

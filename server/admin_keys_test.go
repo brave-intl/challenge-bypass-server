@@ -58,7 +58,7 @@ func TestAdminSignatureMwr(t *testing.T) {
 
 	send := func(method, target string, body []byte, key ed25519.PrivateKey, at time.Time, tamper func(*http.Request)) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(method, target, bytes.NewReader(body))
-		adminapi.SignRequest(r, body, key, at)
+		require.NoError(t, adminapi.SignRequest(r, key, at))
 		if tamper != nil {
 			tamper(r)
 		}
@@ -93,7 +93,7 @@ func TestAdminEmptyKeystoreDeniesAll(t *testing.T) {
 	require.NoError(t, err)
 	h := adminSignatureMwr(ks)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	r := httptest.NewRequest("GET", "/v1/admin/issuers", nil)
-	adminapi.SignRequest(r, nil, priv, time.Now())
+	require.NoError(t, adminapi.SignRequest(r, priv, time.Now()))
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, r)
 	require.Equal(t, 403, w.Code)

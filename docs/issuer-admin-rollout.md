@@ -1,53 +1,31 @@
 # Issuer admin API: rollout and rollback runbook
 
-Covers shipping the issuer admin API, `cbp-manage` TUI and issuer retirement
-(spec: `docs/superpowers/specs/2026-09-30-issuer-admin-tui-design.md`) to a
-live service with outstanding tokens, with no downtime and a tested way back
-at every step.
+Covers shipping the issuer admin API, `cbp-manage` TUI and issuer retirement (spec: `docs/specs/2026-09-30-issuer-admin-tui-design.md`) to a live service with outstanding tokens, with no downtime and a tested way back at every step.
 
 ## Summary
 
 | Release | Contents | Schema | Behavior change | Rollback |
 |---|---|---|---|---|
 | **R0** | Migration guard in `InitDB` | none | none | previous image, always safe |
-| **R1** | Feature code + migration 0008, **prod operator allowlist empty** (staging uses the dev list) | +2 tables | none until an issuer is retired; admin API denies everything in prod | R0 image, safe |
+| **R1** | Feature code + migration 0008, **prod operator allowlist empty** (staging uses the dev list) | +2 tables | none until an issuer is retired. The admin API denies everything in prod. | R0 image, safe |
 | **R2** | Operator public keys added to `prodAdminKeys` | none | admin API usable in prod | R1 image, safe |
 
 Each release goes staging → production and bakes before the next one starts.
 
 ## Why three releases
 
-- **R0 exists because rollback is otherwise an outage.** Today `InitDB` calls
-  `m.Migrate(7)`. golang-migrate first checks that the database's *current*
-  version exists in the image's migration files (`migrate.go:404`). Once the
-  DB is at 8, any pod on an image without `0008_*` files panics at startup,
-  and that includes a rollback. R0 skips migrating when the DB is already at
-  or past the image's target, so every image from R0 onward can run against a
-  newer schema.
-- **R1 ships dark.** Schema, sign gate and admin routes deploy with no
-  operator able to act in prod. Any regression comes from the deploy itself
-  and not from an operator action.
+- **R0 exists because rollback is otherwise an outage.** Today `InitDB` calls `m.Migrate(7)`. golang-migrate first checks that the database's *current* version exists in the image's migration files (`migrate.go:404`). Once the DB is at 8, any pod on an image without `0008_*` files panics at startup, and that includes a rollback. R0 skips migrating when the DB is already at or past the image's target, so every image from R0 onward can run against a newer schema.
+- **R1 ships dark.** Schema, sign gate and admin routes deploy with no operator able to act in prod. Any regression comes from the deploy itself and not from an operator action.
 - **R2 is a key list change only.** It turns the feature on.
 
 ## Before any release
 
-- [ ] List **every** workload that runs this image: HTTP server, Kafka
-      consumers (same binary, `KAFKA_ENABLED`), and any CronJobs. Each one
-      runs `InitDB` at startup. A release is "fully rolled out" only when
-      all of them run it.
-- [ ] Confirm the rollout strategy keeps old pods serving until new pods are
-      Ready (`maxUnavailable: 0`).
-- [ ] Confirm the exact `ENV` value in staging and production. The admin
-      allowlist keys off `production` (prod list) and `staging` (dev list).
-      Any other value denies all admin requests. That is safe, but the
-      smoke tests would fail.
-- [ ] Add at least one operator's key to `devAdminKeys` in R1, so the
-      staging smoke test can run.
-- [ ] Note the current production values of `CACHE_ENABLED` and
-      `CACHE_DURATION_SECS`, which set retirement propagation delay (see R2).
-- [ ] Coordinate with the ACT credit-token branch. It carries its own
-      migration set (`migrations/act/`). If it also migrates at startup, it
-      needs the same guard as R0.
+- [ ] List **every** workload that runs this image: HTTP server, Kafka consumers (same binary, `KAFKA_ENABLED`), and any CronJobs. Each one runs `InitDB` at startup. A release is "fully rolled out" only when all of them run it.
+- [ ] Confirm the rollout strategy keeps old pods serving until new pods are Ready (`maxUnavailable: 0`).
+- [ ] Confirm the exact `ENV` value in staging and production. The admin allowlist uses the prod list for `production` and the dev list for `staging`. Any other value denies all admin requests. That is safe, but the smoke tests would fail.
+- [ ] Add at least one operator's key to `devAdminKeys` in R1, so the staging smoke test can run.
+- [ ] Note the current production values of `CACHE_ENABLED` and `CACHE_DURATION_SECS`, which set retirement propagation delay (see R2).
+- [ ] Coordinate with the ACT credit-token branch. It carries its own migration set (`migrations/act/`). If it also migrates at startup, it needs the same guard as R0.
 
 ---
 
@@ -68,14 +46,11 @@ if verr == nil && !dirty && v >= schemaVersion {
 ```
 
 **Roll forward**
-1. Deploy to staging and confirm the startup log reads
-   `db_version=7 build_version=7` and the skip message appears.
+1. Deploy to staging and confirm the startup log reads `db_version=7 build_version=7` and the skip message appears.
 2. Deploy to production and confirm the same log on every workload.
-3. Bake for 24h. Watch the standard dashboards: sign/redeem rate, error
-   metrics, Kafka consumer lag.
+3. Bake for 24h. Watch the standard dashboards: sign/redeem rate, error metrics, Kafka consumer lag.
 
-**Rollback:** redeploy the previous image. The schema is unchanged (DB still
-at 7), so the old `m.Migrate(7)` is a no-op. Always safe.
+**Rollback:** redeploy the previous image. The schema is unchanged (DB still at 7), so the old `m.Migrate(7)` is a no-op. Always safe.
 
 **Exit criteria:** R0 runs on every workload in production.
 
@@ -83,90 +58,58 @@ at 7), so the old `m.Migrate(7)` is a no-op. Always safe.
 
 ## R1: feature, dark
 
-**Contents:** migration `0008_issuer_admin` (creates `issuer_retirements` and
-`issuer_admin_audit`; `v3_issuers` untouched), `schemaVersion = 8`, admin
-routes, sign-path gate, rotation-cron `NOT EXISTS` filter, `prodAdminKeys`
-empty.
+**Contents:** migration `0008_issuer_admin` (it creates `issuer_retirements` and `issuer_admin_audit` and leaves `v3_issuers` untouched), `schemaVersion = 8`, admin routes, sign-path gate, rotation-cron `NOT EXISTS` filter, `prodAdminKeys` empty.
 
 ### Pre-flight (production)
 
 - [ ] Take a DB snapshot. The change is additive, but take it anyway.
 - [ ] `SELECT version, dirty FROM schema_migrations;` → `7, false`.
-- [ ] Check for long transactions touching issuers:
-      `SELECT pid, now() - xact_start, query FROM pg_stat_activity WHERE xact_start < now() - interval '1 minute';`
-      The migration's foreign keys take a lock on `v3_issuers` that briefly
-      blocks writes (the rotation cron) but not reads (signing and
-      redeeming). It waits for any open writer, so start when nothing long
-      is running.
+- [ ] Check for long transactions touching issuers: `SELECT pid, now() - xact_start, query FROM pg_stat_activity WHERE xact_start < now() - interval '1 minute';` The migration's foreign keys take a lock on `v3_issuers`. The lock briefly blocks writes, such as the rotation cron, but not reads such as signing and redeeming. It waits for any open writer, so start when nothing long is running.
 
 ### Roll forward
 
-1. **Staging deploy.** Then run this smoke test with a **dev** key using
-   `cbp-manage`:
+1. **Staging deploy.** Then run this smoke test with a **dev** key using `cbp-manage`:
    1. `cbp-manage --whoami` prints your operator ID.
-   2. Create two throwaway issuers `rollout-a` / `rollout-b`, retire A → B
-      with stop issuing now + 5 min, then cancel. Audit shows
-      create/create/retire/cancel_retire.
-   3. Retire A → B with stop issuing now. A sign request for `rollout-a`
-      returns 400 over HTTP and `issuerInvalid` over Kafka. A redeem of a
-      token issued earlier still succeeds.
+   2. Create two throwaway issuers `rollout-a` / `rollout-b`, retire A → B with stop issuing now + 5 min, then cancel. Audit shows create/create/retire/cancel_retire.
+   3. Retire A → B with stop issuing now. A sign request for `rollout-a` returns 400 over HTTP and `issuerInvalid` over Kafka. A redeem of a token issued earlier still succeeds.
 2. **Production deploy** of the same image.
 3. **Verify, per workload, as pods come up:**
-   - The startup log shows migration 8 applied once; later pods log the skip.
+   - The startup log shows migration 8 applied once. Later pods log the skip.
    - `SELECT version, dirty FROM schema_migrations;` → `8, false`.
    - `SELECT count(*) FROM issuer_retirements;` → `0`.
-   - Unsigned `GET /v1/admin/issuers` → `401`. Signed with any key → `403`,
-     because the prod allowlist is empty.
-   - Sign/redeem rates, error metrics and Kafka lag match the pre-deploy
-     baseline.
+   - Unsigned `GET /v1/admin/issuers` → `401`. Signed with any key → `403`, because the prod allowlist is empty.
+   - Sign/redeem rates, error metrics and Kafka lag match the pre-deploy baseline.
 4. Bake for 24h.
 
 ### Rollback triggers
 
 Roll back without further diagnosis if any of these happen:
-- a crashloop in any workload;
-- `schema_migrations.dirty = true`;
-- sign or redeem error rate above baseline;
-- Kafka consumer lag growing.
+- A crashloop in any workload.
+- `schema_migrations.dirty = true`.
+- A sign or redeem error rate above baseline.
+- Growing Kafka consumer lag.
 
 ### Rollback procedures
 
-**A. Application rollback (default).** Redeploy the R0 image. R0 sees DB
-version 8 ≥ its target 7 and skips migrating. The two new tables stay and
-nothing reads them. There is no data change and no downtime.
+**A. Application rollback (default).** Redeploy the R0 image. R0 sees DB version 8 ≥ its target 7 and skips migrating. The two new tables stay and nothing reads them. There is no data change and no downtime.
 
-**R0 is a safe rollback target only while `issuer_retirements` is empty**
-(always true during R1, since nobody can act in prod). Once retirements
-exist, R0 has no sign gate and no cron filter: retired issuers would start
-signing again, and the v3 rotation cron would add key windows past their
-already shortened `expires_at`, producing tokens that expire before their
-window ends. After R2, roll back to R1 or later. Check first with
-`SELECT count(*) FROM issuer_retirements;`.
+**R0 is a safe rollback target only while `issuer_retirements` is empty** (always true during R1, since nobody can act in prod). Once retirements exist, it matters that R0 has no sign gate and no cron filter. Retired issuers would start signing again. The v3 rotation cron would add key windows past their already shortened `expires_at`, which produces tokens that expire before their window ends. After R2, roll back to R1 or later. Check first with `SELECT count(*) FROM issuer_retirements;`.
 
-**B. Migration failed (dirty = true).** Migration 0008 is one multi-statement
-file, which Postgres runs atomically, so a failure leaves the schema as it
-was and only the dirty flag set. New pods refuse to start and old pods keep
-serving.
+**B. Migration failed (dirty = true).** Migration 0008 is one multi-statement file, which Postgres runs atomically, so a failure leaves the schema as it was and only the dirty flag set. New pods refuse to start and old pods keep serving.
 1. Confirm the tables were not created: `\dt issuer_*`.
 2. Run `migrate -path migrations -database "$DATABASE_URL" force 7`.
 3. Redeploy the R0 image (or fix the migration and retry).
 
-**C. Remove the schema (only if the new tables themselves cause a
-problem).** Run this only after procedure A has put R0 everywhere.
-1. Export any rows first:
-   `\copy issuer_retirements TO 'retirements.csv' CSV HEADER` and
-   `\copy issuer_admin_audit TO 'audit.csv' CSV HEADER`.
-2. From an R1 checkout, run
-   `migrate -path migrations -database "$DATABASE_URL" goto 7`.
-   This drops both tables.
+**C. Remove the schema (only if the new tables themselves cause a problem).** Run this only after procedure A has put R0 everywhere.
+1. Export any rows first: `\copy issuer_retirements TO 'retirements.csv' CSV HEADER` and `\copy issuer_admin_audit TO 'audit.csv' CSV HEADER`.
+2. From an R1 checkout, run `migrate -path migrations -database "$DATABASE_URL" goto 7`. This drops both tables.
 3. R0's guard now sees 7 = 7 and continues as before.
 
 ---
 
 ## R2: enable operators
 
-**Contents:** operator `authorized_keys` lines in `prodAdminKeys`
-(`server/admin_keys.go`). Nothing else.
+**Contents:** operator `authorized_keys` lines in `prodAdminKeys` (`server/admin_keys.go`). Nothing else.
 
 ### Roll forward
 1. Deploy to staging and production.
@@ -174,46 +117,33 @@ problem).** Run this only after procedure A has put R0 everywhere.
 3. Read-only first day: list and inspect issuers only.
 
 ### Rollback
-Redeploy the R1 image, which has an empty allowlist. Existing retirements
-stay in force because the sign gate is in R1. Do not go back to R0 once any
-retirement exists (see R1 rollback A). See "Operator actions" to
-undo a retirement.
+Redeploy the R1 image, which has an empty allowlist. Existing retirements stay in force because the sign gate is in R1. Do not go back to R0 once any retirement exists (see R1 rollback A). See "Operator actions" to undo a retirement.
 
 ### Retirement propagation
-With caching enabled, a retirement that starts **now**, or a cancel/postpone,
-reaches each pod within `CACHE_DURATION_SECS`. Scheduling `stop_issuing_at`
-in the future avoids that window entirely. Prefer it.
+A retirement that starts **now**, or a cancel or postpone, reaches each pod once the reader replica has it and, with caching on, the pod's cached copy expires. The server allows 5 minutes of replica lag plus `CACHE_DURATION_SECS` for that. Scheduling `stop_issuing_at` in the future avoids that window entirely. Prefer it.
 
 ---
 
 ## Operator actions: safe use and undo
 
-Retiring is the only operator action that can interrupt clients. A client
-still requesting a retired issuer after `stop_issuing_at` gets its sign
-requests rejected.
+Retiring is the only operator action that can interrupt clients. A client still requesting a retired issuer after `stop_issuing_at` gets its sign requests rejected.
 
 **Before retiring**
 1. Create the replacement issuer.
-2. Switch client configuration (bat-go SKU issuer names, ads config) to the
-   replacement.
-3. Watch `crypto_tokens_issued_by_issuer_counter{issuer_type="<old>"}` in
-   Prometheus. It should fall to zero as clients move over.
-4. Retire with `stop_issuing_at` in the future, at least one cache period
-   out, and preferably a day.
+2. Switch client configuration (bat-go SKU issuer names, ads config) to the replacement.
+3. Watch `crypto_tokens_issued_by_issuer_counter{issuer_type="<old>"}` in Prometheus. It should fall to zero as clients move over.
+4. Retire with `stop_issuing_at` in the future, at least one cache period out, and preferably a day.
 
 **Undo, depending on state**
 
 | State | Undo |
 |---|---|
 | retiring (before `stop_issuing_at`) | `c` cancel retirement. Restores the original expiry. |
-| retired (after `stop_issuing_at`), clients broke | **Postpone**: set a later `stop_issuing_at`. Issuing resumes within the cache period. Stop-redeeming is pushed out to keep ≥ 3 months (and ≥ 90 days) if needed. Never shortens anything. |
+| retired (after `stop_issuing_at`), clients broke | **Postpone** to a later `stop_issuing_at`. Issuing resumes within the cache period. Stop-redeeming is pushed out to keep ≥ 3 months (and ≥ 90 days) if needed. Never shortens anything. |
 | need longer redemption | Edit, then extend `expires_at`. |
 | admin API unavailable, clients broke (break-glass) | Run the SQL below. |
 
-Break-glass SQL, which resumes issuing for one issuer without a deploy.
-It applies the same rules as the postpone endpoint in one transaction:
-stop redeeming moves out to cover the new stop-issuing time, and the
-replacement is checked before commit.
+Break-glass SQL, which resumes issuing for one issuer without a deploy. It applies the same rules as the postpone endpoint in one transaction. Stop redeeming moves out to cover the new stop-issuing time, and the replacement is checked before commit.
 
 ```sql
 BEGIN;
@@ -226,8 +156,9 @@ SELECT 1 FROM v3_issuers
 UPDATE issuer_retirements
    SET stop_issuing_at = now() + interval '30 days'
  WHERE issuer_id = '<issuer uuid>';
--- stop redeeming: never shorter; >= 3 months and >= 90 days after the new
--- stop issuing; for v3, past every key window the cron can still create
+-- Stop redeeming never gets shorter. It is >= 3 months and >= 90 days after
+-- the new stop issuing, and for v3 it is past every key window the cron can
+-- still create.
 UPDATE v3_issuers
    SET expires_at = GREATEST(
          expires_at,
@@ -236,8 +167,8 @@ UPDATE v3_issuers
          CASE WHEN version = 3 THEN now() + interval '30 days'
               + (buffer + overlap) * duration::interval END)
  WHERE issuer_id = '<issuer uuid>';
--- must return no rows; if it returns any, ROLLBACK and extend or
--- postpone the replacement first
+-- This must return no rows. If it returns any, ROLLBACK and extend or
+-- postpone the replacement first.
 SELECT r.issuer_type, r.expires_at, rr.stop_issuing_at
   FROM v3_issuers o
   JOIN issuer_retirements ret ON ret.issuer_id = o.issuer_id
@@ -251,8 +182,4 @@ VALUES ('<your operator id>', 'postpone_breakglass', '<issuer uuid>',
 COMMIT;
 ```
 
-It takes effect within `CACHE_DURATION_SECS`. `GREATEST` ignores the NULL
-from the `CASE` for v1 and v2 issuers. One limit: SQL cannot create
-signing keys, so a v3 issuer whose keys have all lapsed still cannot sign
-afterwards. Its postpone through the admin API creates them. Prefer the
-admin API whenever it is up.
+It takes effect within `CACHE_DURATION_SECS`. `GREATEST` ignores the NULL from the `CASE` for v1 and v2 issuers. One limit is that SQL cannot create signing keys. So a v3 issuer whose keys have all lapsed still cannot sign afterwards. Its postpone through the admin API creates them. Prefer the admin API whenever it is up.

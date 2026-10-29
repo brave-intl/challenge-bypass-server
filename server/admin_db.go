@@ -38,19 +38,30 @@ func utcTime(t *time.Time) *time.Time {
 	return &u
 }
 
+// prefixLock is the advisory lock key held while checking for prefix
+// siblings. Every create, retire, postpone and expiry change takes it, so two
+// concurrent ones (say, a create of X-next and a retire of X) cannot both
+// pass the check.
+const prefixLock = 0x63627069737375 // "cbpissu"
+
 // txPrefixSibling returns another issuer name that a Kafka sign lookup can
-// confuse with name, or "" if there is none. GetLatestIssuerKafka matches
-// `issuer_type LIKE name || '%'` and prefers the later expiry, so such a pair
+// confuse with name, or "" if there is none. With retiredOnly, it considers
+// only issuers that have a retirement. GetLatestIssuerKafka matches
+// `issuer_type LIKE name || '%'` and prefers the later expiry. So such a pair
 // routes one to the other, and changing either one's expires_at can flip
 // which one wins. The check uses LIKE, not a plain prefix compare, because
 // `_` and `%` in a name are wildcards there.
-func txPrefixSibling(ctx context.Context, tx *sql.Tx, name string) (string, error) {
+func txPrefixSibling(ctx context.Context, tx *sql.Tx, name string, retiredOnly bool) (string, error) {
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, prefixLock); err != nil {
+		return "", err
+	}
 	var sibling string
 	err := tx.QueryRowContext(ctx, `
-        SELECT issuer_type FROM v3_issuers
-        WHERE issuer_type <> $1
-          AND (issuer_type LIKE $1 || '%' OR $1 LIKE issuer_type || '%')
-        LIMIT 1`, name).Scan(&sibling)
+        SELECT i.issuer_type FROM v3_issuers i
+        WHERE i.issuer_type <> $1
+          AND (i.issuer_type LIKE $1 || '%' OR $1 LIKE i.issuer_type || '%')
+          AND (NOT $2 OR EXISTS (SELECT 1 FROM issuer_retirements r WHERE r.issuer_id = i.issuer_id))
+        LIMIT 1`, name, retiredOnly).Scan(&sibling)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
@@ -60,7 +71,7 @@ func txPrefixSibling(ctx context.Context, tx *sql.Tx, name string) (string, erro
 // txRejectPrefixSibling refuses an expires_at change on an issuer that has a
 // prefix sibling, since the change can reroute the sibling's sign requests.
 func txRejectPrefixSibling(ctx context.Context, tx *sql.Tx, name string) error {
-	sibling, err := txPrefixSibling(ctx, tx, name)
+	sibling, err := txPrefixSibling(ctx, tx, name, false)
 	if err != nil || sibling == "" {
 		return err
 	}
@@ -79,8 +90,7 @@ func nullableTime(t pq.NullTime) *time.Time {
 const adminIssuerSelect = `
 SELECT i.issuer_id, i.issuer_type, i.version, i.issuer_cohort, i.max_tokens,
        i.buffer, i.overlap, i.duration, i.created_at, i.valid_from, i.expires_at,
-       i.last_rotated_at, r.stop_issuing_at, r.replacement_issuer_id, r.retired_by,
-       (SELECT count(*) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id),
+       r.stop_issuing_at, r.replacement_issuer_id,
        (SELECT max(end_at) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id)
 FROM v3_issuers i
 LEFT JOIN issuer_retirements r ON r.issuer_id = i.issuer_id`
@@ -89,14 +99,14 @@ type rowScanner interface{ Scan(dest ...any) error }
 
 func scanAdminIssuer(row rowScanner, now time.Time) (adminapi.Issuer, error) {
 	var (
-		out                                  adminapi.Issuer
-		duration, replacement, retiredBy     sql.NullString
-		created, validFrom, expires, rotated pq.NullTime
-		stopIssuing, latestEnd               pq.NullTime
+		out                         adminapi.Issuer
+		duration, replacement       sql.NullString
+		created, validFrom, expires pq.NullTime
+		stopIssuing, latestEnd      pq.NullTime
 	)
 	err := row.Scan(&out.ID, &out.Name, &out.Version, &out.Cohort, &out.MaxTokens,
 		&out.Buffer, &out.Overlap, &duration, &created, &validFrom, &expires,
-		&rotated, &stopIssuing, &replacement, &retiredBy, &out.KeyCount, &latestEnd)
+		&stopIssuing, &replacement, &latestEnd)
 	if err != nil {
 		return out, err
 	}
@@ -106,13 +116,9 @@ func scanAdminIssuer(row rowScanner, now time.Time) (adminapi.Issuer, error) {
 	if replacement.Valid {
 		out.ReplacementID = &replacement.String
 	}
-	if retiredBy.Valid {
-		out.RetiredBy = &retiredBy.String
-	}
 	out.CreatedAt = nullableTime(created)
 	out.ValidFrom = nullableTime(validFrom)
 	out.ExpiresAt = nullableTime(expires)
-	out.LastRotatedAt = nullableTime(rotated)
 	out.StopIssuingAt = nullableTime(stopIssuing)
 	out.LatestKeyEnd = nullableTime(latestEnd)
 	out.Status = adminapi.DeriveStatus(now, out.ExpiresAt, out.StopIssuingAt)
@@ -147,7 +153,7 @@ func (c *Server) adminGetIssuer(ctx context.Context, id uuid.UUID, now time.Time
 
 	// Signing keys are never selected here.
 	rows, err := c.db.QueryContext(ctx, `
-        SELECT key_id, public_key, cohort, created_at, start_at, end_at
+        SELECT key_id, public_key, cohort, start_at, end_at
         FROM v3_issuer_keys WHERE issuer_id = $1
         ORDER BY end_at ASC NULLS FIRST, start_at ASC, created_at ASC`, id)
 	if err != nil {
@@ -157,32 +163,15 @@ func (c *Server) adminGetIssuer(ctx context.Context, id uuid.UUID, now time.Time
 	for rows.Next() {
 		var k adminapi.Key
 		var pub sql.NullString
-		var created, start, end pq.NullTime
-		if err := rows.Scan(&k.ID, &pub, &k.Cohort, &created, &start, &end); err != nil {
+		var start, end pq.NullTime
+		if err := rows.Scan(&k.ID, &pub, &k.Cohort, &start, &end); err != nil {
 			return nil, err
 		}
 		k.PublicKey = pub.String
-		k.CreatedAt, k.StartAt, k.EndAt = nullableTime(created), nullableTime(start), nullableTime(end)
+		k.StartAt, k.EndAt = nullableTime(start), nullableTime(end)
 		iss.Keys = append(iss.Keys, k)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	replaced, err := c.db.QueryContext(ctx,
-		`SELECT issuer_id FROM issuer_retirements WHERE replacement_issuer_id = $1 ORDER BY created_at`, id)
-	if err != nil {
-		return nil, err
-	}
-	defer replaced.Close()
-	for replaced.Next() {
-		var rid string
-		if err := replaced.Scan(&rid); err != nil {
-			return nil, err
-		}
-		iss.Replaces = append(iss.Replaces, rid)
-	}
-	return &iss, replaced.Err()
+	return &iss, rows.Err()
 }
 
 func txInsertAudit(ctx context.Context, tx *sql.Tx, operator, action string, issuerID *uuid.UUID, request any) error {
@@ -196,14 +185,14 @@ func txInsertAudit(ctx context.Context, tx *sql.Tx, operator, action string, iss
 	return err
 }
 
-func (c *Server) adminListAudit(ctx context.Context, issuerID *uuid.UUID, limit int) ([]adminapi.AuditEntry, error) {
+func (c *Server) adminListAudit(ctx context.Context, issuerID uuid.UUID, limit int) ([]adminapi.AuditEntry, error) {
 	if limit <= 0 || limit > 1000 {
 		limit = 100
 	}
 	rows, err := c.db.QueryContext(ctx, `
         SELECT id, created_at, operator, action, issuer_id, request
         FROM issuer_admin_audit
-        WHERE ($1::uuid IS NULL OR issuer_id = $1)
+        WHERE issuer_id = $1
         ORDER BY created_at DESC, id DESC LIMIT $2`, issuerID, limit)
 	if err != nil {
 		return nil, err
@@ -226,8 +215,8 @@ func (c *Server) adminListAudit(ctx context.Context, issuerID *uuid.UUID, limit 
 	return out, rows.Err()
 }
 
-// withAdminTx runs fn in a transaction, rolling back on any error.
-func (c *Server) withAdminTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+// withTx runs fn in a transaction, rolling back on any error.
+func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -307,20 +296,15 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 	}
 
 	var id uuid.UUID
-	err := c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		// Serialize admin creates: two concurrent creates of prefix
-		// siblings (X, X-next) would otherwise both pass the check.
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, adminCreateLock); err != nil {
-			return err
-		}
-		clash, err := txPrefixSibling(ctx, tx, req.Name)
+	err := c.withTx(ctx, func(tx *sql.Tx) error {
+		clash, err := txPrefixSibling(ctx, tx, req.Name, false)
 		if err != nil {
 			return err
 		}
 		if clash != "" {
 			return ruleErr("name %q and existing issuer %q match each other in Kafka's prefix lookup (`_` and `%%` are wildcards there), so pick a name that does not", req.Name, clash)
 		}
-		if id, err = txCreateV3Issuer(c.Logger, tx, iss); err != nil {
+		if id, err = txCreateV3Issuer(ctx, c.Logger, tx, iss); err != nil {
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "create", &id, req)
@@ -328,30 +312,32 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 	return id, err
 }
 
-// adminCreateLock is the advisory lock key that serializes admin creates.
-const adminCreateLock = 0x63627069737375 // "cbpissu"
-
 type lockedIssuer struct {
-	id            uuid.UUID
-	name          string
-	version       int
-	buffer        int
-	overlap       int
-	duration      sql.NullString
-	validFrom     pq.NullTime
-	expiresAt     pq.NullTime
-	stopIssuingAt *time.Time
+	id                       uuid.UUID
+	name                     string
+	version, buffer, overlap int
+	cohort                   int16
+	duration                 sql.NullString
+	validFrom, expiresAt     pq.NullTime
+	stopIssuingAt, maxKeyEnd *time.Time
+	replacement              uuid.UUID // uuid.Nil when not retired
 }
 
 func (l lockedIssuer) status(now time.Time) adminapi.Status {
 	return adminapi.DeriveStatus(now, nullableTime(l.expiresAt), l.stopIssuingAt)
 }
 
-func txSelectIssuersForUpdate(ctx context.Context, tx *sql.Tx, ids []uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
+// txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
+// returns them keyed by id, with their retirement and latest key end.
+// Missing ids are errAdminNotFound.
+func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
 	rows, err := tx.QueryContext(ctx, `
-        SELECT i.issuer_id, i.issuer_type, i.version, i.buffer, i.overlap, i.duration, i.valid_from, i.expires_at
-        FROM v3_issuers i WHERE i.issuer_id = ANY($1)
-        ORDER BY i.issuer_id FOR UPDATE`, pq.Array(ids))
+        SELECT i.issuer_id, i.issuer_type, i.version, i.buffer, i.overlap, i.issuer_cohort,
+               i.duration, i.valid_from, i.expires_at, r.stop_issuing_at, r.replacement_issuer_id,
+               (SELECT max(end_at) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id)
+        FROM v3_issuers i LEFT JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
+        WHERE i.issuer_id = ANY($1)
+        ORDER BY i.issuer_id FOR UPDATE OF i`, pq.Array(ids))
 	if err != nil {
 		return nil, err
 	}
@@ -359,34 +345,22 @@ func txSelectIssuersForUpdate(ctx context.Context, tx *sql.Tx, ids []uuid.UUID) 
 	out := map[uuid.UUID]*lockedIssuer{}
 	for rows.Next() {
 		l := &lockedIssuer{}
-		if err := rows.Scan(&l.id, &l.name, &l.version, &l.buffer, &l.overlap, &l.duration, &l.validFrom, &l.expiresAt); err != nil {
+		var stop, maxEnd pq.NullTime
+		var repl uuid.NullUUID
+		if err := rows.Scan(&l.id, &l.name, &l.version, &l.buffer, &l.overlap, &l.cohort,
+			&l.duration, &l.validFrom, &l.expiresAt, &stop, &repl, &maxEnd); err != nil {
 			return nil, err
 		}
+		l.stopIssuingAt, l.maxKeyEnd, l.replacement = nullableTime(stop), nullableTime(maxEnd), repl.UUID
 		out[l.id] = l
 	}
-	return out, rows.Err()
-}
-
-// txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
-// returns them keyed by id. Missing ids → errAdminNotFound.
-func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
-	// The rows must be closed before the per-issuer queries below run on the
-	// same transaction, hence the separate function.
-	out, err := txSelectIssuersForUpdate(ctx, tx, ids)
-	if err != nil {
+	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for _, id := range ids {
-		l, ok := out[id]
-		if !ok {
+		if out[id] == nil {
 			return nil, errAdminNotFound
 		}
-		var stop pq.NullTime
-		err := tx.QueryRowContext(ctx, `SELECT stop_issuing_at FROM issuer_retirements WHERE issuer_id = $1`, id).Scan(&stop)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-		l.stopIssuingAt = nullableTime(stop)
 	}
 	return out, nil
 }
@@ -399,8 +373,8 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 	if req.MaxTokens != nil && *req.MaxTokens < 0 {
 		return ruleErr("max_tokens must be >= 0")
 	}
-	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		locked, replID, err := txLockWithReplacement(ctx, tx, id)
+	return c.withTx(ctx, func(tx *sql.Tx) error {
+		locked, err := txLockWithReplacement(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -419,14 +393,14 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 			if !req.ExpiresAt.After(*cur) {
 				return ruleErr("expires_at can only extend (current %s)", cur.UTC().Format(time.RFC3339))
 			}
-			// A retired issuer's expiry is its stop_redeeming_at: the
+			// A retired issuer's expiry is its stop_redeeming_at. The
 			// replacement must cover it, as postpone requires.
-			if replID != uuid.Nil {
-				if err := txCheckReplacementCovers(ctx, tx, replID, *req.ExpiresAt); err != nil {
+			if l.replacement != uuid.Nil {
+				if err := replacementCovers(locked[l.replacement], *req.ExpiresAt); err != nil {
 					return err
 				}
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, *req.ExpiresAt); err != nil {
+			if err := txSetExpiry(ctx, tx, id, *req.ExpiresAt); err != nil {
 				return err
 			}
 		}
@@ -444,8 +418,8 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 const maxReplicaLag = 5 * time.Minute
 
 // requireExpiringCache refuses retirement changes when issuer cache entries
-// never expire (CACHE_DURATION_SECS <= 0 makes SimpleCache keep them
-// forever): other pods would never see the change.
+// never expire, since other pods would never see the change.
+// CACHE_DURATION_SECS <= 0 makes SimpleCache keep entries forever.
 func (c *Server) requireExpiringCache() error {
 	if cc := c.dbConfig.CachingConfig; cc.Enabled && cc.ExpirationSec <= 0 {
 		return ruleErr("issuer caching is on with CACHE_DURATION_SECS=%d, so cache entries never expire and other pods would never see this change; set a positive value first", cc.ExpirationSec)
@@ -453,24 +427,15 @@ func (c *Server) requireExpiringCache() error {
 	return nil
 }
 
-func txReplacementOf(ctx context.Context, tx *sql.Tx, id uuid.UUID) (uuid.UUID, error) {
-	var repl uuid.UUID
-	err := tx.QueryRowContext(ctx, `SELECT replacement_issuer_id FROM issuer_retirements WHERE issuer_id = $1`, id).Scan(&repl)
-	if errors.Is(err, sql.ErrNoRows) {
-		return uuid.Nil, nil
-	}
-	return repl, err
-}
-
 // txLockWithReplacement locks id and, if it is retired, its replacement, in
 // one id-ordered statement as retire does. So a change to this issuer's
 // deadlines and a concurrent retire of its replacement serialize, and each
-// validates against the other's committed result. The replacement is
-// uuid.Nil for an issuer that is not retired.
-func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[uuid.UUID]*lockedIssuer, uuid.UUID, error) {
-	replID, err := txReplacementOf(ctx, tx, id)
-	if err != nil {
-		return nil, uuid.Nil, err
+// validates against the other's committed result.
+func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
+	var replID uuid.UUID
+	err := tx.QueryRowContext(ctx, `SELECT replacement_issuer_id FROM issuer_retirements WHERE issuer_id = $1`, id).Scan(&replID)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
 	ids := []uuid.UUID{id}
 	if replID != uuid.Nil {
@@ -478,69 +443,55 @@ func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[u
 	}
 	locked, err := txLockIssuers(ctx, tx, ids...)
 	if err != nil {
-		return nil, uuid.Nil, err
+		return nil, err
 	}
 	// A cancel or re-retire may have committed before the lock was taken.
-	if again, err := txReplacementOf(ctx, tx, id); err != nil {
-		return nil, uuid.Nil, err
-	} else if again != replID {
-		return nil, uuid.Nil, ruleErr("the retirement changed while this request ran; retry")
+	if locked[id].replacement != replID {
+		return nil, ruleErr("the retirement changed while this request ran; retry")
 	}
-	return locked, replID, nil
+	return locked, nil
 }
 
-// txCheckReplacementCovers refuses a stop_redeeming_at that the replacement
-// does not cover: it must neither expire nor stop issuing before it.
-func txCheckReplacementCovers(ctx context.Context, tx *sql.Tx, replID uuid.UUID, redeem time.Time) error {
-	var replExpires, replStop pq.NullTime
-	err := tx.QueryRowContext(ctx, `
-        SELECT i.expires_at, r.stop_issuing_at
-        FROM v3_issuers i LEFT JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
-        WHERE i.issuer_id = $1`, replID).Scan(&replExpires, &replStop)
-	if err != nil {
-		return err
-	}
-	if e := nullableTime(replExpires); e != nil && e.Before(redeem) {
+// replacementCovers refuses a stop_redeeming_at that the replacement does
+// not cover. The replacement must neither expire nor stop issuing before it.
+func replacementCovers(repl *lockedIssuer, redeem time.Time) error {
+	if e := nullableTime(repl.expiresAt); e != nil && e.Before(redeem) {
 		return ruleErr("replacement expires at %s, before the new stop_redeeming_at; extend it first", e.UTC().Format(time.RFC3339))
 	}
-	if s := nullableTime(replStop); s != nil && s.Before(redeem) {
+	if s := repl.stopIssuingAt; s != nil && s.Before(redeem) {
 		return ruleErr("replacement stops issuing at %s, before the new stop_redeeming_at; postpone it first", s.UTC().Format(time.RFC3339))
 	}
 	return nil
 }
 
+func txSetExpiry(ctx context.Context, tx *sql.Tx, id uuid.UUID, expiresAt any) error {
+	_, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, expiresAt)
+	return err
+}
+
 // txCatchUpV3Keys gives a v3 issuer keys from the current window on when it
-// has no key for now. The rotation cron cannot do this: it skips an issuer
+// has no key for now. The rotation cron cannot do this. It skips an issuer
 // with no keys, and with only lapsed keys it rebuilds from valid_from, which
-// can leave every window in the past. Windows stay on the issuer's grid:
-// they continue from the last key end (or valid_from) in steps of duration.
-func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, id uuid.UUID, now time.Time) error {
+// can leave every window in the past. Windows stay on the issuer's grid.
+// They continue from the last key end (or valid_from) in steps of duration.
+func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, l *lockedIssuer, now time.Time) error {
 	now = now.UTC()
 	var current int
 	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM v3_issuer_keys
-        WHERE issuer_id = $1 AND start_at <= $2 AND end_at > $2`, id, now).Scan(&current); err != nil {
+        WHERE issuer_id = $1 AND start_at <= $2 AND end_at > $2`, l.id, now).Scan(&current); err != nil {
 		return err
 	}
 	if current > 0 {
 		return nil
 	}
-	iss := model.Issuer{ID: &id, Version: 3}
-	var duration sql.NullString
-	var validFrom, lastEnd pq.NullTime
-	err := tx.QueryRowContext(ctx, `
-        SELECT i.issuer_cohort, i.buffer, i.overlap, i.duration, i.valid_from,
-               (SELECT max(end_at) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id)
-        FROM v3_issuers i WHERE i.issuer_id = $1`, id).Scan(&iss.IssuerCohort, &iss.Buffer, &iss.Overlap, &duration, &validFrom, &lastEnd)
-	if err != nil {
-		return err
-	}
+	duration := l.duration
 	d, err := timeutils.ParseDuration(duration.String)
 	if err != nil {
 		return fmt.Errorf("issuer duration %q: %w", duration.String, err)
 	}
-	start := validFrom.Time
-	if lastEnd.Valid {
-		start = lastEnd.Time
+	start := l.validFrom.Time
+	if l.maxKeyEnd != nil {
+		start = *l.maxKeyEnd
 	}
 	for {
 		end, err := d.From(start)
@@ -555,31 +506,24 @@ func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, id uuid.UUID, 
 		}
 		start = *end
 	}
-	iss.Duration, iss.ValidFrom = &duration.String, &start
-	return txPopulateIssuerKeys(c.Logger, tx, iss)
+	return txPopulateIssuerKeys(c.Logger, tx, model.Issuer{
+		ID: &l.id, Version: 3, IssuerCohort: l.cohort, Buffer: l.buffer, Overlap: l.overlap,
+		Duration: &duration.String, ValidFrom: &start,
+	})
 }
 
-// latestWindowEnd is the furthest v3 key end that can exist if the rotation
-// cron keeps running until stopIssuing.
-func latestWindowEnd(l *lockedIssuer, currentMax *time.Time, stopIssuing time.Time) (time.Time, error) {
-	end := stopIssuing
-	if l.duration.Valid && l.duration.String != "" {
-		d, err := timeutils.ParseDuration(l.duration.String)
-		if err != nil {
-			return time.Time{}, err
-		}
-		for i := 0; i < l.buffer+l.overlap; i++ {
-			next, err := d.From(end)
-			if err != nil {
-				return time.Time{}, err
-			}
-			end = *next
-		}
+// windowsEnd is the earliest stop_redeeming_at that covers every v3 key
+// window, both the existing ones and those the cron can still create before
+// stopIssuing. It is the zero time for v1 and v2.
+func windowsEnd(l *lockedIssuer, stopIssuing time.Time) (time.Time, error) {
+	if l.version < 3 {
+		return time.Time{}, nil
 	}
-	if currentMax != nil && currentMax.After(end) {
-		end = *currentMax
+	end, err := adminapi.WindowsEnd(l.duration.String, l.buffer+l.overlap, stopIssuing)
+	if l.maxKeyEnd != nil && l.maxKeyEnd.After(end) {
+		end = *l.maxKeyEnd
 	}
-	return end, nil
+	return end, err
 }
 
 func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid.UUID, req adminapi.RetireRequest, now time.Time) error {
@@ -606,11 +550,11 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	// The sign path reads retirement from the reader replica, and pods that
 	// cached the issuer before this change keep signing until the entry
 	// expires. So issuing can continue until now + replica lag + cache
-	// period; measure the overlap from then if that is later.
+	// period. Measure the overlap from then if that is later.
 	propagated := now.Add(maxReplicaLag)
 	if cc := c.dbConfig.CachingConfig; cc.Enabled {
 		// ponytail: assumes every pod (HTTP and Kafka) runs this pod's
-		// CACHE_DURATION_SECS; pass the fleet maximum here if they differ.
+		// CACHE_DURATION_SECS. Pass the fleet maximum here if they differ.
 		propagated = propagated.Add(time.Duration(cc.ExpirationSec) * time.Second)
 	}
 	lastIssue := stopIssuing
@@ -621,7 +565,7 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the last possible issuance", min.Format(time.RFC3339))
 	}
 
-	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
+	return c.withTx(ctx, func(tx *sql.Tx) error {
 		locked, err := txLockIssuers(ctx, tx, id, replID)
 		if err != nil {
 			return err
@@ -634,18 +578,18 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		if st := repl.status(now); st != adminapi.StatusActive {
 			return ruleErr("replacement must be active (it is %s)", st)
 		}
-		// Covers the replacement too: it is one of the other issuers.
+		// This covers the replacement too, as one of the other issuers.
 		if err := txRejectPrefixSibling(ctx, tx, target.name); err != nil {
 			return err
 		}
-		if exp := nullableTime(repl.expiresAt); exp != nil && exp.Before(stopRedeeming) {
-			return ruleErr("replacement expires at %s, before stop_redeeming_at", exp.UTC().Format(time.RFC3339))
+		if err := replacementCovers(repl, stopRedeeming); err != nil {
+			return err
 		}
 		if vf := nullableTime(repl.validFrom); vf != nil && vf.Truncate(time.Second).After(stopIssuing) {
 			return ruleErr("replacement valid_from %s is after stop_issuing_at", vf.UTC().Format(time.RFC3339))
 		}
 
-		// Chain rule: if the target is itself the replacement for an issuer
+		// Chain rule. If the target is itself the replacement for an issuer
 		// that still redeems, it must keep issuing until that one stops.
 		var promised pq.NullTime
 		err = tx.QueryRowContext(ctx, `
@@ -659,28 +603,22 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 			return ruleErr("stop_issuing_at is before %s, the overlap promised to the issuer this one replaces", p.UTC().Format(time.RFC3339))
 		}
 
-		if target.version >= 3 {
-			var maxEnd pq.NullTime
-			if err := tx.QueryRowContext(ctx, `SELECT max(end_at) FROM v3_issuer_keys WHERE issuer_id = $1`, id).Scan(&maxEnd); err != nil {
-				return err
-			}
-			need, err := latestWindowEnd(target, nullableTime(maxEnd), stopIssuing)
-			if err != nil {
-				return err
-			}
-			if stopRedeeming.Before(need) {
-				return ruleErr("stop_redeeming_at must be at or after %s, the last key window that can be issued", need.UTC().Format(time.RFC3339))
-			}
+		need, err := windowsEnd(target, stopIssuing)
+		if err != nil {
+			return err
+		}
+		if stopRedeeming.Before(need) {
+			return ruleErr("stop_redeeming_at must be at or after %s, the last key window that can be issued", need.UTC().Format(time.RFC3339))
 		}
 
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO issuer_retirements
-                (issuer_id, replacement_issuer_id, stop_issuing_at, expires_at_before_retire, retired_by)
-            VALUES ($1, $2, $3, $4, $5)`,
-			id, replID, stopIssuing, target.expiresAt, operator); err != nil {
+                (issuer_id, replacement_issuer_id, stop_issuing_at, expires_at_before_retire)
+            VALUES ($1, $2, $3, $4)`,
+			id, replID, stopIssuing, target.expiresAt); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, stopRedeeming); err != nil {
+		if err := txSetExpiry(ctx, tx, id, stopRedeeming); err != nil {
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "retire", &id, adminapi.RetireRequest{
@@ -690,14 +628,14 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 }
 
 // adminPostponeRetirement moves stop_issuing_at later on a retiring or
-// retired issuer: the emergency switch when clients still depend on it.
-// It never shortens redemption and keeps the replacement's promise.
+// retired issuer. It is the emergency switch for when clients still depend
+// on it. It never shortens redemption and keeps the replacement's promise.
 func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
 	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}
-	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		locked, replID, err := txLockWithReplacement(ctx, tx, id)
+	return c.withTx(ctx, func(tx *sql.Tx) error {
+		locked, err := txLockWithReplacement(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -736,36 +674,30 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 		}
 		// v3: tokens are signed for future windows and the cron keeps adding
 		// keys until the new stop_issuing_at, so cover the furthest one.
-		if l.version >= 3 {
-			var maxEnd pq.NullTime
-			if err := tx.QueryRowContext(ctx, `SELECT max(end_at) FROM v3_issuer_keys WHERE issuer_id = $1`, id).Scan(&maxEnd); err != nil {
-				return err
-			}
-			need, err := latestWindowEnd(l, nullableTime(maxEnd), req.StopIssuingAt)
-			if err != nil {
-				return err
-			}
-			if req.StopRedeemingAt != nil && req.StopRedeemingAt.Before(need) {
-				return ruleErr("stop_redeeming_at must be at or after %s, the last key window that can be issued", need.UTC().Format(time.RFC3339))
-			}
-			if redeem.Before(need) {
-				redeem = need
-			}
+		need, err := windowsEnd(l, req.StopIssuingAt)
+		if err != nil {
+			return err
+		}
+		if req.StopRedeemingAt != nil && req.StopRedeemingAt.Before(need) {
+			return ruleErr("stop_redeeming_at must be at or after %s, the last key window that can be issued", need.UTC().Format(time.RFC3339))
+		}
+		if redeem.Before(need) {
+			redeem = need
 		}
 
 		// Replacement must still issue through the (possibly longer) window.
-		if err := txCheckReplacementCovers(ctx, tx, replID, redeem); err != nil {
+		if err := replacementCovers(locked[l.replacement], redeem); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE issuer_retirements SET stop_issuing_at = $2 WHERE issuer_id = $1`, id, req.StopIssuingAt); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, redeem); err != nil {
+		if err := txSetExpiry(ctx, tx, id, redeem); err != nil {
 			return err
 		}
 		// The rotation cron skipped this issuer while it was retired.
 		if l.version >= 3 {
-			if err := c.txCatchUpV3Keys(ctx, tx, id, now); err != nil {
+			if err := c.txCatchUpV3Keys(ctx, tx, l, now); err != nil {
 				return err
 			}
 		}
@@ -777,7 +709,7 @@ func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id 
 	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}
-	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
+	return c.withTx(ctx, func(tx *sql.Tx) error {
 		locked, err := txLockIssuers(ctx, tx, id)
 		if err != nil {
 			return err
@@ -790,13 +722,13 @@ func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id 
 			`DELETE FROM issuer_retirements WHERE issuer_id = $1 RETURNING expires_at_before_retire`, id).Scan(&before); err != nil {
 			return err
 		}
-		// Never shorten: keep the later of the pre-retire value and the
-		// current one; the no-expiry sentinel wins.
+		// Never shorten. Keep the later of the pre-retire value and the
+		// current one. The no-expiry sentinel wins.
 		restore := before
 		if b, cur := nullableTime(before), nullableTime(locked[id].expiresAt); b != nil && cur != nil && cur.After(*b) {
 			restore = locked[id].expiresAt
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, restore); err != nil {
+		if err := txSetExpiry(ctx, tx, id, restore); err != nil {
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "cancel_retire", &id, map[string]string{"issuer_id": id.String()})

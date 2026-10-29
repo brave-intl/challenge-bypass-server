@@ -103,62 +103,34 @@ The integration tests use a separate `docker-compose.integration.yml` file which
 
 ## Issuer admin API and cbp-manage
 
-Operators manage issuers with the `cbp-manage` terminal UI. It talks to the
-`/v1/admin` API, which accepts only ed25519-signed requests from an
-allowlist of operator keys. This is the same model as the subscriptions
-support API. Issuers are never deleted. They are retired in favor of a
-replacement.
+Operators manage issuers with the `cbp-manage` terminal UI. It talks to the `/v1/admin` API, which accepts only ed25519-signed requests from an allowlist of operator keys. This is the same model as the subscriptions support API. Issuers are never deleted. They are retired in favor of a replacement.
 
-Rollout, rollback and break-glass procedures:
-[`docs/issuer-admin-rollout.md`](docs/issuer-admin-rollout.md).
+The rollout, rollback and break-glass procedures are in [`docs/issuer-admin-rollout.md`](docs/issuer-admin-rollout.md).
 
 ### Operator setup
 
-1. Generate a key:
-   `ssh-keygen -t ed25519 -N "" -C <operator-id> -f ~/.config/cbp-manage/id_ed25519`.
-2. Add the `.pub` line to `prodAdminKeys` (production) or `devAdminKeys`
-   (staging and dev) in `server/admin_keys.go`, via a PR. The comment is
-   your opaque operator ID (lowercase letters, digits and `-`, 3 to 32
-   characters), which is written to the audit log. Never use an email:
-   this repo is public, and the server refuses a comment with `@`. Keep
-   the ID-to-person mapping outside the repo. It takes effect on deploy.
-3. Check access: `cbp-manage --whoami` prints the operator ID your key maps to.
-4. Run it:
-   `CBP_ADMIN_URL=https://… CBP_ADMIN_PRIVATE_KEY=~/.config/cbp-manage/id_ed25519 go run ./cmd/cbp-manage`.
-   The binary builds without cgo: `CGO_ENABLED=0 go build ./cmd/cbp-manage`.
+1. Generate a key: `ssh-keygen -t ed25519 -N "" -C <operator-id> -f ~/.config/cbp-manage/id_ed25519`.
+2. Add the `.pub` line to `server/admin_keys.go` in a PR. Production keys go in `prodAdminKeys`, and staging and dev keys go in `devAdminKeys`. The key comment is your opaque operator ID (lowercase letters, digits and `-`, 3 to 32 characters), which is written to the audit log. Never use an email. This repo is public, and the server refuses a comment with `@`. Keep the ID-to-person mapping outside the repo. The key takes effect on deploy.
+3. To check access, run `cbp-manage --whoami`. It prints the operator ID your key maps to.
+4. Run it: `CBP_ADMIN_URL=https://… CBP_ADMIN_PRIVATE_KEY=~/.config/cbp-manage/id_ed25519 go run ./cmd/cbp-manage`. The binary builds without cgo: `CGO_ENABLED=0 go build ./cmd/cbp-manage`.
 
 ### Retirement rules (enforced by the server)
 
-A retirement names a replacement issuer, a stop-issuing time and a
-stop-redeeming time. After stop-issuing, sign requests for the issuer are
-**rejected** (HTTP 400, Kafka `issuerInvalid`), never routed to the
-replacement. Switch client configuration to the replacement first.
-Redemption continues until stop-redeeming.
+A retirement names a replacement issuer, a stop-issuing time and a stop-redeeming time. After stop-issuing, sign requests for the issuer are **rejected** (HTTP 400, Kafka `issuerInvalid`), never routed to the replacement. Switch client configuration to the replacement first. Redemption continues until stop-redeeming.
 
 1. The issuer must be active: not already retiring, retired or expired.
-2. The replacement must be a different, active issuer. Its version may
-   differ.
-3. `stop_issuing_at` must not be in the past (up to 60 seconds of clock
-   skew is tolerated).
+2. The replacement must be a different, active issuer. Its version may differ.
+3. `stop_issuing_at` must not be in the past (up to 60 seconds of clock skew is tolerated).
 4. `stop_redeeming_at` must be at least 3 calendar months and at least 90 days after the last possible issuance: `stop_issuing_at`, or now plus a 5-minute replica-lag allowance plus `CACHE_DURATION_SECS` if that is later. The sign path reads retirement from the reader replica, and pods with a cached copy of the issuer keep signing until it expires.
-5. For v3 issuers, `stop_redeeming_at` must also cover the last key window
-   the rotation cron can still create:
-   `stop_issuing_at + (buffer + overlap) × duration`.
+5. For v3 issuers, `stop_redeeming_at` must also cover the last key window the rotation cron can still create: `stop_issuing_at + (buffer + overlap) × duration`.
 6. The replacement must not expire before `stop_redeeming_at`.
 7. The replacement must already be valid at `stop_issuing_at`.
-8. Chain rule: an issuer that replaced another cannot stop issuing before
-   that other issuer stops redeeming.
-9. The issuer and replacement names must not be prefixes of one another.
-   Kafka resolves issuers by prefix, so `X` would silently route to
-   `X-next`. Admin create rejects such names for the same reason.
+8. An issuer that replaced another cannot stop issuing before that other issuer stops redeeming. This is the chain rule.
+9. No other issuer may match the issuer in Kafka's prefix lookup (`LIKE name || '%'`, where `_` and `%` are wildcards). Kafka resolves issuers by prefix, so `X` would silently route to `X-next`. Admin create rejects such names for the same reason, and the legacy create routes reject a name that matches a retired or retiring issuer.
 
-To undo: **cancel** works while the issuer is still retiring. **Postpone**
-(a later stop-issuing time) works even after the issuer has retired. Both
-leave redemption the same or longer, never shorter.
+To undo: **cancel** works while the issuer is still retiring. **Postpone** (a later stop-issuing time) works even after the issuer has retired. Both leave redemption the same or longer, never shorter.
 
-v1/v2 keys are not rotated by hand. HTTP redemption only checks the newest
-v1/v2 key, so rotate by creating a replacement issuer and retiring the old
-one.
+v1/v2 keys are not rotated by hand. HTTP redemption only checks the newest v1/v2 key, so rotate by creating a replacement issuer and retiring the old one.
 
 ### Endpoints (all under `/v1/admin`, signed)
 
@@ -167,12 +139,12 @@ one.
 | GET | `/whoami` | operator ID for the signing key |
 | GET | `/issuers` | list with derived status |
 | POST | `/issuers` | create (v1/v2/v3) |
-| GET | `/issuers/{id}` | detail: keys (public only), retirement chain |
+| GET | `/issuers/{id}` | detail with public keys and replacement |
 | PATCH | `/issuers/{id}` | `max_tokens`, or a later `expires_at` |
 | POST | `/issuers/{id}/retire` | retire in favor of a replacement |
 | DELETE | `/issuers/{id}/retire` | cancel a retirement that hasn't started |
 | POST | `/issuers/{id}/retire/postpone` | move stop-issuing later |
-| GET | `/audit?issuer_id=&limit=` | audit log, newest first |
+| GET | `/audit?issuer_id=&limit=` | audit log for one issuer, newest first |
 
 ## Deployment
 

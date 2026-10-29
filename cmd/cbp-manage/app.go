@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 )
@@ -54,7 +55,7 @@ type confirmReq struct {
 	title         string
 	body          any
 	typeToConfirm string // non-empty: operator must type this exactly
-	run           func() tea.Cmd
+	run           tea.Cmd
 }
 
 type model struct {
@@ -70,8 +71,8 @@ type model struct {
 	note         string
 	confirm      *confirmReq
 	confirmInput textinput.Model
-	form         form         // Task 9
-	retire       retireWizard // Task 9
+	form         form
+	retire       retireWizard
 	back         screen
 	width        int
 }
@@ -197,9 +198,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenConfirm:
 		return m.updateConfirm(msg)
 	case screenCreate, screenEdit:
-		return m.updateForm(msg) // Task 9
+		return m.updateForm(msg)
 	case screenRetire:
-		return m.updateRetire(msg) // Task 9
+		return m.updateRetire(msg)
 	}
 	return m, nil
 }
@@ -242,7 +243,7 @@ func (m model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.loadList()
 	case "n":
-		return m.openCreate(), nil // Task 9
+		return m.openCreate(), nil
 	case "enter":
 		v := m.visible()
 		if i := m.table.Cursor(); i >= 0 && i < len(v) {
@@ -268,15 +269,15 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen, m.note = screenList, ""
 		return m, m.loadList()
 	case "e":
-		return m.openEdit(cur), nil // Task 9
+		return m.openEdit(cur), nil
 	case "R":
-		return m.openRetire(cur), nil // Task 9
+		return m.openRetire(cur), nil
 	case "p":
 		if cur.StopIssuingAt == nil || cur.Status == adminapi.StatusExpired {
 			m.err = "postpone applies to a retiring or retired issuer"
 			return m, nil
 		}
-		return m.openPostpone(cur), nil // Task 9
+		return m.openPostpone(cur), nil
 	case "c":
 		if cur.Status != adminapi.StatusRetiring {
 			m.err = "only a retiring issuer can have its retirement cancelled"
@@ -286,18 +287,23 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			title:         "Cancel retirement of " + cur.Name,
 			body:          map[string]string{"DELETE": "/v1/admin/issuers/" + cur.ID + "/retire"},
 			typeToConfirm: cur.Name,
-			run: func() tea.Cmd {
-				return func() tea.Msg {
-					iss, err := m.api.CancelRetirement(context.Background(), cur.ID)
-					if err != nil {
-						return errMsg{err}
-					}
-					return doneMsg{iss, "retirement cancelled"}
-				}
-			},
+			run: send("retirement cancelled", func(ctx context.Context) (*adminapi.Issuer, error) {
+				return m.api.CancelRetirement(ctx, cur.ID)
+			}),
 		}), nil
 	}
 	return m, nil
+}
+
+// send runs call and reports the result as a doneMsg or an errMsg.
+func send(note string, call func(context.Context) (*adminapi.Issuer, error)) tea.Cmd {
+	return func() tea.Msg {
+		iss, err := call(context.Background())
+		if err != nil {
+			return errMsg{err}
+		}
+		return doneMsg{iss, note}
+	}
 }
 
 func (m model) askConfirm(back screen, req confirmReq) model {
@@ -323,7 +329,7 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = "typed name does not match"
 			return m, nil
 		}
-		return m, m.confirm.run()
+		return m, m.confirm.run
 	}
 	if m.confirm.typeToConfirm != "" {
 		var cmd tea.Cmd
@@ -358,9 +364,9 @@ func (m model) View() string {
 		}
 		b.WriteString(helpStyle.Render("enter send · esc back"))
 	case screenCreate, screenEdit:
-		b.WriteString(m.formView()) // Task 9
+		b.WriteString(m.formView())
 	case screenRetire:
-		b.WriteString(m.retireView()) // Task 9
+		b.WriteString(m.retireView())
 	}
 	if m.note != "" {
 		b.WriteString("\n" + okStyle.Render(m.note))
@@ -386,14 +392,7 @@ func (m model) detailView() string {
 	fmt.Fprintf(&b, "created       %s\nvalid from    %s\nexpires       %s   (stops redeeming)\n",
 		fmtTime(i.CreatedAt), fmtTime(i.ValidFrom), fmtTime(i.ExpiresAt))
 	if i.StopIssuingAt != nil {
-		by := ""
-		if i.RetiredBy != nil {
-			by = " by " + *i.RetiredBy
-		}
-		fmt.Fprintf(&b, "stop issuing  %s%s\nreplaced by   %s\n", fmtTime(i.StopIssuingAt), by, m.nameOf(i.ReplacementID))
-	}
-	for _, r := range i.Replaces {
-		fmt.Fprintf(&b, "replaces      %s\n", m.nameOf(&r))
+		fmt.Fprintf(&b, "stop issuing  %s\nreplaced by   %s\n", fmtTime(i.StopIssuingAt), m.nameOf(i.ReplacementID))
 	}
 	fmt.Fprintf(&b, "\nkeys (%d)\n", len(i.Keys))
 	for _, k := range i.Keys {
@@ -422,3 +421,18 @@ func (m model) nameOf(id *string) string {
 	}
 	return *id
 }
+
+var (
+	titleStyle  = lipgloss.NewStyle().Bold(true).Padding(0, 1)
+	helpStyle   = lipgloss.NewStyle().Faint(true)
+	errStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	okStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	statusStyle = map[adminapi.Status]lipgloss.Style{
+		adminapi.StatusActive:   lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
+		adminapi.StatusRetiring: lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
+		adminapi.StatusRetired:  lipgloss.NewStyle().Foreground(lipgloss.Color("208")),
+		adminapi.StatusExpired:  lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+	}
+)
+
+func statusText(s adminapi.Status) string { return statusStyle[s].Render(string(s)) }

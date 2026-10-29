@@ -106,7 +106,7 @@ func (s *AdminHTTPSuite) TestNoSigningKeysInResponses() {
 	iss, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "leak", Version: 1})
 	s.Require().NoError(err)
 	req, _ := http.NewRequest("GET", s.http.URL+"/v1/admin/issuers/"+iss.ID, nil)
-	adminapi.SignRequest(req, nil, s.client.Key, time.Now())
+	s.Require().NoError(adminapi.SignRequest(req, s.client.Key, time.Now()))
 	resp, err := http.DefaultClient.Do(req)
 	s.Require().NoError(err)
 	defer resp.Body.Close()
@@ -134,7 +134,9 @@ func (s *AdminHTTPSuite) apiErr(err error, status int) {
 func (s *AdminHTTPSuite) clientDo(method, path string, body any) error {
 	b, _ := json.Marshal(body)
 	req, _ := http.NewRequest(method, s.http.URL+path, bytes.NewReader(b))
-	adminapi.SignRequest(req, b, s.client.Key, time.Now())
+	if err := adminapi.SignRequest(req, s.client.Key, time.Now()); err != nil {
+		return err
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err

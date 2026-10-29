@@ -637,7 +637,8 @@ OUTER:
 
 // retiredSigningResult returns the result for a sign request to an issuer
 // that has stopped issuing at now, and false while it still issues. Retired
-// issuers only redeem: reject, never route to the replacement.
+// issuers only redeem. Reject the request and never route it to the
+// replacement.
 func retiredSigningResult(issuer *model.Issuer, request avroSchema.SigningRequest, now time.Time) (avroSchema.SigningResultV2, bool) {
 	if issuer.IsIssuing(now) {
 		return avroSchema.SigningResultV2{}, false

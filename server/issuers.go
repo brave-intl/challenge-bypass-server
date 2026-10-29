@@ -47,13 +47,14 @@ type issuerFetchRequestV2 struct {
 	Cohort int16 `json:"cohort"`
 }
 
-// ErrIssuerRetired is returned to sign requests for an issuer past its
+// errIssuerRetired is returned to sign requests for an issuer past its
 // retirement stop_issuing_at. Sign requests are never routed to the
-// replacement: the client stores tokens under the issuer it asked for.
-var ErrIssuerRetired = errors.New("issuer is retired; use its replacement")
+// replacement, because the client stores tokens under the issuer it asked
+// for.
+var errIssuerRetired = errors.New("issuer is retired; use its replacement")
 
 func retiredIssuerAppError(issuerType string) *AppError {
-	return &AppError{Cause: ErrIssuerRetired, Message: "Issuer " + issuerType + " is retired; use its replacement", Code: http.StatusBadRequest}
+	return &AppError{Cause: errIssuerRetired, Message: "Issuer " + issuerType + " is retired; use its replacement", Code: http.StatusBadRequest}
 }
 
 // GetLatestIssuer - get the latest issuer by type/cohort
