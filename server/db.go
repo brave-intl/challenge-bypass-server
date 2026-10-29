@@ -68,6 +68,26 @@ const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rota
                        valid_from, buffer, days_out, overlap, issuer_cohort,
                        redemption_repository, version, max_tokens, duration`
 
+// schemaVersion is the migration version this build needs.
+const schemaVersion uint = 7
+
+// migrateSchema migrates up to target, and never down: when the database is
+// already at or past target (a newer release ran, then this one was rolled
+// back to), it logs and returns. Plain m.Migrate(target) would fail there
+// because the newer migration files are not in this image.
+func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
+	v, dirty, err := m.Version()
+	if err == nil && !dirty && v >= target {
+		logger.Info("database schema at or ahead of this build; skipping migrations",
+			"db_version", v, "build_version", target)
+		return nil
+	}
+	if err := m.Migrate(target); err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+	return nil
+}
+
 // LoadDBConfig loads config into server variable
 func (c *Server) LoadDBConfig(config DBConfig) {
 	c.dbConfig = config
@@ -135,8 +155,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 	if err != nil {
 		panic(err)
 	}
-	err = m.Migrate(7)
-	if err != migrate.ErrNoChange && err != nil {
+	if err := migrateSchema(m, schemaVersion, logger); err != nil {
 		panic(err)
 	}
 
