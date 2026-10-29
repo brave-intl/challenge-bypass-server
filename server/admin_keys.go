@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/brave-intl/bat-go/libs/httpsignature"
@@ -16,9 +17,10 @@ import (
 )
 
 // Operators allowed to call /v1/admin. One OpenSSH authorized_keys line per
-// operator; the comment must be the operator's email (it is written to the
-// audit log). Adding or removing an operator is a code change + deploy, the
-// same model as the subscriptions support API.
+// operator; the comment is an opaque operator ID (see operatorIDPattern),
+// written to the audit log. Never an email: this repo is public. The mapping
+// from ID to person is kept outside the repo. Adding or removing an operator
+// is a code change + deploy, the same model as the subscriptions support API.
 var prodAdminKeys = []string{}
 
 var devAdminKeys = []string{}
@@ -39,9 +41,13 @@ func adminKeysForEnv(env string) []string {
 	return nil
 }
 
+// operatorIDPattern is the allowed operator ID: no `@`, so an email cannot
+// be committed by mistake.
+var operatorIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{2,31}$`)
+
 type adminKey struct {
-	email string
-	pub   httpsignature.Ed25519PubKey
+	operator string
+	pub      httpsignature.Ed25519PubKey
 }
 
 type adminKeystore struct {
@@ -58,11 +64,11 @@ func newAdminKeystore(lines []string) (*adminKeystore, error) {
 		if pk.Type() != ssh.KeyAlgoED25519 {
 			return nil, fmt.Errorf("admin key %q: not ed25519", line)
 		}
-		if comment == "" {
-			return nil, fmt.Errorf("admin key %q: comment must be the operator email", line)
+		if !operatorIDPattern.MatchString(comment) {
+			return nil, fmt.Errorf("admin key %q: comment must be an opaque operator ID matching %s, never an email", line, operatorIDPattern)
 		}
 		raw := pk.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
-		ks.keys[hex.EncodeToString(raw)] = adminKey{email: comment, pub: httpsignature.Ed25519PubKey(raw)}
+		ks.keys[hex.EncodeToString(raw)] = adminKey{operator: comment, pub: httpsignature.Ed25519PubKey(raw)}
 	}
 	return ks, nil
 }
@@ -76,7 +82,7 @@ func (s *adminKeystore) LookupVerifier(ctx context.Context, keyID string) (conte
 }
 
 func (s *adminKeystore) operator(keyID string) string {
-	return s.keys[keyID].email
+	return s.keys[keyID].operator
 }
 
 type adminKeyIDKey struct{}
@@ -134,7 +140,7 @@ func adminAuthError(w http.ResponseWriter, code int, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
 }
 
-// adminOperator returns the email of the operator who signed r.
+// adminOperator returns the operator ID of the key that signed r.
 func adminOperator(r *http.Request, ks *adminKeystore) string {
 	keyID, _ := r.Context().Value(adminKeyIDKey{}).(string)
 	return ks.operator(keyID)

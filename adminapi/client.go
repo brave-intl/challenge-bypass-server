@@ -73,7 +73,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	return nil
 }
 
-// WhoAmI returns the operator email the server maps the signing key to.
+// WhoAmI returns the operator ID the server maps the signing key to.
 func (c *Client) WhoAmI(ctx context.Context) (string, error) {
 	var out struct {
 		Operator string `json:"operator"`

@@ -115,12 +115,14 @@ Rollout, rollback and break-glass procedures:
 ### Operator setup
 
 1. Generate a key:
-   `ssh-keygen -t ed25519 -N "" -C you@brave.com -f ~/.config/cbp-manage/id_ed25519`.
+   `ssh-keygen -t ed25519 -N "" -C <operator-id> -f ~/.config/cbp-manage/id_ed25519`.
 2. Add the `.pub` line to `prodAdminKeys` (production) or `devAdminKeys`
-   (staging and dev) in `server/admin_keys.go`, via a PR. The comment must
-   be your email; it is written to the audit log. It takes effect on
-   deploy.
-3. Check access: `cbp-manage --whoami` prints the email your key maps to.
+   (staging and dev) in `server/admin_keys.go`, via a PR. The comment is
+   your opaque operator ID (lowercase letters, digits and `-`, 3 to 32
+   characters), which is written to the audit log. Never use an email:
+   this repo is public, and the server refuses a comment with `@`. Keep
+   the ID-to-person mapping outside the repo. It takes effect on deploy.
+3. Check access: `cbp-manage --whoami` prints the operator ID your key maps to.
 4. Run it:
    `CBP_ADMIN_URL=https://… CBP_ADMIN_PRIVATE_KEY=~/.config/cbp-manage/id_ed25519 go run ./cmd/cbp-manage`.
    The binary builds without cgo: `CGO_ENABLED=0 go build ./cmd/cbp-manage`.
@@ -162,7 +164,7 @@ one.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/whoami` | operator email for the signing key |
+| GET | `/whoami` | operator ID for the signing key |
 | GET | `/issuers` | list with derived status |
 | POST | `/issuers` | create (v1/v2/v3) |
 | GET | `/issuers/{id}` | detail: keys (public only), retirement chain |

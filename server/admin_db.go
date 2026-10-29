@@ -400,7 +400,7 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 		return ruleErr("max_tokens must be >= 0")
 	}
 	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		locked, err := txLockIssuers(ctx, tx, id)
+		locked, replID, err := txLockWithReplacement(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -419,6 +419,13 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 			if !req.ExpiresAt.After(*cur) {
 				return ruleErr("expires_at can only extend (current %s)", cur.UTC().Format(time.RFC3339))
 			}
+			// A retired issuer's expiry is its stop_redeeming_at: the
+			// replacement must cover it, as postpone requires.
+			if replID != uuid.Nil {
+				if err := txCheckReplacementCovers(ctx, tx, replID, *req.ExpiresAt); err != nil {
+					return err
+				}
+			}
 			if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, *req.ExpiresAt); err != nil {
 				return err
 			}
@@ -430,6 +437,122 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 		}
 		return txInsertAudit(ctx, tx, operator, "update", &id, req)
 	})
+}
+
+// requireExpiringCache refuses retirement changes when issuer cache entries
+// never expire (CACHE_DURATION_SECS <= 0 makes SimpleCache keep them
+// forever): other pods would never see the change.
+func (c *Server) requireExpiringCache() error {
+	if cc := c.dbConfig.CachingConfig; cc.Enabled && cc.ExpirationSec <= 0 {
+		return ruleErr("issuer caching is on with CACHE_DURATION_SECS=%d, so cache entries never expire and other pods would never see this change; set a positive value first", cc.ExpirationSec)
+	}
+	return nil
+}
+
+func txReplacementOf(ctx context.Context, tx *sql.Tx, id uuid.UUID) (uuid.UUID, error) {
+	var repl uuid.UUID
+	err := tx.QueryRowContext(ctx, `SELECT replacement_issuer_id FROM issuer_retirements WHERE issuer_id = $1`, id).Scan(&repl)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, nil
+	}
+	return repl, err
+}
+
+// txLockWithReplacement locks id and, if it is retired, its replacement, in
+// one id-ordered statement as retire does. So a change to this issuer's
+// deadlines and a concurrent retire of its replacement serialize, and each
+// validates against the other's committed result. The replacement is
+// uuid.Nil for an issuer that is not retired.
+func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[uuid.UUID]*lockedIssuer, uuid.UUID, error) {
+	replID, err := txReplacementOf(ctx, tx, id)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	ids := []uuid.UUID{id}
+	if replID != uuid.Nil {
+		ids = append(ids, replID)
+	}
+	locked, err := txLockIssuers(ctx, tx, ids...)
+	if err != nil {
+		return nil, uuid.Nil, err
+	}
+	// A cancel or re-retire may have committed before the lock was taken.
+	if again, err := txReplacementOf(ctx, tx, id); err != nil {
+		return nil, uuid.Nil, err
+	} else if again != replID {
+		return nil, uuid.Nil, ruleErr("the retirement changed while this request ran; retry")
+	}
+	return locked, replID, nil
+}
+
+// txCheckReplacementCovers refuses a stop_redeeming_at that the replacement
+// does not cover: it must neither expire nor stop issuing before it.
+func txCheckReplacementCovers(ctx context.Context, tx *sql.Tx, replID uuid.UUID, redeem time.Time) error {
+	var replExpires, replStop pq.NullTime
+	err := tx.QueryRowContext(ctx, `
+        SELECT i.expires_at, r.stop_issuing_at
+        FROM v3_issuers i LEFT JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
+        WHERE i.issuer_id = $1`, replID).Scan(&replExpires, &replStop)
+	if err != nil {
+		return err
+	}
+	if e := nullableTime(replExpires); e != nil && e.Before(redeem) {
+		return ruleErr("replacement expires at %s, before the new stop_redeeming_at; extend it first", e.UTC().Format(time.RFC3339))
+	}
+	if s := nullableTime(replStop); s != nil && s.Before(redeem) {
+		return ruleErr("replacement stops issuing at %s, before the new stop_redeeming_at; postpone it first", s.UTC().Format(time.RFC3339))
+	}
+	return nil
+}
+
+// txCatchUpV3Keys gives a v3 issuer keys from the current window on when it
+// has no key for now. The rotation cron cannot do this: it skips an issuer
+// with no keys, and with only lapsed keys it rebuilds from valid_from, which
+// can leave every window in the past. Windows stay on the issuer's grid:
+// they continue from the last key end (or valid_from) in steps of duration.
+func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, id uuid.UUID, now time.Time) error {
+	now = now.UTC()
+	var current int
+	if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM v3_issuer_keys
+        WHERE issuer_id = $1 AND start_at <= $2 AND end_at > $2`, id, now).Scan(&current); err != nil {
+		return err
+	}
+	if current > 0 {
+		return nil
+	}
+	iss := model.Issuer{ID: &id, Version: 3}
+	var duration sql.NullString
+	var validFrom, lastEnd pq.NullTime
+	err := tx.QueryRowContext(ctx, `
+        SELECT i.issuer_cohort, i.buffer, i.overlap, i.duration, i.valid_from,
+               (SELECT max(end_at) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id)
+        FROM v3_issuers i WHERE i.issuer_id = $1`, id).Scan(&iss.IssuerCohort, &iss.Buffer, &iss.Overlap, &duration, &validFrom, &lastEnd)
+	if err != nil {
+		return err
+	}
+	d, err := timeutils.ParseDuration(duration.String)
+	if err != nil {
+		return fmt.Errorf("issuer duration %q: %w", duration.String, err)
+	}
+	start := validFrom.Time
+	if lastEnd.Valid {
+		start = lastEnd.Time
+	}
+	for {
+		end, err := d.From(start)
+		if err != nil {
+			return err
+		}
+		if !end.After(start) {
+			return fmt.Errorf("issuer duration %q does not advance", duration.String)
+		}
+		if end.After(now) {
+			break
+		}
+		start = *end
+	}
+	iss.Duration, iss.ValidFrom = &duration.String, &start
+	return txPopulateIssuerKeys(c.Logger, tx, iss)
 }
 
 // latestWindowEnd is the furthest v3 key end that can exist if the rotation
@@ -472,6 +595,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	}
 	if stopIssuing.Before(now) {
 		return ruleErr("stop_issuing_at must not be in the past")
+	}
+	if err := c.requireExpiringCache(); err != nil {
+		return err
 	}
 	// Pods that cached the issuer before this change keep signing until
 	// their entry expires, so measure the overlap from that point.
@@ -559,21 +685,11 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 // retired issuer: the emergency switch when clients still depend on it.
 // It never shortens redemption and keeps the replacement's promise.
 func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
-	if err := c.txPostponeRetirement(ctx, operator, id, req, now); err != nil {
+	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}
-	// The rotation cron skipped this issuer while it was retired, so a v3
-	// issuer may have no key for the current window. Run the cron now so
-	// signing resumes at once; it is idempotent and needs its own tx.
-	if err := c.rotateIssuersV3(); err != nil {
-		c.Logger.Error("postpone: rotating v3 keys failed; the hourly cron will retry", "issuer_id", id.String(), "err", err)
-	}
-	return nil
-}
-
-func (c *Server) txPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
 	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
-		locked, err := txLockIssuers(ctx, tx, id)
+		locked, replID, err := txLockWithReplacement(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -630,21 +746,8 @@ func (c *Server) txPostponeRetirement(ctx context.Context, operator string, id u
 		}
 
 		// Replacement must still issue through the (possibly longer) window.
-		var replExpires, replStop pq.NullTime
-		err = tx.QueryRowContext(ctx, `
-            SELECT i.expires_at, rr.stop_issuing_at
-            FROM issuer_retirements r
-            JOIN v3_issuers i ON i.issuer_id = r.replacement_issuer_id
-            LEFT JOIN issuer_retirements rr ON rr.issuer_id = r.replacement_issuer_id
-            WHERE r.issuer_id = $1`, id).Scan(&replExpires, &replStop)
-		if err != nil {
+		if err := txCheckReplacementCovers(ctx, tx, replID, redeem); err != nil {
 			return err
-		}
-		if e := nullableTime(replExpires); e != nil && e.Before(redeem) {
-			return ruleErr("replacement expires at %s, before the new stop_redeeming_at; extend it first", e.UTC().Format(time.RFC3339))
-		}
-		if s := nullableTime(replStop); s != nil && s.Before(redeem) {
-			return ruleErr("replacement stops issuing at %s, before the new stop_redeeming_at; postpone it first", s.UTC().Format(time.RFC3339))
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE issuer_retirements SET stop_issuing_at = $2 WHERE issuer_id = $1`, id, req.StopIssuingAt); err != nil {
 			return err
@@ -652,11 +755,20 @@ func (c *Server) txPostponeRetirement(ctx context.Context, operator string, id u
 		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, id, redeem); err != nil {
 			return err
 		}
+		// The rotation cron skipped this issuer while it was retired.
+		if l.version >= 3 {
+			if err := c.txCatchUpV3Keys(ctx, tx, id, now); err != nil {
+				return err
+			}
+		}
 		return txInsertAudit(ctx, tx, operator, "postpone", &id, req)
 	})
 }
 
 func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id uuid.UUID, now time.Time) error {
+	if err := c.requireExpiringCache(); err != nil {
+		return err
+	}
 	return c.withAdminTx(ctx, func(tx *sql.Tx) error {
 		locked, err := txLockIssuers(ctx, tx, id)
 		if err != nil {

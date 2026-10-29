@@ -359,10 +359,16 @@ func (m model) updateRetire(msg tea.Msg) (tea.Model, tea.Cmd) {
 	w := &m.retire
 	switch k.String() {
 	case "esc":
-		if w.step == 0 {
+		switch w.step {
+		case 0:
 			m.screen = screenDetail
-		} else {
-			w.step--
+		case 1:
+			w.stopIssuing.Blur()
+			w.step = 0
+		case 2:
+			w.stopRedeeming.Blur()
+			w.step = 1
+			w.stopIssuing.Focus()
 		}
 		return m, nil
 	case "enter":

@@ -31,7 +31,7 @@ func TestAdminHTTPSuite(t *testing.T) { suite.Run(t, new(AdminHTTPSuite)) }
 
 func (s *AdminHTTPSuite) SetupSuite() {
 	s.Require().NoError(os.Setenv("ENV", "localtest"))
-	priv, line := testOperatorKey(s.T(), "op@brave.com")
+	priv, line := testOperatorKey(s.T(), "op-test")
 	devAdminKeys = []string{line}
 	s.T().Cleanup(func() { devAdminKeys = nil })
 
@@ -81,7 +81,7 @@ func (s *AdminHTTPSuite) TestLifecycle() {
 	audit, err := s.client.ListAudit(ctx, old.ID, 5)
 	s.Require().NoError(err)
 	s.Equal([]string{"cancel_retire", "retire", "create"}, actions(audit))
-	s.Equal("op@brave.com", audit[0].Operator)
+	s.Equal("op-test", audit[0].Operator)
 
 	_, err = s.client.GetIssuer(ctx, "00000000-0000-0000-0000-000000000000")
 	s.apiErr(err, 404)

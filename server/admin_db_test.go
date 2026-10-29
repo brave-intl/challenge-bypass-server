@@ -5,9 +5,13 @@ package server
 import (
 	"context"
 	"log/slog"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
+	timeutils "github.com/brave-intl/bat-go/libs/time"
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -38,7 +42,7 @@ func (s *AdminDBSuite) SetupTest() {
 }
 
 func (s *AdminDBSuite) create(req adminapi.CreateIssuerRequest) uuid.UUID {
-	id, err := s.srv.adminCreateIssuer(s.ctx, "op@brave.com", req)
+	id, err := s.srv.adminCreateIssuer(s.ctx, "op-test", req)
 	s.Require().NoError(err)
 	return id
 }
@@ -75,7 +79,7 @@ func (s *AdminDBSuite) TestCreateAndReadWritesAudit() {
 	s.Require().NoError(err)
 	s.Require().Len(audit, 1)
 	s.Equal("create", audit[0].Action)
-	s.Equal("op@brave.com", audit[0].Operator)
+	s.Equal("op-test", audit[0].Operator)
 }
 
 func (s *AdminDBSuite) TestCreateV3PopulatesWindows() {
@@ -88,7 +92,7 @@ func (s *AdminDBSuite) TestCreateV3PopulatesWindows() {
 
 func (s *AdminDBSuite) TestCreateDuplicateRollsBackAudit() {
 	s.create(v1("dup"))
-	_, err := s.srv.adminCreateIssuer(s.ctx, "op@brave.com", v1("dup"))
+	_, err := s.srv.adminCreateIssuer(s.ctx, "op-test", v1("dup"))
 	s.Require().Error(err)
 	audit, err := s.srv.adminListAudit(s.ctx, nil, 10)
 	s.Require().NoError(err)
@@ -119,7 +123,7 @@ func ptrTime(t time.Time) *time.Time { return &t }
 const day = 24 * time.Hour
 
 func (s *AdminDBSuite) retire(id, repl uuid.UUID, stopIssuing, stopRedeeming time.Time) error {
-	return s.srv.adminRetireIssuer(s.ctx, "op@brave.com", id, adminapi.RetireRequest{
+	return s.srv.adminRetireIssuer(s.ctx, "op-test", id, adminapi.RetireRequest{
 		ReplacementIssuerID: repl.String(), StopIssuingAt: stopIssuing, StopRedeemingAt: stopRedeeming,
 	}, time.Now())
 }
@@ -276,24 +280,145 @@ func (s *AdminDBSuite) TestSignPathSeesRetirementWithManyKeys() {
 	s.False(k.IsIssuing(time.Now().Add(time.Second)))
 }
 
-// Postponing a retired v3 issuer must give it a key for the current window
-// at once: the cron skipped it while it was retired.
+// Postponing a retired v3 issuer must give it keys from the current window
+// on, on its window grid, whether its keys all lapsed or were all deleted
+// (the cron recovers from neither). valid_from is a year back so a rebuild
+// from valid_from would leave every window in the past.
 func (s *AdminDBSuite) TestPostponeV3RestoresCurrentKey() {
-	old := s.create(v3("pk3", time.Now().AddDate(2, 0, 0)))
-	repl := s.create(v1("pkr"))
-	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 7, 0)))
-	_, err := s.srv.db.Exec(`DELETE FROM v3_issuer_keys WHERE issuer_id = $1`, old)
-	s.Require().NoError(err)
-	_, err = s.srv.db.Exec(`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
-        VALUES ($1, 'x', 'y', 1, now() - interval '2 days', now() - interval '1 day')`, old)
-	s.Require().NoError(err)
-	time.Sleep(1100 * time.Millisecond) // retired: stop_issuing_at has passed
+	for _, tc := range []struct {
+		name   string
+		lapsed bool
+	}{{"lapsed keys", true}, {"no keys", false}} {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			old := s.create(v3("pk3", time.Now().AddDate(2, 0, 0))) // P2M, buffer 2, overlap 1
+			repl := s.create(v1("pkr"))
+			s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 7, 0)))
+			validFrom := time.Now().UTC().AddDate(-1, 0, 0).Truncate(time.Second)
+			_, err := s.srv.db.Exec(`UPDATE v3_issuers SET valid_from = $2 WHERE issuer_id = $1`, old, validFrom)
+			s.Require().NoError(err)
+			_, err = s.srv.db.Exec(`DELETE FROM v3_issuer_keys WHERE issuer_id = $1`, old)
+			s.Require().NoError(err)
+			gridFrom := validFrom
+			if tc.lapsed {
+				gridFrom = validFrom.AddDate(0, 2, 0)
+				_, err = s.srv.db.Exec(`INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+                    VALUES ($1, 'x', 'y', 1, $2, $3)`, old, validFrom, gridFrom)
+				s.Require().NoError(err)
+			}
+			time.Sleep(1100 * time.Millisecond) // retired: stop_issuing_at has passed
 
-	s.Require().NoError(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now()))
-	var current int
-	s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM v3_issuer_keys
-        WHERE issuer_id = $1 AND start_at <= now() AND end_at > now()`, old).Scan(&current))
-	s.Equal(1, current, "postponed v3 issuer needs a key for the current window")
+			s.Require().NoError(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now()))
+			var start time.Time
+			s.Require().NoError(s.srv.db.QueryRow(`SELECT start_at FROM v3_issuer_keys
+                WHERE issuer_id = $1 AND start_at <= now() AND end_at > now()`, old).Scan(&start), "needs a key for the current window")
+			// step the grid as the server and cron do (ISO duration, not AddDate)
+			p2m, err := timeutils.ParseDuration("P2M")
+			s.Require().NoError(err)
+			onGrid := false
+			for t := gridFrom; !t.After(start); {
+				onGrid = onGrid || t.Equal(start)
+				next, err := p2m.From(t)
+				s.Require().NoError(err)
+				t = *next
+			}
+			s.True(onGrid, "current window %s must sit on the P2M grid from %s", start, gridFrom)
+			var future int
+			s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM v3_issuer_keys WHERE issuer_id = $1 AND end_at > now()`, old).Scan(&future))
+			s.Equal(3, future, "buffer + overlap windows from now on")
+		})
+	}
+}
+
+// A retired issuer's expiry is its stop_redeeming_at, so PATCH may not
+// extend it past what the replacement covers.
+func (s *AdminDBSuite) TestUpdateRetiredIssuerKeepsReplacementCoverage() {
+	a, b, c := s.create(v1("cov-a")), s.create(v1("cov-b")), s.create(v1("cov-c"))
+	start := time.Now().Add(time.Minute)
+	s.Require().NoError(s.retire(a, b, start, start.Add(93*day)))
+	s.Require().NoError(s.retire(b, c, start.Add(95*day), start.Add(200*day)))
+	beyond := start.Add(150 * day)
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", a, adminapi.UpdateIssuerRequest{ExpiresAt: &beyond}), "replacement stops issuing")
+	within := start.Add(94 * day)
+	s.Require().NoError(s.srv.adminUpdateIssuer(s.ctx, "op", a, adminapi.UpdateIssuerRequest{ExpiresAt: &within}))
+}
+
+// Postpone locks the replacement too, so it waits for a concurrent change
+// to the replacement (here, a held row lock) instead of validating against
+// stale state.
+func (s *AdminDBSuite) TestPostponeLocksReplacement() {
+	a, b := s.create(v1("lk-a")), s.create(v1("lk-b"))
+	s.Require().NoError(s.retire(a, b, time.Now(), time.Now().Add(93*day)))
+	time.Sleep(1100 * time.Millisecond)
+
+	tx, err := s.srv.db.Begin()
+	s.Require().NoError(err)
+	_, err = tx.Exec(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, b)
+	s.Require().NoError(err)
+	done := make(chan error, 1)
+	go func() {
+		done <- s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now())
+	}()
+	select {
+	case err := <-done:
+		_ = tx.Rollback()
+		s.FailNow("postpone did not wait for the replacement's lock", "err: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	s.Require().NoError(tx.Rollback())
+	s.Require().NoError(<-done)
+}
+
+// With caching on and a non-positive CACHE_DURATION_SECS, cache entries
+// never expire, so retirement changes would never reach other pods.
+func (s *AdminDBSuite) TestRetirementChangesNeedExpiringCache() {
+	old, repl := s.create(v1("nc-old")), s.create(v1("nc-new"))
+	start := time.Now().Add(time.Hour)
+	s.Require().NoError(s.retire(old, repl, start, start.Add(93*day)))
+	saved := s.srv.dbConfig.CachingConfig
+	s.srv.dbConfig.CachingConfig = CachingConfig{Enabled: true, ExpirationSec: 0}
+	defer func() { s.srv.dbConfig.CachingConfig = saved }()
+
+	other := s.create(v1("nc-other"))
+	s.isRule(s.retire(other, repl, start, start.Add(93*day)), "never expire")
+	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: start.Add(day)}, time.Now()), "never expire")
+	s.isRule(s.srv.adminCancelRetirement(s.ctx, "op", old, time.Now()), "never expire")
+}
+
+// Legacy create routes must not make a prefix sibling of a retired issuer
+// (Kafka would sign the retired one's requests with it), but still allow
+// siblings of issuers that were never retired.
+func (s *AdminDBSuite) TestLegacyCreateRefusesSiblingOfRetired() {
+	ret := s.create(v1("lx"))
+	s.Require().NoError(s.retire(ret, s.create(v1("other-repl")), time.Now().Add(time.Hour), time.Now().Add(94*day)))
+	s.ErrorIs(s.srv.createIssuer("lx-next", v1Cohort, 0, &time.Time{}), errRetiredPrefixSibling)
+	s.ErrorIs(s.srv.createIssuerV2("lx-next", v1Cohort, 0, &time.Time{}), errRetiredPrefixSibling)
+
+	s.create(v1("free"))
+	s.NoError(s.srv.createIssuer("free-next", v1Cohort, 0, &time.Time{}), "legacy naming is unchanged for issuers never retired")
+}
+
+// The runbook's break-glass SQL must run and apply the postpone rules.
+func (s *AdminDBSuite) TestBreakGlassSQL() {
+	doc, err := os.ReadFile("/src/docs/issuer-admin-rollout.md")
+	s.Require().NoError(err)
+	block := regexp.MustCompile("(?s)Break-glass SQL.*?```sql\n(.*?)```").FindSubmatch(doc)
+	s.Require().NotNil(block, "break-glass SQL block not found")
+
+	old := s.create(v3("bg3", time.Now().AddDate(2, 0, 0))) // P2M, buffer 2, overlap 1
+	repl := s.create(v1("bg-repl"))
+	// just past the v3 minimum, so a 30-day postpone must extend redemption
+	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 6, 2)))
+	sqlText := strings.NewReplacer("<issuer uuid>", old.String(), "<your operator id>", "op-test", "<why>", "test").Replace(string(block[1]))
+	_, err = s.srv.db.Exec(sqlText)
+	s.Require().NoError(err)
+
+	got, err := s.srv.adminGetIssuer(s.ctx, old, time.Now())
+	s.Require().NoError(err)
+	s.Equal(adminapi.StatusRetiring, got.Status, "issuing again")
+	newStop := *got.StopIssuingAt
+	s.False(got.ExpiresAt.Before(adminapi.MinStopRedeeming(newStop).Add(-time.Minute)), "3 months after the new stop")
+	s.False(got.ExpiresAt.Before(newStop.AddDate(0, 6, 0).Add(-time.Minute)), "covers v3 windows: 3 x P2M")
 }
 
 // Admin creates are serialized, so a create that waits on a concurrent one
@@ -315,7 +440,9 @@ func (s *AdminDBSuite) TestCreateWaitsForConcurrentCreate() {
 		s.FailNow("create did not wait for the concurrent create", "err: %v", err)
 	case <-time.After(300 * time.Millisecond):
 	}
-	s.Require().NoError(s.srv.createIssuer("race-next", v1Cohort, 0, &time.Time{}))
+	// the concurrent create commits a sibling (inserted under its lock)
+	_, err = tx.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('race-next', 1)`)
+	s.Require().NoError(err)
 	s.Require().NoError(tx.Commit())
 	s.isRule(<-done, "prefix")
 }
@@ -511,7 +638,9 @@ func (s *AdminDBSuite) TestExpiryChangeRejectedWithPrefixSibling() {
 	// postpone: a sibling that appeared after the retirement (legacy create)
 	solo, soloRepl := s.create(v1("solo")), s.create(v1("other"))
 	s.Require().NoError(s.retire(solo, soloRepl, start, start.Add(93*day)))
-	s.Require().NoError(s.srv.createIssuer("solo-x", v1Cohort, 0, &time.Time{}))
+	// legacy create now refuses this name, so insert it directly
+	_, err = s.srv.db.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('solo-x', 1)`)
+	s.Require().NoError(err)
 	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", solo, adminapi.PostponeRequest{StopIssuingAt: start.Add(30 * day)}, time.Now()), "prefix")
 }
 

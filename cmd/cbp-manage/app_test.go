@@ -328,3 +328,25 @@ func TestCancelRetirementFlow(t *testing.T) {
 		t.Fatal("cancel offered for an active issuer")
 	}
 }
+
+// Esc back to the previous retire step must refocus its input.
+func TestRetireWizardEscRefocusesStep(t *testing.T) {
+	f := &fakeAPI{issuers: []adminapi.Issuer{
+		{ID: "1", Name: "old", Version: 1, Status: adminapi.StatusActive},
+		{ID: "2", Name: "new", Version: 1, Status: adminapi.StatusActive},
+	}}
+	m := newModel(f)
+	m.issuers = f.issuers
+	var tm tea.Model = m.openRetire(f.issuers[0])
+	tm, _ = tm.Update(key("enter")) // step 1: stop issuing
+	tm, _ = tm.Update(key("enter")) // step 2: stop redeeming
+	tm, _ = tm.Update(key("esc"))   // back to step 1
+	w := tm.(model).retire
+	if w.step != 1 || !w.stopIssuing.Focused() || w.stopRedeeming.Focused() {
+		t.Fatalf("step %d, stopIssuing focused %v, stopRedeeming focused %v", w.step, w.stopIssuing.Focused(), w.stopRedeeming.Focused())
+	}
+	tm = typeText(tm, "x")
+	if got := tm.(model).retire.stopIssuing.Value(); got != "nowx" {
+		t.Fatalf("stop issuing not editable after esc: %q", got)
+	}
+}

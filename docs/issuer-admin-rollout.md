@@ -103,7 +103,7 @@ empty.
 
 1. **Staging deploy.** Then run this smoke test with a **dev** key using
    `cbp-manage`:
-   1. `cbp-manage --whoami` prints your email.
+   1. `cbp-manage --whoami` prints your operator ID.
    2. Create two throwaway issuers `rollout-a` / `rollout-b`, retire A → B
       with stop issuing now + 5 min, then cancel. Audit shows
       create/create/retire/cancel_retire.
@@ -210,27 +210,49 @@ requests rejected.
 | need longer redemption | Edit, then extend `expires_at`. |
 | admin API unavailable, clients broke (break-glass) | Run the SQL below. |
 
-Break-glass SQL, which resumes issuing for one issuer without a deploy:
+Break-glass SQL, which resumes issuing for one issuer without a deploy.
+It applies the same rules as the postpone endpoint in one transaction:
+stop redeeming moves out to cover the new stop-issuing time, and the
+replacement is checked before commit.
 
 ```sql
 BEGIN;
-SELECT 1 FROM v3_issuers WHERE issuer_id = '<issuer uuid>' FOR UPDATE;
+-- lock the issuer and its replacement, in id order like the server does
+SELECT 1 FROM v3_issuers
+ WHERE issuer_id IN ('<issuer uuid>',
+       (SELECT replacement_issuer_id FROM issuer_retirements
+         WHERE issuer_id = '<issuer uuid>'))
+ ORDER BY issuer_id FOR UPDATE;
 UPDATE issuer_retirements
    SET stop_issuing_at = now() + interval '30 days'
  WHERE issuer_id = '<issuer uuid>';
+-- stop redeeming: never shorter; >= 3 months and >= 90 days after the new
+-- stop issuing; for v3, past every key window the cron can still create
+UPDATE v3_issuers
+   SET expires_at = GREATEST(
+         expires_at,
+         now() + interval '30 days' + interval '3 months',
+         now() + interval '30 days' + interval '90 days',
+         CASE WHEN version = 3 THEN now() + interval '30 days'
+              + (buffer + overlap) * duration::interval END)
+ WHERE issuer_id = '<issuer uuid>';
+-- must return no rows; if it returns any, ROLLBACK and extend or
+-- postpone the replacement first
+SELECT r.issuer_type, r.expires_at, rr.stop_issuing_at
+  FROM v3_issuers o
+  JOIN issuer_retirements ret ON ret.issuer_id = o.issuer_id
+  JOIN v3_issuers r ON r.issuer_id = ret.replacement_issuer_id
+  LEFT JOIN issuer_retirements rr ON rr.issuer_id = r.issuer_id
+ WHERE o.issuer_id = '<issuer uuid>'
+   AND (r.expires_at < o.expires_at OR rr.stop_issuing_at < o.expires_at);
 INSERT INTO issuer_admin_audit (operator, action, issuer_id, request)
-VALUES ('<your email>', 'postpone_breakglass', '<issuer uuid>',
+VALUES ('<your operator id>', 'postpone_breakglass', '<issuer uuid>',
         '{"reason": "<why>"}');
 COMMIT;
 ```
 
-It takes effect within `CACHE_DURATION_SECS`. `expires_at` (stop redeeming)
-is unchanged, so right afterwards extend it with the TUI's Edit so that it
-is at least:
-- the new `stop_issuing_at` + 3 months (at least 90 days), and
-- for v3 issuers, the new `stop_issuing_at` + (buffer + overlap) ×
-  duration. Tokens are signed for future windows, and the cron keeps
-  adding them until the new stop time.
-
-The admin postpone endpoint does both automatically. Prefer it whenever the
-API is up.
+It takes effect within `CACHE_DURATION_SECS`. `GREATEST` ignores the NULL
+from the `CASE` for v1 and v2 issuers. One limit: SQL cannot create
+signing keys, so a v3 issuer whose keys have all lapsed still cannot sign
+afterwards. Its postpone through the admin API creates them. Prefer the
+admin API whenever it is up.

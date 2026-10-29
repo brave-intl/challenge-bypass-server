@@ -33,7 +33,8 @@ Modeled on subscriptions `pkg/api/support_keys.go`.
 
 - New file `server/admin_keys.go`:
   - `prodAdminKeys` / `devAdminKeys`: hardcoded maps from OpenSSH
-    `authorized_keys` ed25519 lines to operator email (the key comment).
+    `authorized_keys` ed25519 lines to an opaque operator ID (the key comment;
+    never an email, since the repo is public).
   - `adminKeysForEnv(env)`: `production` → prod keys; `staging`,
     `development`, `dev`, `sandbox`, `local`, `localtest`, `test` → dev keys
     (staging on the dev list so the dark R1 release can be smoke-tested);
@@ -51,7 +52,7 @@ Modeled on subscriptions `pkg/api/support_keys.go`.
   route. Onboarding/offboarding an operator is a code change + deploy, same as
   subscriptions.
 - Operator identity: handlers resolve `middleware.GetKeyID(ctx)` to the
-  operator email via the keystore map and record it on every audit row.
+  operator ID via the keystore map and record it on every audit row.
 - Request bodies are capped at 1 MiB (`http.MaxBytesReader`).
 
 ## 2. Data model changes

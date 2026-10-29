@@ -112,11 +112,11 @@ func TestClientWhoAmI(t *testing.T) {
 		if r.URL.Path != "/v1/admin/whoami" {
 			t.Errorf("path %s", r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"operator":"op@brave.com"}`))
+		_, _ = w.Write([]byte(`{"operator":"op-test"}`))
 	}))
 	defer srv.Close()
 	got, err := (&Client{BaseURL: srv.URL, Key: priv}).WhoAmI(t.Context())
-	if err != nil || got != "op@brave.com" {
+	if err != nil || got != "op-test" {
 		t.Fatalf("WhoAmI: %q %v", got, err)
 	}
 }

@@ -16,13 +16,13 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func testOperatorKey(t *testing.T, email string) (ed25519.PrivateKey, string) {
+func testOperatorKey(t *testing.T, operator string) (ed25519.PrivateKey, string) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	sshPub, err := ssh.NewPublicKey(pub)
 	require.NoError(t, err)
-	line := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(sshPub))) + " " + email
+	line := string(bytes.TrimSpace(ssh.MarshalAuthorizedKey(sshPub))) + " " + operator
 	return priv, line
 }
 
@@ -36,13 +36,18 @@ func TestAdminKeysForEnv(t *testing.T) {
 func TestNewAdminKeystoreRejectsBadLines(t *testing.T) {
 	_, err := newAdminKeystore([]string{"not a key"})
 	require.Error(t, err)
-	_, line := testOperatorKey(t, "")
+	for _, comment := range []string{"", "op@brave.com", "Op-Upper", "ab", "has space"} {
+		_, line := testOperatorKey(t, comment)
+		_, err = newAdminKeystore([]string{line})
+		require.Error(t, err, "comment %q must be rejected", comment)
+	}
+	_, line := testOperatorKey(t, "op-7f3a")
 	_, err = newAdminKeystore([]string{line})
-	require.Error(t, err, "missing email comment must be rejected")
+	require.NoError(t, err)
 }
 
 func TestAdminSignatureMwr(t *testing.T) {
-	priv, line := testOperatorKey(t, "op@brave.com")
+	priv, line := testOperatorKey(t, "op-test")
 	other, _ := testOperatorKey(t, "stranger@x")
 	ks, err := newAdminKeystore([]string{line})
 	require.NoError(t, err)
@@ -64,7 +69,7 @@ func TestAdminSignatureMwr(t *testing.T) {
 
 	w := send("GET", "/v1/admin/audit?issuer_id=a&limit=5", nil, priv, time.Now(), nil)
 	require.Equal(t, 200, w.Code)
-	require.Equal(t, "op@brave.com", w.Body.String())
+	require.Equal(t, "op-test", w.Body.String())
 
 	w = send("POST", "/v1/admin/issuers", []byte(`{"name":"x"}`), priv, time.Now(), nil)
 	require.Equal(t, 200, w.Code)
@@ -83,7 +88,7 @@ func TestAdminSignatureMwr(t *testing.T) {
 }
 
 func TestAdminEmptyKeystoreDeniesAll(t *testing.T) {
-	priv, _ := testOperatorKey(t, "op@brave.com")
+	priv, _ := testOperatorKey(t, "op-test")
 	ks, err := newAdminKeystore(nil)
 	require.NoError(t, err)
 	h := adminSignatureMwr(ks)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))

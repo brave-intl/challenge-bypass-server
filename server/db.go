@@ -922,8 +922,31 @@ func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
 	return err
 }
 
+// errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
+// confuse with a retired or retiring issuer: requests for the retired one
+// would be signed by the new one instead of rejected.
+var errRetiredPrefixSibling = errors.New("name matches a retired issuer in Kafka's prefix lookup")
+
 // txCreateV3Issuer inserts the issuer and its initial keys on tx.
 func txCreateV3Issuer(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {
+	// Serialize with admin creates (adminCreateLock). Only names that clash
+	// with a retired issuer are refused, so legacy naming is otherwise as
+	// before: such issuers exist only since issuer retirement.
+	if _, err := tx.Exec(`SELECT pg_advisory_xact_lock($1)`, adminCreateLock); err != nil {
+		return uuid.Nil, err
+	}
+	var clash string
+	err := tx.QueryRow(`
+        SELECT i.issuer_type FROM v3_issuers i JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
+        WHERE i.issuer_type <> $1
+          AND (i.issuer_type LIKE $1 || '%' OR $1 LIKE i.issuer_type || '%')
+        LIMIT 1`, issuer.IssuerType).Scan(&clash)
+	if err == nil {
+		return uuid.Nil, fmt.Errorf("%w: %q and %q", errRetiredPrefixSibling, issuer.IssuerType, clash)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, err
+	}
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
 	}
@@ -933,7 +956,7 @@ func txCreateV3Issuer(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uui
 	}
 
 	var issuerIDStr string
-	err := tx.QueryRow(`
+	err = tx.QueryRow(`
         INSERT INTO v3_issuers
             (issuer_type, issuer_cohort, max_tokens, version, expires_at,
              buffer, duration, overlap, valid_from)
