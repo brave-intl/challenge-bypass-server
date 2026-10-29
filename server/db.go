@@ -62,6 +62,10 @@ var (
 	// Exported so callers in other packages (e.g. kafka) can match it with errors.Is.
 	ErrDuplicateRedemption = errors.New("duplicate redemption")
 	errRedemptionNotFound  = errors.New("redemption with the given id does not exist")
+	// errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
+	// confuse with a retired or retiring issuer. Requests for the retired one
+	// would be signed by the new one instead of rejected.
+	errRetiredPrefixSibling = errors.New("name matches a retired issuer in kafka's prefix lookup")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
@@ -398,9 +402,8 @@ func (c *Server) fetchIssuersByCohort(
 		return nil, err
 	}
 
-	// Retirement lives in its own table (v3_issuers is not altered, see
-	// migration 0008). The query above returns one row per key, so look up
-	// every issuer in one query per cache miss. It is cached with the issuer.
+	// The query above returns one row per key, so look up retirement for
+	// all rows in one query.
 	stops, err := c.fetchStopIssuingAt(issuersWithKey)
 	if err != nil {
 		return nil, utils.ProcessingErrorFromError(err, true)
@@ -422,9 +425,7 @@ func (c *Server) fetchIssuersByCohort(
 func (c *Server) fetchStopIssuingAt(issuers []model.Issuer) (map[uuid.UUID]time.Time, error) {
 	ids := make([]uuid.UUID, 0, len(issuers))
 	for _, iss := range issuers {
-		if iss.ID != nil {
-			ids = append(ids, *iss.ID)
-		}
+		ids = append(ids, *iss.ID)
 	}
 	rows, err := c.dbr.Query(`SELECT issuer_id, stop_issuing_at FROM issuer_retirements WHERE issuer_id = ANY($1)`, pq.Array(ids))
 	if err != nil {
@@ -899,6 +900,21 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 }
 
 // createV3Issuer - creation of a v3 issuer
+func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := c.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+			return
+		}
+		err = tx.Commit()
+	}()
+	return fn(tx)
+}
+
 func (c *Server) createV3Issuer(issuer model.Issuer) error {
 	defer incrementTotal(createIssuerTotal)
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
@@ -910,11 +926,6 @@ func (c *Server) createV3Issuer(issuer model.Issuer) error {
 		return err
 	})
 }
-
-// errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
-// confuse with a retired or retiring issuer. Requests for the retired one
-// would be signed by the new one instead of rejected.
-var errRetiredPrefixSibling = errors.New("name matches a retired issuer in Kafka's prefix lookup")
 
 // txCreateV3Issuer inserts the issuer and its initial keys on tx.
 func txCreateV3Issuer(ctx context.Context, logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {

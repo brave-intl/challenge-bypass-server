@@ -2,8 +2,10 @@ package server
 
 import (
 	"bytes"
+	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/hex"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/brave-intl/bat-go/libs/httpsignature"
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/ssh"
@@ -82,6 +85,23 @@ func TestAdminSignatureMwr(t *testing.T) {
 		r.Body = httptestBody(`{"name":"y"}`)
 	}).Code, "tampered body")
 	require.Equal(t, 408, send("GET", "/v1/admin/issuers", nil, priv, time.Now().Add(-11*time.Minute), nil).Code, "stale date")
+	require.Equal(t, 425, send("GET", "/v1/admin/issuers", nil, priv, time.Now().Add(11*time.Minute), nil).Code, "future date")
+	// a correctly signed request whose Date header does not parse
+	bad := httptest.NewRequest("GET", "/v1/admin/issuers", nil)
+	bad.Header.Set("Date", "yesterday")
+	signer := httpsignature.ParameterizedSignator{
+		SignatureParams: httpsignature.SignatureParams{
+			Algorithm: httpsignature.ED25519,
+			KeyID:     hex.EncodeToString(priv.Public().(ed25519.PublicKey)),
+			Headers:   []string{"date", "digest", "(request-target)"},
+		},
+		Signator: priv,
+		Opts:     crypto.Hash(0),
+	}
+	require.NoError(t, signer.SignRequest(bad))
+	bw := httptest.NewRecorder()
+	h.ServeHTTP(bw, bad)
+	require.Equal(t, 400, bw.Code, "unparseable date")
 	require.Equal(t, 401, send("GET", "/v1/admin/issuers", nil, priv, time.Now(), func(r *http.Request) {
 		r.Header.Del("Signature")
 	}).Code)

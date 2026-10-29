@@ -28,6 +28,8 @@ type Client struct {
 
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
+const maxResponseSize = 8 << 20
+
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
 	var body []byte
 	if in != nil {
@@ -52,7 +54,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return err
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return err
 	}
@@ -74,9 +76,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 
 // WhoAmI returns the operator ID the server maps the signing key to.
 func (c *Client) WhoAmI(ctx context.Context) (string, error) {
-	var out struct {
-		Operator string `json:"operator"`
-	}
+	var out WhoAmIResponse
 	return out.Operator, c.do(ctx, "GET", "/v1/admin/whoami", nil, &out)
 }
 

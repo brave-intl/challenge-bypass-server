@@ -177,3 +177,44 @@ func (s *AdminHTTPSuite) TestMutationClearsIssuerCache() {
 	_, ok3 := s.srv.caches.IssuerCohort.Get("cached")
 	s.False(ok1 || ok2 || ok3, "issuer caches must be cleared")
 }
+
+func (s *AdminHTTPSuite) TestWhoAmI() {
+	op, err := s.client.WhoAmI(context.Background())
+	s.Require().NoError(err)
+	s.Equal("op-test", op)
+}
+
+func (s *AdminHTTPSuite) TestAuditParams() {
+	iss, err := s.client.CreateIssuer(context.Background(), adminapi.CreateIssuerRequest{Name: "aud", Version: 1})
+	s.Require().NoError(err)
+	for _, q := range []string{"", "issuer_id=nope", "issuer_id=" + iss.ID + "&limit=x", "issuer_id=" + iss.ID + "&limit=0", "issuer_id=" + iss.ID + "&limit=1001"} {
+		s.apiErr(s.clientDo("GET", "/v1/admin/audit?"+q, nil), 400)
+	}
+	entries, err := s.client.ListAudit(context.Background(), iss.ID, 1000)
+	s.Require().NoError(err)
+	s.Len(entries, 1)
+}
+
+// The legacy create routes return 409 for a duplicate name and for a name
+// that clashes with a retired issuer, not 500.
+func (s *AdminHTTPSuite) TestLegacyCreateConflicts() {
+	ctx := context.Background()
+	post := func(path, name string) int {
+		resp, err := http.Post(s.http.URL+path, "application/json", strings.NewReader(`{"name":"`+name+`","cohort":1,"max_tokens":40}`))
+		s.Require().NoError(err)
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+	s.Equal(http.StatusOK, post("/v2/issuer", "lg"))
+	s.Equal(http.StatusConflict, post("/v1/issuer", "lg"), "duplicate")
+
+	old, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "ret", Version: 1})
+	s.Require().NoError(err)
+	repl, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "other", Version: 1})
+	s.Require().NoError(err)
+	start := time.Now().Add(time.Hour)
+	_, err = s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start, StopRedeemingAt: start.Add(93 * 24 * time.Hour)})
+	s.Require().NoError(err)
+	s.Equal(http.StatusConflict, post("/v1/issuer", "ret-next"), "sibling of a retired issuer")
+	s.Equal(http.StatusConflict, post("/v2/issuer", "ret-next"), "sibling of a retired issuer")
+}

@@ -35,8 +35,8 @@ type Issuer struct {
 	RedemptionRepository string       `json:"-" db:"redemption_repository"`
 	Keys                 []IssuerKeys `json:"keys" db:"-"`
 
-	// StopIssuingAt is set when the issuer is retired (issuer_retirements).
-	// It is loaded only on the sign path. Nil means not retired.
+	// StopIssuingAt is the retirement's stop_issuing_at. Only
+	// fetchIssuersByCohort fills it in. Other fetches leave it nil.
 	StopIssuingAt *time.Time `json:"-" db:"-"`
 }
 

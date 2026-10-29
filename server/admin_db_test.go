@@ -107,6 +107,11 @@ func (s *AdminDBSuite) TestCreateValidation() {
 		{Name: "x", Version: 3, Duration: "", Buffer: 1},
 		{Name: "x", Version: 3, Duration: "P1M", Buffer: 0},
 		{Name: "x", Version: 1, ExpiresAt: ptr.FromTime(time.Now().Add(-time.Hour))},
+		{Name: "x", Version: 1, MaxTokens: -1},
+		{Name: "x", Version: 3, Duration: "bogus", Buffer: 1, ExpiresAt: ptr.FromTime(time.Now().AddDate(1, 0, 0))},
+		{Name: "x", Version: 3, Duration: "P1M", Buffer: 1},
+		{Name: "x", Version: 1, Duration: "P1M"},
+		{Name: "x", Version: 2, Buffer: 1},
 	} {
 		_, err := s.srv.adminCreateIssuer(s.ctx, "op", req)
 		var re *adminRuleError
@@ -389,7 +394,6 @@ func (s *AdminDBSuite) TestUpdateRetiredIssuerKeepsReplacementCoverage() {
 func (s *AdminDBSuite) TestPostponeLocksReplacement() {
 	a, b := s.create(v1("lk-a")), s.create(v1("lk-b"))
 	s.Require().NoError(s.retire(a, b, time.Now(), time.Now().Add(93*day)))
-	time.Sleep(1100 * time.Millisecond)
 
 	tx := s.lockTx(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, b)
 	done := s.blocked(tx, func() error {
@@ -501,6 +505,57 @@ func (s *AdminDBSuite) TestRotateV1SkipsRetired() {
 func (s *AdminDBSuite) TestLegacyCreateReturnsDBError() {
 	s.Require().NoError(s.srv.createIssuer("dup", v1Cohort, 0, &time.Time{}))
 	s.Error(s.srv.createIssuer("dup", v1Cohort, 0, &time.Time{}), "unique violation must surface")
+}
+
+// A retire that waits on a lock held by a concurrent retire of its
+// replacement must see that retirement once the lock is released.
+func (s *AdminDBSuite) TestRetireSeesConcurrentRetireOfReplacement() {
+	x, y, z := s.create(v1("sx")), s.create(v1("sy")), s.create(v1("sz"))
+	tx := s.lockTx(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, y)
+	start := time.Now().Add(time.Hour)
+	done := s.blocked(tx, func() error { return s.retire(x, y, start, start.Add(93*day)) })
+	_, err := tx.Exec(`INSERT INTO issuer_retirements (issuer_id, replacement_issuer_id, stop_issuing_at)
+        VALUES ($1, $2, now() + interval '1 hour')`, y, z)
+	s.Require().NoError(err)
+	s.Require().NoError(tx.Commit())
+	s.isRule(<-done, "replacement must be active")
+}
+
+// Postpone reads the replacement before it takes the lock. If the
+// retirement changes in between, it refuses rather than act on the old one.
+func (s *AdminDBSuite) TestPostponeRefusesWhenRetirementChanged() {
+	a, b := s.create(v1("ch-a")), s.create(v1("ch-b"))
+	s.Require().NoError(s.retire(a, b, time.Now().Add(time.Hour), time.Now().Add(93*day)))
+	tx := s.lockTx(`SELECT 1 FROM v3_issuers WHERE issuer_id = $1 FOR UPDATE`, a)
+	done := s.blocked(tx, func() error {
+		return s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now())
+	})
+	_, err := tx.Exec(`DELETE FROM issuer_retirements WHERE issuer_id = $1`, a)
+	s.Require().NoError(err)
+	s.Require().NoError(tx.Commit())
+	s.isRule(<-done, "retry")
+}
+
+func (s *AdminDBSuite) TestPostponeRejectsExpiredIssuer() {
+	a, b := s.create(v1("pe-a")), s.create(v1("pe-b"))
+	s.Require().NoError(s.retire(a, b, time.Now(), time.Now().Add(93*day)))
+	_, err := s.srv.db.Exec(`UPDATE v3_issuers SET expires_at = $2 WHERE issuer_id = $1`, a, time.Now().Add(-day).UTC())
+	s.Require().NoError(err)
+	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now()), "expired")
+}
+
+// Cancel keeps the current expiry when it is later than the one before
+// the retirement.
+func (s *AdminDBSuite) TestCancelKeepsLaterExpiry() {
+	before := time.Now().AddDate(0, 6, 0).UTC().Truncate(time.Second)
+	a := s.create(adminapi.CreateIssuerRequest{Name: "ck-a", Version: 1, ExpiresAt: &before})
+	b := s.create(v1("ck-b"))
+	start := time.Now().Add(time.Hour)
+	redeem := start.AddDate(1, 0, 0)
+	s.Require().NoError(s.retire(a, b, start, redeem))
+	s.Require().NoError(s.srv.adminCancelRetirement(s.ctx, "op", a, time.Now()))
+	got, _ := s.srv.adminGetIssuer(s.ctx, a, time.Now())
+	s.WithinDuration(redeem, *got.ExpiresAt, time.Second, "the later of the two wins")
 }
 
 func (s *AdminDBSuite) TestCancelAfterStopIssuingRejected() {

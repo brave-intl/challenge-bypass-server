@@ -16,9 +16,7 @@ import (
 )
 
 func (c *Server) adminRoutes(r chi.Router) {
-	r.Method("GET", "/whoami", AppHandler(func(w http.ResponseWriter, r *http.Request) *AppError {
-		return c.adminRender(w, http.StatusOK, map[string]string{"operator": adminOperator(r, c.adminKeys)})
-	}))
+	r.Method("GET", "/whoami", AppHandler(c.adminWhoAmIHandler))
 	r.Method("GET", "/issuers", AppHandler(c.adminListHandler))
 	r.Method("POST", "/issuers", AppHandler(c.adminCreateHandler))
 	r.Method("GET", "/issuers/{id}", AppHandler(c.adminGetHandler))
@@ -45,7 +43,6 @@ func (c *Server) adminRender(w http.ResponseWriter, status int, v any) *AppError
 	return nil
 }
 
-// adminError maps DB-layer errors to HTTP.
 func (c *Server) adminError(r *http.Request, err error) *AppError {
 	var rule *adminRuleError
 	var pqErr *pq.Error
@@ -54,7 +51,7 @@ func (c *Server) adminError(r *http.Request, err error) *AppError {
 		return &AppError{Cause: err, Message: rule.msg, Code: http.StatusUnprocessableEntity}
 	case errors.Is(err, errAdminNotFound):
 		return &AppError{Cause: err, Message: "issuer not found", Code: http.StatusNotFound}
-	case errors.As(err, &pqErr) && pqErr.Code == "23505":
+	case errors.As(err, &pqErr) && pqErr.Constraint == "issuer_type_uniq":
 		return &AppError{Cause: err, Message: "an issuer with that name already exists", Code: http.StatusConflict}
 	}
 	c.Logger.Error("admin request failed", slog.String("path", r.URL.Path), slog.Any("error", err))
@@ -78,9 +75,7 @@ func decodeStrict(r *http.Request, v any) *AppError {
 	return nil
 }
 
-// respondIssuer re-reads the issuer after a mutation and renders it.
 func (c *Server) respondIssuer(w http.ResponseWriter, r *http.Request, id uuid.UUID, status int) *AppError {
-	c.invalidateIssuerCaches()
 	iss, err := c.adminGetIssuer(r.Context(), id, time.Now())
 	if err != nil {
 		return c.adminError(r, err)
@@ -102,6 +97,10 @@ func (c *Server) invalidateIssuerCaches() {
 func (c *Server) logAdmin(r *http.Request, action string, id uuid.UUID) {
 	c.Logger.Info("admin action", slog.String("operator", adminOperator(r, c.adminKeys)),
 		slog.String("action", action), slog.String("issuer_id", id.String()))
+}
+
+func (c *Server) adminWhoAmIHandler(w http.ResponseWriter, r *http.Request) *AppError {
+	return c.adminRender(w, http.StatusOK, adminapi.WhoAmIResponse{Operator: adminOperator(r, c.adminKeys)})
 }
 
 func (c *Server) adminListHandler(w http.ResponseWriter, r *http.Request) *AppError {
@@ -134,6 +133,7 @@ func (c *Server) adminCreateHandler(w http.ResponseWriter, r *http.Request) *App
 		return c.adminError(r, err)
 	}
 	c.logAdmin(r, "create", id)
+	c.invalidateIssuerCaches()
 	return c.respondIssuer(w, r, id, http.StatusCreated)
 }
 
@@ -156,6 +156,7 @@ func adminMutation[T any](c *Server, action string, fn func(ctx context.Context,
 			return c.adminError(r, err)
 		}
 		c.logAdmin(r, action, id)
+		c.invalidateIssuerCaches()
 		return c.respondIssuer(w, r, id, http.StatusOK)
 	}
 }
@@ -165,7 +166,12 @@ func (c *Server) adminAuditHandler(w http.ResponseWriter, r *http.Request) *AppE
 	if err != nil {
 		return &AppError{Cause: err, Message: "issuer_id must be a uuid", Code: http.StatusBadRequest}
 	}
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	limit := 100
+	if s := r.URL.Query().Get("limit"); s != "" {
+		if limit, err = strconv.Atoi(s); err != nil || limit < 1 || limit > 1000 {
+			return &AppError{Cause: err, Message: "limit must be a number from 1 to 1000", Code: http.StatusBadRequest}
+		}
+	}
 	entries, err := c.adminListAudit(r.Context(), issuerID, limit)
 	if err != nil {
 		return c.adminError(r, err)

@@ -97,18 +97,18 @@ type CreateIssuerRequest struct {
 	Version   int        `json:"version"`
 	Cohort    int16      `json:"cohort"`
 	MaxTokens int        `json:"max_tokens"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	ValidFrom *time.Time `json:"valid_from,omitempty"` // v3 only
-	Duration  string     `json:"duration,omitempty"`   // v3 only, ISO 8601
-	Buffer    int        `json:"buffer,omitempty"`     // v3 only
-	Overlap   int        `json:"overlap,omitempty"`    // v3 only
+	ExpiresAt *time.Time `json:"expires_at"`
+	ValidFrom *time.Time `json:"valid_from"` // v3 only
+	Duration  string     `json:"duration"`   // v3 only, ISO 8601
+	Buffer    int        `json:"buffer"`     // v3 only
+	Overlap   int        `json:"overlap"`    // v3 only
 }
 
 // UpdateIssuerRequest holds the only mutable fields. The server rejects
 // unknown fields.
 type UpdateIssuerRequest struct {
-	MaxTokens *int       `json:"max_tokens,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"` // extend only
+	MaxTokens *int       `json:"max_tokens"`
+	ExpiresAt *time.Time `json:"expires_at"` // extend only
 }
 
 type RetireRequest struct {
@@ -118,11 +118,15 @@ type RetireRequest struct {
 }
 
 // PostponeRequest moves stop_issuing_at later on a retiring or retired
-// issuer (the emergency switch). StopRedeemingAt nil = server keeps the
-// later of the current value and MinStopRedeeming(StopIssuingAt).
+// issuer. With StopRedeemingAt nil, the server picks the earliest
+// stop_redeeming_at that keeps every retirement rule.
 type PostponeRequest struct {
 	StopIssuingAt   time.Time  `json:"stop_issuing_at"`
-	StopRedeemingAt *time.Time `json:"stop_redeeming_at,omitempty"`
+	StopRedeemingAt *time.Time `json:"stop_redeeming_at"`
+}
+
+type WhoAmIResponse struct {
+	Operator string `json:"operator"`
 }
 
 type AuditEntry struct {

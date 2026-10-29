@@ -18,8 +18,7 @@ import (
 // Operators allowed to call /v1/admin, one OpenSSH authorized_keys line per
 // operator. The comment is an opaque operator ID (see operatorIDPattern),
 // and it is written to the audit log. It is never an email, because this
-// repo is public. The mapping from ID to person is kept outside the repo. Adding or removing an operator
-// is a code change + deploy, the same model as the subscriptions support API.
+// repo is public. The mapping from ID to person is kept outside the repo.
 var prodAdminKeys = []string{}
 
 var devAdminKeys = []string{}
@@ -30,8 +29,7 @@ func adminKeysForEnv(env string) []string {
 	switch env {
 	case "production":
 		return prodAdminKeys
-	// staging uses the dev list so R1 (empty prodAdminKeys) can be smoke
-	// tested there before operators are enabled in production.
+	// Staging uses the dev allowlist.
 	case "staging", "development", "dev", "sandbox", "local", "localtest", "test":
 		return devAdminKeys
 	}
@@ -64,7 +62,14 @@ func newAdminKeystore(lines []string) (*adminKeystore, error) {
 		if !operatorIDPattern.MatchString(comment) {
 			return nil, fmt.Errorf("admin key %q: comment must be an opaque operator ID matching %s, never an email", line, operatorIDPattern)
 		}
-		raw := pk.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
+		cpk, ok := pk.(ssh.CryptoPublicKey)
+		if !ok {
+			return nil, fmt.Errorf("admin key %q: not ed25519", line)
+		}
+		raw, ok := cpk.CryptoPublicKey().(ed25519.PublicKey)
+		if !ok {
+			return nil, fmt.Errorf("admin key %q: not ed25519", line)
+		}
 		ks.keys[hex.EncodeToString(raw)] = adminKey{operator: comment, pub: httpsignature.Ed25519PubKey(raw)}
 	}
 	return ks, nil

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -40,25 +41,28 @@ func TestDeriveStatus(t *testing.T) {
 }
 
 // verify checks r's signature with bat-go's verifier, as the server does.
-func verify(t *testing.T, r *http.Request, pub ed25519.PublicKey) {
-	t.Helper()
+func verify(r *http.Request, pub ed25519.PublicKey) error {
 	v := httpsignature.ParameterizedKeystoreVerifier{
 		SignatureParams: httpsignature.SignatureParams{Algorithm: httpsignature.ED25519, Headers: []string{"date", "digest", "(request-target)"}},
 		Keystore:        &httpsignature.StaticKeystore{Verifier: httpsignature.Ed25519PubKey(pub)},
 		Opts:            crypto.Hash(0),
 	}
-	if _, keyID, err := v.VerifyRequest(r); err != nil || keyID != hex.EncodeToString(pub) {
-		t.Fatalf("signature does not verify: keyId %q, %v", keyID, err)
+	_, keyID, err := v.VerifyRequest(r)
+	if err == nil && keyID != hex.EncodeToString(pub) {
+		err = fmt.Errorf("keyId %q", keyID)
 	}
+	return err
 }
 
 func TestSignRequestCoversQuery(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	r := httptest.NewRequest("GET", "http://x/v1/admin/audit?issuer_id=abc&limit=5", nil)
-	if err := SignRequest(r, priv, time.Now()); err != nil {
+	if err := SignRequest(r, priv, time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
-	verify(t, r, pub)
+	if err := verify(r, pub); err != nil {
+		t.Fatalf("signature does not verify: %v", err)
+	}
 	if _, err := time.Parse(time.RFC1123, r.Header.Get("Date")); err != nil {
 		t.Fatalf("Date not RFC1123: %v", err)
 	}
@@ -68,7 +72,12 @@ func TestClientSignsAndDecodesErrors(t *testing.T) {
 	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
 	var gotBody []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		verify(t, r, pub)
+		// No t.Fatal here: this runs on the server's goroutine. A bad
+		// signature fails the client calls below with a 401 instead.
+		if err := verify(r, pub); err != nil {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
 		buf, _ := io.ReadAll(r.Body)
 		gotBody = buf
 		if r.URL.Path == "/v1/admin/whoami" {

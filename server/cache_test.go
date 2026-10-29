@@ -409,8 +409,7 @@ func TestSimpleCache_Clear(t *testing.T) {
 	c.SetDefault("b", "2")
 	c.Clear()
 	for _, k := range []string{"a", "b"} {
-		if _, ok := c.Get(k); ok {
-			t.Errorf("%s survived Clear", k)
-		}
+		_, ok := c.Get(k)
+		assert.False(t, ok, "%s survived Clear", k)
 	}
 }

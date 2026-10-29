@@ -186,9 +186,6 @@ func txInsertAudit(ctx context.Context, tx *sql.Tx, operator, action string, iss
 }
 
 func (c *Server) adminListAudit(ctx context.Context, issuerID uuid.UUID, limit int) ([]adminapi.AuditEntry, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 100
-	}
 	rows, err := c.db.QueryContext(ctx, `
         SELECT id, created_at, operator, action, issuer_id, request
         FROM issuer_admin_audit
@@ -213,22 +210,6 @@ func (c *Server) adminListAudit(ctx context.Context, issuerID uuid.UUID, limit i
 		out = append(out, e)
 	}
 	return out, rows.Err()
-}
-
-// withTx runs fn in a transaction, rolling back on any error.
-func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
-	tx, err := c.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			_ = tx.Rollback()
-			return
-		}
-		err = tx.Commit()
-	}()
-	return fn(tx)
 }
 
 func validateCreate(req adminapi.CreateIssuerRequest, now time.Time) error {
@@ -331,13 +312,19 @@ func (l lockedIssuer) status(now time.Time) adminapi.Status {
 // returns them keyed by id, with their retirement and latest key end.
 // Missing ids are errAdminNotFound.
 func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
+	// Lock first, then read in a second statement. A statement that waits on
+	// a row lock re-reads only the locked row, so joined retirement columns
+	// would be stale. Every writer of issuer_retirements holds the issuer's
+	// row lock, so the second statement sees their committed result.
+	if _, err := tx.ExecContext(ctx, `SELECT 1 FROM v3_issuers WHERE issuer_id = ANY($1) ORDER BY issuer_id FOR UPDATE`, pq.Array(ids)); err != nil {
+		return nil, err
+	}
 	rows, err := tx.QueryContext(ctx, `
         SELECT i.issuer_id, i.issuer_type, i.version, i.buffer, i.overlap, i.issuer_cohort,
                i.duration, i.valid_from, i.expires_at, r.stop_issuing_at, r.replacement_issuer_id,
                (SELECT max(end_at) FROM v3_issuer_keys k WHERE k.issuer_id = i.issuer_id)
         FROM v3_issuers i LEFT JOIN issuer_retirements r ON r.issuer_id = i.issuer_id
-        WHERE i.issuer_id = ANY($1)
-        ORDER BY i.issuer_id FOR UPDATE OF i`, pq.Array(ids))
+        WHERE i.issuer_id = ANY($1)`, pq.Array(ids))
 	if err != nil {
 		return nil, err
 	}
@@ -553,7 +540,7 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	// period. Measure the overlap from then if that is later.
 	propagated := now.Add(maxReplicaLag)
 	if cc := c.dbConfig.CachingConfig; cc.Enabled {
-		// ponytail: assumes every pod (HTTP and Kafka) runs this pod's
+		// @TODO: this assumes every pod (HTTP and Kafka) runs this pod's
 		// CACHE_DURATION_SECS. Pass the fleet maximum here if they differ.
 		propagated = propagated.Add(time.Duration(cc.ExpirationSec) * time.Second)
 	}

@@ -38,7 +38,6 @@ const (
 	screenConfirm
 )
 
-// messages
 type issuersMsg []adminapi.Issuer
 type detailMsg struct {
 	iss   *adminapi.Issuer
@@ -50,7 +49,7 @@ type doneMsg struct {
 }
 type errMsg struct{ err error }
 
-// confirmReq is a pending mutation shown verbatim before it is sent.
+// confirmReq is a pending mutation, shown for review before it is sent.
 type confirmReq struct {
 	title         string
 	body          any
@@ -126,7 +125,7 @@ func describeErr(err error) string {
 		case 408, 425:
 			return fmt.Sprintf("request date rejected (%d): your clock is more than 10 minutes off the server's; sync it (e.g. `timedatectl` / `sntp`)", ae.Status)
 		}
-		return fmt.Sprintf("%d: %s", ae.Status, ae.Message)
+		return ae.Error()
 	}
 	return err.Error()
 }
@@ -329,7 +328,10 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = "typed name does not match"
 			return m, nil
 		}
-		return m, m.confirm.run
+		// Send once. A second enter before the reply would send it again.
+		run := m.confirm.run
+		m.confirm.run = nil
+		return m, run
 	}
 	if m.confirm.typeToConfirm != "" {
 		var cmd tea.Cmd

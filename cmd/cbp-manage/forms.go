@@ -155,10 +155,14 @@ func (m model) openEdit(cur adminapi.Issuer) model {
 		},
 		build: func(m model, v []string) (confirmReq, error) {
 			req := adminapi.UpdateIssuerRequest{}
-			if mt, err := atoiField("max_tokens", v[0]); err != nil {
-				return confirmReq{}, err
-			} else if mt != cur.MaxTokens {
-				req.MaxTokens = &mt
+			if strings.TrimSpace(v[0]) != "" {
+				mt, err := atoiField("max_tokens", v[0])
+				if err != nil {
+					return confirmReq{}, err
+				}
+				if mt != cur.MaxTokens {
+					req.MaxTokens = &mt
+				}
 			}
 			if strings.TrimSpace(v[1]) != exp && strings.TrimSpace(v[1]) != "" {
 				t, err := parseWhen(v[1], time.Now())
@@ -259,8 +263,6 @@ func (m model) openPostpone(cur adminapi.Issuer) model {
 		},
 	})
 }
-
-// ---- retire wizard ----
 
 type retireWizard struct {
 	target        adminapi.Issuer

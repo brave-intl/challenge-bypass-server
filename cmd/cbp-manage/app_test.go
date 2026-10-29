@@ -124,6 +124,12 @@ func TestDefaultRetireTimes(t *testing.T) {
 	if sr.Before(far) {
 		t.Fatalf("v3 default must cover latest key end, got %v", sr)
 	}
+	// with no keys yet, the windows the cron can still create decide it
+	long := "P2M"
+	_, sr = defaultRetireTimes(adminapi.Issuer{Version: 3, Duration: &long, Buffer: 2, Overlap: 1}, now)
+	if want, _ := adminapi.WindowsEnd(long, 3, now); !sr.Equal(want) {
+		t.Fatalf("v3 default must cover 3 x P2M windows: got %v want %v", sr, want)
+	}
 }
 
 func TestParseWhen(t *testing.T) {
@@ -153,7 +159,6 @@ func TestRetireWizardOffersOnlyActiveReplacementsAndRequiresTypedName(t *testing
 	}}
 	var m tea.Model = newModel(f)
 	m = drive(m, m.Init())
-	m, _ = m.Update(key("enter")) // open "gone"? table sorted as given: row 0 = old
 	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
 	m, _ = m.Update(key("R"))
 	mm := m.(model)
@@ -192,7 +197,7 @@ func TestRetireDefaultsResolveAtSendTime(t *testing.T) {
 	if si != "now" || !strings.HasPrefix(sr, "+") || !strings.HasSuffix(sr, "d") {
 		t.Fatalf("defaults must be relative, got %q %q", si, sr)
 	}
-	later := time.Now().Add(10 * time.Minute)
+	later := time.Date(2027, 1, 1, 12, 0, 0, 0, time.UTC)
 	req, err := retireRequest("2", si, sr, later)
 	if err != nil {
 		t.Fatal(err)
@@ -349,4 +354,35 @@ func confirmTyped(m tea.Model, name string) tea.Model {
 	m = typeText(m, name)
 	m, cmd := m.Update(key("enter"))
 	return drive(m, cmd)
+}
+
+// A second enter before the reply must not send the mutation again.
+func TestConfirmSendsOnce(t *testing.T) {
+	f := retiringFake()
+	var m tea.Model = newModel(f)
+	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
+	m, _ = m.Update(key("c"))
+	m = typeText(m, "old")
+	m, first := m.Update(key("enter"))
+	_, second := m.Update(key("enter"))
+	if first == nil || second != nil {
+		t.Fatalf("first enter must send and the second must not: %v %v", first != nil, second != nil)
+	}
+}
+
+// A blank max_tokens on the edit form leaves it unchanged.
+func TestEditBlankMaxTokensUnchanged(t *testing.T) {
+	exp := time.Now().Add(24 * time.Hour)
+	m := newModel(&fakeAPI{}).openEdit(adminapi.Issuer{ID: "1", Name: "a", MaxTokens: 40, ExpiresAt: &exp})
+	if _, err := m.form.build(m, []string{"", ""}); err == nil || !strings.Contains(err.Error(), "nothing changed") {
+		t.Fatalf("blank fields must change nothing, got %v", err)
+	}
+	later := exp.Add(48 * time.Hour).UTC().Format(time.RFC3339)
+	req, err := m.form.build(m, []string{"", later})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := req.body.(adminapi.UpdateIssuerRequest); body.MaxTokens != nil || body.ExpiresAt == nil {
+		t.Fatalf("only expires_at must change: %+v", body)
+	}
 }
