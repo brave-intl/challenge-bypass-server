@@ -77,12 +77,15 @@ const schemaVersion uint = 7
 // because the newer migration files are not in this image.
 func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
 	v, dirty, err := m.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		return err
+	}
 	if err == nil && !dirty && v >= target {
 		logger.Info("database schema at or ahead of this build; skipping migrations",
 			"db_version", v, "build_version", target)
 		return nil
 	}
-	if err := m.Migrate(target); err != nil && err != migrate.ErrNoChange {
+	if err := m.Migrate(target); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
 	}
 	return nil
