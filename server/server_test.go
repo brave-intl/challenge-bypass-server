@@ -268,6 +268,41 @@ func (suite *ServerTestSuite) TestNewIssueRedeemV2() {
 	suite.Assert().Equal(http.StatusBadRequest, resp.StatusCode, "Expired Issuers should fail")
 }
 
+func (suite *ServerTestSuite) TestRedeemV2ChecksLegacyTable() {
+	issuerType := test.RandomString()
+	issuerCohort := v1Cohort
+	msg := "test message legacy"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, issuerCohort, time.Now().AddDate(0, 0, 1))
+	issuer, appErr := suite.srv.GetLatestIssuer(issuerType, issuerCohort)
+	suite.Require().Nil(appErr)
+
+	unblindedToken := suite.createCohortToken(server.URL, issuerType, issuerCohort, publicKey)
+	preimageText, sigText := suite.prepareRedemption(unblindedToken, msg)
+	resp, err := suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Require().NoError(err)
+	suite.Require().Equal(http.StatusOK, resp.StatusCode, "redemption into the legacy table should succeed")
+
+	primary := "redemptions-primary-test"
+	suite.Require().NoError(test.SetupDynamodbTable(suite.srv.dynamo, primary))
+	suite.T().Setenv("dynamodb_table", primary)
+
+	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "a token in the legacy table must not redeem again")
+
+	id := uuid.NewSHA1(*issuer.ID, preimageText)
+	_, err = suite.srv.fetchRedemptionV2(id)
+	suite.Assert().NoError(err, "the legacy table should be read by default")
+
+	suite.T().Setenv("dynamodb_table_legacy", "")
+	_, err = suite.srv.fetchRedemptionV2(id)
+	suite.Assert().ErrorIs(err, errRedemptionNotFound, "an empty legacy table name should turn off legacy reads")
+}
+
 type v3Redemption struct {
 	validFrom       time.Time
 	validTo         time.Time
