@@ -47,6 +47,19 @@ type issuerFetchRequestV2 struct {
 	Cohort int16 `json:"cohort"`
 }
 
+var errIssuerRetired = errors.New("issuer is retired")
+
+func retiredIssuerAppError() *AppError {
+	return &AppError{Cause: errIssuerRetired, Message: "Issuer is retired; use its replacement", Code: http.StatusBadRequest}
+}
+
+// isCreateConflict reports whether a create failed because of the issuer's
+// name: a duplicate, or a name that clashes with a retired issuer.
+func isCreateConflict(err error) bool {
+	var pqErr *pq.Error
+	return errors.Is(err, errRetiredPrefixSibling) || (errors.As(err, &pqErr) && pqErr.Code == "23505")
+}
+
 // GetLatestIssuer - get the latest issuer by type/cohort
 func (c *Server) GetLatestIssuer(issuerType string, issuerCohort int16) (*model.Issuer, *AppError) {
 	issuer, err := c.fetchIssuersByCohort(
@@ -256,14 +269,11 @@ func (c *Server) issuerV3CreateHandler(w http.ResponseWriter, r *http.Request) *
 		ValidFrom:    req.ValidFrom,
 		Duration:     &req.Duration,
 	}); err != nil {
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			if pqErr.Code == "23505" { // unique violation
-				return &AppError{
-					Cause:   err,
-					Message: "Could not create new issuer",
-					Code:    http.StatusConflict, // there already exists an issuer
-				}
+		if isCreateConflict(err) {
+			return &AppError{
+				Cause:   err,
+				Message: "Could not create new issuer",
+				Code:    http.StatusConflict, // there already exists an issuer
 			}
 		}
 
@@ -312,14 +322,11 @@ func (c *Server) issuerCreateHandlerV2(w http.ResponseWriter, r *http.Request) *
 		// if this is a duplicate on a constraint we already inserted it
 		c.Logger.Error("issuercreatehandlerv2", slog.Any("error", err))
 
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			if pqErr.Code == "23505" { // unique violation
-				return &AppError{
-					Cause:   err,
-					Message: "Could not create new issuer",
-					Code:    http.StatusConflict, // there already exists an issuer
-				}
+		if isCreateConflict(err) {
+			return &AppError{
+				Cause:   err,
+				Message: "Could not create new issuer",
+				Code:    http.StatusConflict, // there already exists an issuer
 			}
 		}
 
@@ -371,14 +378,11 @@ func (c *Server) issuerCreateHandlerV1(w http.ResponseWriter, r *http.Request) *
 	if err := c.createIssuer(req.Name, req.Cohort, req.MaxTokens, req.ExpiresAt); err != nil {
 		c.Logger.Error("issuercreatehandlerv1", slog.Any("error", err))
 
-		var pqErr *pq.Error
-		if errors.As(err, &pqErr) {
-			if pqErr.Code == "23505" { // unique violation
-				return &AppError{
-					Cause:   err,
-					Message: "Could not create new issuer",
-					Code:    http.StatusConflict, // there already exists an issuer
-				}
+		if isCreateConflict(err) {
+			return &AppError{
+				Cause:   err,
+				Message: "Could not create new issuer",
+				Code:    http.StatusConflict, // there already exists an issuer
 			}
 		}
 

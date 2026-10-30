@@ -62,11 +62,39 @@ var (
 	// Exported so callers in other packages (e.g. kafka) can match it with errors.Is.
 	ErrDuplicateRedemption = errors.New("duplicate redemption")
 	errRedemptionNotFound  = errors.New("redemption with the given id does not exist")
+	// errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
+	// confuse with a retired or retiring issuer. Sign requests for the
+	// retired issuer would be signed by the new issuer instead of rejected.
+	errRetiredPrefixSibling = errors.New("name matches a retired issuer in kafka's prefix lookup")
 )
 
 const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rotated_at,
                        valid_from, buffer, days_out, overlap, issuer_cohort,
                        redemption_repository, version, max_tokens, duration`
+
+// schemaVersion is the migration version this build needs.
+const schemaVersion uint = 8
+
+// migrateSchema migrates up to target, and never down. When the database is
+// already at or past target, migrateSchema logs and returns. The database is
+// ahead when a newer release migrated it and the deploy was then rolled back
+// to this build. Plain m.Migrate(target) would fail there, because the newer
+// migration files are not in this image.
+func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
+	v, dirty, err := m.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		return err
+	}
+	if err == nil && !dirty && v >= target {
+		logger.Info("database schema at or ahead of this build; skipping migrations",
+			"db_version", v, "build_version", target)
+		return nil
+	}
+	if err := m.Migrate(target); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return err
+	}
+	return nil
+}
 
 // LoadDBConfig loads config into server variable
 func (c *Server) LoadDBConfig(config DBConfig) {
@@ -135,8 +163,7 @@ func (c *Server) InitDB(logger *slog.Logger) {
 	if err != nil {
 		panic(err)
 	}
-	err = m.Migrate(7)
-	if err != migrate.ErrNoChange && err != nil {
+	if err := migrateSchema(m, schemaVersion, logger); err != nil {
 		panic(err)
 	}
 
@@ -379,11 +406,46 @@ func (c *Server) fetchIssuersByCohort(
 		return nil, err
 	}
 
+	// The query above returns one row per key, so look up retirement for
+	// all rows in one query.
+	stops, err := c.fetchStopIssuingAt(issuersWithKey)
+	if err != nil {
+		return nil, utils.ProcessingErrorFromError(err, true)
+	}
+	for i := range issuersWithKey {
+		if t, ok := stops[*issuersWithKey[i].ID]; ok {
+			issuersWithKey[i].StopIssuingAt = &t
+		}
+	}
+
 	if c.caches != nil {
 		c.caches.IssuerCohort.SetDefault(issuerType, issuersWithKey)
 	}
 
 	return issuersWithKey, nil
+}
+
+// fetchStopIssuingAt returns stop_issuing_at for each retired issuer among issuers.
+func (c *Server) fetchStopIssuingAt(issuers []model.Issuer) (map[uuid.UUID]time.Time, error) {
+	ids := make([]uuid.UUID, 0, len(issuers))
+	for _, iss := range issuers {
+		ids = append(ids, *iss.ID)
+	}
+	rows, err := c.dbr.Query(`SELECT issuer_id, stop_issuing_at FROM issuer_retirements WHERE issuer_id = ANY($1)`, pq.Array(ids))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[uuid.UUID]time.Time{}
+	for rows.Next() {
+		var id uuid.UUID
+		var stop time.Time
+		if err := rows.Scan(&id, &stop); err != nil {
+			return nil, err
+		}
+		out[id] = stop
+	}
+	return out, rows.Err()
 }
 
 func (c *Server) fetchIssuerByType(ctx context.Context, issuerType string) (*model.Issuer, error) {
@@ -627,6 +689,8 @@ func (c *Server) rotateIssuers() (err error) {
               AND last_rotated_at < NOW() - $1 * INTERVAL '1 day'
               AND expires_at < NOW() + $1 * INTERVAL '1 day'
               AND version <= 2
+              AND NOT EXISTS (SELECT 1 FROM issuer_retirements r
+                              WHERE r.issuer_id = v3_issuers.issuer_id AND r.stop_issuing_at <= now())
               FOR UPDATE SKIP LOCKED`, issuerColumns)
 
 	rows, err := tx.Query(query, cfg.DefaultDaysBeforeExpiry)
@@ -716,6 +780,8 @@ func (c *Server) rotateIssuersV3() (err error) {
           AND (SELECT max(end_at) FROM v3_issuer_keys WHERE issuer_id=v3_issuers.issuer_id) < now()
                 + buffer * duration::interval
                 + overlap * duration::interval - 1 * duration::interval
+          AND NOT EXISTS (SELECT 1 FROM issuer_retirements r
+                          WHERE r.issuer_id = v3_issuers.issuer_id AND r.stop_issuing_at <= now())
         FOR UPDATE SKIP LOCKED`, issuerColumns)
 
 	rows, err := tx.Query(query)
@@ -837,68 +903,83 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 	return rows, nil
 }
 
-// createIssuer - creation of a v3 issuer
-func (c *Server) createV3Issuer(issuer model.Issuer) (err error) {
-	defer incrementTotal(createIssuerTotal)
-
-	if issuer.MaxTokens == 0 {
-		issuer.MaxTokens = 40
-	}
-
-	validFrom := issuer.ValidFrom
-	if issuer.ValidFrom == nil {
-		validFrom = ptr.FromTime(time.Now())
-	}
-
-	tx, err := c.db.Begin()
+// withTx runs fn in a transaction, committing only if fn returns nil.
+func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
+	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-
 	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
 		if err != nil {
-			err = tx.Rollback()
+			_ = tx.Rollback()
 			return
 		}
 		err = tx.Commit()
 	}()
+	return fn(tx)
+}
 
+// createV3Issuer - creation of a v3 issuer
+func (c *Server) createV3Issuer(issuer model.Issuer) error {
+	defer incrementTotal(createIssuerTotal)
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
+	defer queryTimer.ObserveDuration()
+
+	ctx := context.Background()
+	return c.withTx(ctx, func(tx *sql.Tx) error {
+		// Legacy creates refuse only names that clash with a retired issuer.
+		// Retired issuers did not exist before this release, so every name
+		// legacy creates accepted before is still accepted.
+		clash, err := txPrefixSibling(ctx, tx, issuer.IssuerType, true)
+		if err != nil {
+			return err
+		}
+		if clash != "" {
+			return fmt.Errorf("%w: %q and %q", errRetiredPrefixSibling, issuer.IssuerType, clash)
+		}
+		_, err = txCreateV3Issuer(tx, c.Logger, issuer)
+		return err
+	})
+}
+
+// txCreateV3Issuer inserts the issuer and its initial keys on tx.
+func txCreateV3Issuer(tx *sql.Tx, logger *slog.Logger, issuer model.Issuer) (uuid.UUID, error) {
+	if issuer.MaxTokens == 0 {
+		issuer.MaxTokens = 40
+	}
+	validFrom := issuer.ValidFrom
+	if validFrom == nil {
+		validFrom = ptr.FromTime(time.Now())
+	}
 
 	var issuerIDStr string
-	err = tx.QueryRow(`
+	err := tx.QueryRow(`
         INSERT INTO v3_issuers
             (issuer_type, issuer_cohort, max_tokens, version, expires_at,
              buffer, duration, overlap, valid_from)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING issuer_id`,
-		issuer.IssuerType,
-		issuer.IssuerCohort,
-		issuer.MaxTokens,
-		issuer.Version,
-		issuer.ExpiresAt,
-		issuer.Buffer,
-		issuer.Duration,
-		issuer.Overlap,
-		validFrom,
+		issuer.IssuerType, issuer.IssuerCohort, issuer.MaxTokens, issuer.Version,
+		issuer.ExpiresAt, issuer.Buffer, issuer.Duration, issuer.Overlap, validFrom,
 	).Scan(&issuerIDStr)
-
 	if err != nil {
-		return fmt.Errorf("failed to get v3 issuer id: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to get v3 issuer id: %w", err)
 	}
 
 	id, err := uuid.Parse(issuerIDStr)
 	if err != nil {
-		return fmt.Errorf("failed to parse issuer id: %w", err)
+		return uuid.Nil, fmt.Errorf("failed to parse issuer id: %w", err)
 	}
 	issuer.ID = &id
 
-	if err := txPopulateIssuerKeys(c.Logger, tx, issuer); err != nil {
-		return fmt.Errorf("failed to populate v3 issuer keys: %w", err)
+	if err := txPopulateIssuerKeys(logger, tx, issuer); err != nil {
+		return uuid.Nil, fmt.Errorf("failed to populate v3 issuer keys: %w", err)
 	}
-
-	queryTimer.ObserveDuration()
-	return nil
+	return id, nil
 }
 
 // on the transaction, populate v3 issuer keys for the v3 issuer
