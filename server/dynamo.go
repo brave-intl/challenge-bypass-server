@@ -60,7 +60,7 @@ func primaryDynamoTable() string {
 
 // legacyDynamoTable returns the legacy DynamoDB table name.
 // Falls back to "redemptions" so deployments without explicit configuration are unaffected.
-// An empty value turns off reads from the legacy table, so the table can be deleted.
+// An empty value turns off legacy table reads, so the legacy table can be deleted.
 func legacyDynamoTable() string {
 	if v, ok := os.LookupEnv("dynamodb_table_legacy"); ok {
 		return v
@@ -148,8 +148,8 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	id := uuid.NewSHA1(*issuer.ID, []byte(string(preimageTxt)))
 
 	// The conditional PutItem below only checks the write table. A token
-	// redeemed before the switch to a primary table is only in the legacy
-	// table, so check that table too.
+	// redeemed before dynamodb_table was set exists only in the legacy
+	// table, so check the legacy table too.
 	if legacy := legacyDynamoTable(); primaryDynamoTable() != "" && legacy != "" {
 		_, err := c.fetchRedemptionV2FromTable(id, legacy)
 		if err == nil {
