@@ -228,7 +228,7 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 	c.Logger = logger
 
 	adminLines := adminKeysForEnv(os.Getenv("ENV"))
-	if adminLines == nil {
+	if len(adminLines) == 0 {
 		logger.Warn("no admin operator keys for this ENV; /v1/admin will deny all requests", "env", os.Getenv("ENV"))
 	}
 	adminKeys, err := newAdminKeystore(adminLines)

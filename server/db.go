@@ -81,12 +81,15 @@ const schemaVersion uint = 8
 // would fail there because the newer migration files are not in this image.
 func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
 	v, dirty, err := m.Version()
+	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
+		return err
+	}
 	if err == nil && !dirty && v >= target {
 		logger.Info("database schema at or ahead of this build; skipping migrations",
 			"db_version", v, "build_version", target)
 		return nil
 	}
-	if err := m.Migrate(target); err != nil && err != migrate.ErrNoChange {
+	if err := m.Migrate(target); err != nil && !errors.Is(err, migrate.ErrNoChange) {
 		return err
 	}
 	return nil
@@ -899,13 +902,17 @@ func (c *Server) deleteIssuerKeys(duration string) (int64, error) {
 	return rows, nil
 }
 
-// createV3Issuer - creation of a v3 issuer
+// withTx runs fn in a transaction, committing only if fn returns nil.
 func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() {
+		if p := recover(); p != nil {
+			_ = tx.Rollback()
+			panic(p)
+		}
 		if err != nil {
 			_ = tx.Rollback()
 			return
@@ -915,6 +922,7 @@ func (c *Server) withTx(ctx context.Context, fn func(tx *sql.Tx) error) (err err
 	return fn(tx)
 }
 
+// createV3Issuer - creation of a v3 issuer
 func (c *Server) createV3Issuer(issuer model.Issuer) error {
 	defer incrementTotal(createIssuerTotal)
 	queryTimer := prometheus.NewTimer(createTimeLimitedIssuerDBDuration)
@@ -922,23 +930,23 @@ func (c *Server) createV3Issuer(issuer model.Issuer) error {
 
 	ctx := context.Background()
 	return c.withTx(ctx, func(tx *sql.Tx) error {
-		_, err := txCreateV3Issuer(ctx, c.Logger, tx, issuer)
+		// Only names that clash with a retired issuer are refused. Such
+		// issuers exist only since issuer retirement, so legacy naming is
+		// otherwise as before.
+		clash, err := txPrefixSibling(ctx, tx, issuer.IssuerType, true)
+		if err != nil {
+			return err
+		}
+		if clash != "" {
+			return fmt.Errorf("%w: %q and %q", errRetiredPrefixSibling, issuer.IssuerType, clash)
+		}
+		_, err = txCreateV3Issuer(tx, c.Logger, issuer)
 		return err
 	})
 }
 
 // txCreateV3Issuer inserts the issuer and its initial keys on tx.
-func txCreateV3Issuer(ctx context.Context, logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) (uuid.UUID, error) {
-	// Only names that clash with a retired issuer are refused. Such issuers
-	// exist only since issuer retirement, so legacy naming is otherwise as
-	// before.
-	clash, err := txPrefixSibling(ctx, tx, issuer.IssuerType, true)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	if clash != "" {
-		return uuid.Nil, fmt.Errorf("%w: %q and %q", errRetiredPrefixSibling, issuer.IssuerType, clash)
-	}
+func txCreateV3Issuer(tx *sql.Tx, logger *slog.Logger, issuer model.Issuer) (uuid.UUID, error) {
 	if issuer.MaxTokens == 0 {
 		issuer.MaxTokens = 40
 	}
@@ -948,7 +956,7 @@ func txCreateV3Issuer(ctx context.Context, logger *slog.Logger, tx *sql.Tx, issu
 	}
 
 	var issuerIDStr string
-	err = tx.QueryRow(`
+	err := tx.QueryRow(`
         INSERT INTO v3_issuers
             (issuer_type, issuer_cohort, max_tokens, version, expires_at,
              buffer, duration, overlap, valid_from)

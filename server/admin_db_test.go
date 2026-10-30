@@ -100,6 +100,20 @@ func (s *AdminDBSuite) TestCreateDuplicateRollsBackAudit() {
 	s.Equal(1, rows, "failed create must not leave an audit row")
 }
 
+func (s *AdminDBSuite) TestWithTxRollsBackOnPanic() {
+	id := s.create(v1("panic"))
+	s.Panics(func() {
+		_ = s.srv.withTx(s.ctx, func(tx *sql.Tx) error {
+			_, err := tx.Exec(`INSERT INTO issuer_admin_audit (operator, action, issuer_id, request) VALUES ('op-test', 'x', $1, '{}')`, id)
+			s.Require().NoError(err)
+			panic("boom")
+		})
+	})
+	var rows int
+	s.Require().NoError(s.srv.db.QueryRow(`SELECT count(*) FROM issuer_admin_audit`).Scan(&rows))
+	s.Equal(1, rows, "a panic in fn must not commit")
+}
+
 func (s *AdminDBSuite) TestCreateValidation() {
 	for _, req := range []adminapi.CreateIssuerRequest{
 		{Name: "", Version: 1},
@@ -199,7 +213,8 @@ func (s *AdminDBSuite) TestRetireRules() {
 	start := now.Add(time.Minute)
 
 	s.isRule(s.retire(old, old, start, start.Add(93*day)), "replacement")
-	s.ErrorIs(s.retire(old, uuid.New(), start, start.Add(93*day)), errAdminNotFound)
+	s.isRule(s.retire(old, uuid.New(), start, start.Add(93*day)), "does not exist")
+	s.ErrorIs(s.retire(uuid.New(), repl, start, start.Add(93*day)), errAdminNotFound)
 	s.isRule(s.retire(old, repl, now.Add(-time.Hour), now.Add(93*day)), "stop_issuing_at")
 	s.isRule(s.retire(old, repl, start, start.Add(89*day)), "90 days")
 

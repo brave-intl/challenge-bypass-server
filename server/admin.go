@@ -75,10 +75,13 @@ func decodeStrict(r *http.Request, v any) *AppError {
 	return nil
 }
 
+// respondIssuer writes the issuer after a committed change. A failed read
+// here must not look like a failed change, or the operator would retry it.
 func (c *Server) respondIssuer(w http.ResponseWriter, r *http.Request, id uuid.UUID, status int) *AppError {
 	iss, err := c.adminGetIssuer(r.Context(), id, time.Now())
 	if err != nil {
-		return c.adminError(r, err)
+		c.Logger.Error("admin re-read after commit failed", slog.String("path", r.URL.Path), slog.Any("error", err))
+		return &AppError{Cause: err, Message: "change saved, but reading the issuer back failed; reload before retrying", Code: http.StatusInternalServerError}
 	}
 	return c.adminRender(w, status, iss)
 }

@@ -77,12 +77,14 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 // WhoAmI returns the operator ID the server maps the signing key to.
 func (c *Client) WhoAmI(ctx context.Context) (string, error) {
 	var out WhoAmIResponse
-	return out.Operator, c.do(ctx, "GET", "/v1/admin/whoami", nil, &out)
+	err := c.do(ctx, "GET", "/v1/admin/whoami", nil, &out)
+	return out.Operator, err
 }
 
 func (c *Client) ListIssuers(ctx context.Context) ([]Issuer, error) {
 	var out []Issuer
-	return out, c.do(ctx, "GET", "/v1/admin/issuers", nil, &out)
+	err := c.do(ctx, "GET", "/v1/admin/issuers", nil, &out)
+	return out, err
 }
 
 // issuer calls an endpoint that responds with one issuer. id may be "".
@@ -92,7 +94,8 @@ func (c *Client) issuer(ctx context.Context, method, id, suffix string, in any) 
 		path += "/" + url.PathEscape(id) + suffix
 	}
 	var out Issuer
-	return &out, c.do(ctx, method, path, in, &out)
+	err := c.do(ctx, method, path, in, &out)
+	return &out, err
 }
 
 func (c *Client) GetIssuer(ctx context.Context, id string) (*Issuer, error) {
@@ -122,5 +125,6 @@ func (c *Client) PostponeRetirement(ctx context.Context, id string, req Postpone
 func (c *Client) ListAudit(ctx context.Context, issuerID string, limit int) ([]AuditEntry, error) {
 	q := url.Values{"issuer_id": {issuerID}, "limit": {strconv.Itoa(limit)}}
 	var out []AuditEntry
-	return out, c.do(ctx, "GET", "/v1/admin/audit?"+q.Encode(), nil, &out)
+	err := c.do(ctx, "GET", "/v1/admin/audit?"+q.Encode(), nil, &out)
+	return out, err
 }

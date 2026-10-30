@@ -18,11 +18,15 @@ import (
 // uses the same scheme as brave support-cli, ed25519 over date, digest and
 // (request-target). The digest covers r.Body, which is read and restored.
 func SignRequest(r *http.Request, key ed25519.PrivateKey, now time.Time) error {
+	pub, ok := key.Public().(ed25519.PublicKey)
+	if !ok {
+		return errors.New("signing key is not ed25519")
+	}
 	r.Header.Set("Date", now.UTC().Format(http.TimeFormat))
 	s := httpsignature.ParameterizedSignator{
 		SignatureParams: httpsignature.SignatureParams{
 			Algorithm: httpsignature.ED25519,
-			KeyID:     hex.EncodeToString(key.Public().(ed25519.PublicKey)),
+			KeyID:     hex.EncodeToString(pub),
 			Headers:   []string{"date", "digest", "(request-target)"},
 		},
 		Signator: key,

@@ -285,7 +285,7 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 		if clash != "" {
 			return ruleErr("name %q and existing issuer %q match each other in Kafka's prefix lookup (`_` and `%%` are wildcards there), so pick a name that does not", req.Name, clash)
 		}
-		if id, err = txCreateV3Issuer(ctx, c.Logger, tx, iss); err != nil {
+		if id, err = txCreateV3Issuer(tx, c.Logger, iss); err != nil {
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "create", &id, req)
@@ -309,8 +309,9 @@ func (l lockedIssuer) status(now time.Time) adminapi.Status {
 }
 
 // txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
-// returns them keyed by id, with their retirement and latest key end.
-// Missing ids are errAdminNotFound.
+// returns them keyed by id, with their retirement and latest key end. A
+// missing ids[0] is errAdminNotFound. Any other missing id is a rule error,
+// since it came from the request body and not the URL.
 func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
 	// Lock first, then read in a second statement. A statement that waits on
 	// a row lock re-reads only the locked row, so joined retirement columns
@@ -344,10 +345,14 @@ func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	for _, id := range ids {
-		if out[id] == nil {
+	for i, id := range ids {
+		if out[id] != nil {
+			continue
+		}
+		if i == 0 {
 			return nil, errAdminNotFound
 		}
+		return nil, ruleErr("issuer %s does not exist", id)
 	}
 	return out, nil
 }
@@ -507,10 +512,13 @@ func windowsEnd(l *lockedIssuer, stopIssuing time.Time) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	end, err := adminapi.WindowsEnd(l.duration.String, l.buffer+l.overlap, stopIssuing)
+	if err != nil {
+		return time.Time{}, err
+	}
 	if l.maxKeyEnd != nil && l.maxKeyEnd.After(end) {
 		end = *l.maxKeyEnd
 	}
-	return end, err
+	return end, nil
 }
 
 func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid.UUID, req adminapi.RetireRequest, now time.Time) error {
