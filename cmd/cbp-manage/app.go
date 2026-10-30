@@ -328,7 +328,8 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = "typed name does not match"
 			return m, nil
 		}
-		// Send once. A second enter before the reply would send it again.
+		// Send the request once. Without this guard, a second enter before the
+		// reply arrives sends the request again.
 		run := m.confirm.run
 		m.confirm.run = nil
 		return m, run

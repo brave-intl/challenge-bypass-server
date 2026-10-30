@@ -75,8 +75,9 @@ func decodeStrict(r *http.Request, v any) *AppError {
 	return nil
 }
 
-// respondIssuer writes the issuer after a committed change. A failed read
-// here must not look like a failed change, or the operator would retry it.
+// respondIssuer writes the issuer after a committed change. If reading the
+// issuer fails, the message says the change was saved, so the operator does
+// not retry a change that already applied.
 func (c *Server) respondIssuer(w http.ResponseWriter, r *http.Request, id uuid.UUID, status int) *AppError {
 	iss, err := c.adminGetIssuer(r.Context(), id, time.Now())
 	if err != nil {
@@ -140,9 +141,9 @@ func (c *Server) adminCreateHandler(w http.ResponseWriter, r *http.Request) *App
 	return c.respondIssuer(w, r, id, http.StatusCreated)
 }
 
-// adminMutation handles a change to one issuer. It decodes a T body (none
-// for struct{}), runs fn as the signing operator, logs the action and
-// responds with the issuer as it now is.
+// adminMutation builds the handler for a change to one issuer. The handler
+// decodes the body into T (no body when T is struct{}), runs fn with the
+// signing operator, logs the action and responds with the updated issuer.
 func adminMutation[T any](c *Server, action string, fn func(ctx context.Context, op string, id uuid.UUID, req T) error) AppHandler {
 	return func(w http.ResponseWriter, r *http.Request) *AppError {
 		id, appErr := adminIssuerID(r)

@@ -39,18 +39,20 @@ func utcTime(t *time.Time) *time.Time {
 }
 
 // prefixLock is the advisory lock key held while checking for prefix
-// siblings. Every create, retire, postpone and expiry change takes it, so two
-// concurrent ones (say, a create of X-next and a retire of X) cannot both
-// pass the check.
+// siblings. Every create, retire, postpone and expiry change takes the lock,
+// so two concurrent requests (say, a create of X-next and a retire of X)
+// cannot both pass the check.
 const prefixLock = 0x63627069737375 // "cbpissu"
 
-// txPrefixSibling returns another issuer name that a Kafka sign lookup can
-// confuse with name, or "" if there is none. With retiredOnly, it considers
-// only issuers that have a retirement. GetLatestIssuerKafka matches
-// `issuer_type LIKE name || '%'` and prefers the later expiry. So such a pair
-// routes one to the other, and changing either one's expires_at can flip
-// which one wins. The check uses LIKE, not a plain prefix compare, because
-// `_` and `%` in a name are wildcards there.
+// txPrefixSibling returns the name of another issuer that Kafka's sign
+// lookup can confuse with name, or "" if there is none. With retiredOnly,
+// txPrefixSibling considers only issuers that have a retirement row.
+// GetLatestIssuerKafka matches `issuer_type LIKE name || '%'` and picks the
+// match with the later expiry. When two names match each other this way, a
+// sign request for one issuer can be signed by the other issuer. Changing
+// either issuer's expires_at can also change which issuer signs. The check
+// uses LIKE, not a plain prefix compare, because `_` and `%` in a name are
+// LIKE wildcards.
 func txPrefixSibling(ctx context.Context, tx *sql.Tx, name string, retiredOnly bool) (string, error) {
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, prefixLock); err != nil {
 		return "", err
@@ -151,7 +153,7 @@ func (c *Server) adminGetIssuer(ctx context.Context, id uuid.UUID, now time.Time
 		return nil, err
 	}
 
-	// Signing keys are never selected here.
+	// Private signing keys are not selected, so they never leave the server.
 	rows, err := c.db.QueryContext(ctx, `
         SELECT key_id, public_key, cohort, start_at, end_at
         FROM v3_issuer_keys WHERE issuer_id = $1
@@ -258,7 +260,7 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 		IssuerCohort: cohort,
 		MaxTokens:    req.MaxTokens,
 		Version:      req.Version,
-		ExpiresAt:    pq.NullTime{Valid: true}, // matches the existing "no expiry" encoding
+		ExpiresAt:    pq.NullTime{Valid: true}, // 0001-01-01, the "no expiry" value legacy creates store
 	}
 	if req.ExpiresAt != nil {
 		iss.ExpiresAt.Time = *req.ExpiresAt
@@ -311,7 +313,7 @@ func (l lockedIssuer) status(now time.Time) adminapi.Status {
 // txLockIssuers locks the given issuer rows in id order (deadlock-safe) and
 // returns them keyed by id, with their retirement and latest key end. A
 // missing ids[0] is errAdminNotFound. Any other missing id is a rule error,
-// since it came from the request body and not the URL.
+// since that id came from the request body and not the URL.
 func txLockIssuers(ctx context.Context, tx *sql.Tx, ids ...uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
 	// Lock first, then read in a second statement. A statement that waits on
 	// a row lock re-reads only the locked row, so joined retirement columns
@@ -385,8 +387,9 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 			if !req.ExpiresAt.After(*cur) {
 				return ruleErr("expires_at can only extend (current %s)", cur.UTC().Format(time.RFC3339))
 			}
-			// A retired issuer's expiry is its stop_redeeming_at. The
-			// replacement must cover it, as postpone requires.
+			// A retired issuer's expires_at is its stop_redeeming_at. So the
+			// replacement must not expire or stop issuing before the new
+			// expires_at. Postpone applies the same check.
 			if l.replacement != uuid.Nil {
 				if err := replacementCovers(locked[l.replacement], *req.ExpiresAt); err != nil {
 					return err
@@ -419,10 +422,11 @@ func (c *Server) requireExpiringCache() error {
 	return nil
 }
 
-// txLockWithReplacement locks id and, if it is retired, its replacement, in
-// one id-ordered statement as retire does. So a change to this issuer's
-// deadlines and a concurrent retire of its replacement serialize, and each
-// validates against the other's committed result.
+// txLockWithReplacement locks the issuer and, if the issuer is retired, its
+// replacement, in one id-ordered statement like retire does. A deadline
+// change on the issuer and a concurrent retire of the replacement then run
+// one after the other, and each one validates against the committed result
+// of the other.
 func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[uuid.UUID]*lockedIssuer, error) {
 	var replID uuid.UUID
 	err := tx.QueryRowContext(ctx, `SELECT replacement_issuer_id FROM issuer_retirements WHERE issuer_id = $1`, id).Scan(&replID)
@@ -444,8 +448,8 @@ func txLockWithReplacement(ctx context.Context, tx *sql.Tx, id uuid.UUID) (map[u
 	return locked, nil
 }
 
-// replacementCovers refuses a stop_redeeming_at that the replacement does
-// not cover. The replacement must neither expire nor stop issuing before it.
+// replacementCovers refuses redeem as a stop_redeeming_at when the
+// replacement expires or stops issuing before redeem.
 func replacementCovers(repl *lockedIssuer, redeem time.Time) error {
 	if e := nullableTime(repl.expiresAt); e != nil && e.Before(redeem) {
 		return ruleErr("replacement expires at %s, before the new stop_redeeming_at; extend it first", e.UTC().Format(time.RFC3339))
@@ -461,11 +465,12 @@ func txSetExpiry(ctx context.Context, tx *sql.Tx, id uuid.UUID, expiresAt any) e
 	return err
 }
 
-// txCatchUpV3Keys gives a v3 issuer keys from the current window on when it
-// has no key for now. The rotation cron cannot do this. It skips an issuer
-// with no keys, and with only lapsed keys it rebuilds from valid_from, which
-// can leave every window in the past. Windows stay on the issuer's grid.
-// They continue from the last key end (or valid_from) in steps of duration.
+// txCatchUpV3Keys creates keys for a v3 issuer from the current window
+// onward when the issuer has no key valid at now. The rotation cron cannot
+// do this. The cron skips an issuer with no keys. For an issuer with only
+// lapsed keys, the cron rebuilds from valid_from, which can leave every
+// window in the past. The new windows start at the last key end (or
+// valid_from) and step by the issuer's duration.
 func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, l *lockedIssuer, now time.Time) error {
 	now = now.UTC()
 	var current int
@@ -506,7 +511,7 @@ func (c *Server) txCatchUpV3Keys(ctx context.Context, tx *sql.Tx, l *lockedIssue
 
 // windowsEnd is the earliest stop_redeeming_at that covers every v3 key
 // window, both the existing ones and those the cron can still create before
-// stopIssuing. It is the zero time for v1 and v2.
+// stopIssuing. windowsEnd returns the zero time for v1 and v2.
 func windowsEnd(l *lockedIssuer, stopIssuing time.Time) (time.Time, error) {
 	if l.version < 3 {
 		return time.Time{}, nil
@@ -543,9 +548,10 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		return err
 	}
 	// The sign path reads retirement from the reader replica, and pods that
-	// cached the issuer before this change keep signing until the entry
-	// expires. So issuing can continue until now + replica lag + cache
-	// period. Measure the overlap from then if that is later.
+	// cached the issuer before this change keep signing until the cache
+	// entry expires. So signing can continue until now + replica lag + cache
+	// period. When that time is later than stop_issuing_at, the redemption
+	// minimum is measured from that time instead.
 	propagated := now.Add(maxReplicaLag)
 	if cc := c.dbConfig.CachingConfig; cc.Enabled {
 		// @TODO: this assumes every pod (HTTP and Kafka) runs this pod's
@@ -573,7 +579,8 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 		if st := repl.status(now); st != adminapi.StatusActive {
 			return ruleErr("replacement must be active (it is %s)", st)
 		}
-		// This covers the replacement too, as one of the other issuers.
+		// txRejectPrefixSibling checks every other issuer, including the
+		// replacement.
 		if err := txRejectPrefixSibling(ctx, tx, target.name); err != nil {
 			return err
 		}
@@ -584,8 +591,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 			return ruleErr("replacement valid_from %s is after stop_issuing_at", vf.UTC().Format(time.RFC3339))
 		}
 
-		// Chain rule. If the target is itself the replacement for an issuer
-		// that still redeems, it must keep issuing until that one stops.
+		// If the target is the replacement for another retired issuer that
+		// still redeems, the target must keep issuing until that other
+		// issuer stops redeeming.
 		var promised pq.NullTime
 		err = tx.QueryRowContext(ctx, `
             SELECT max(i.expires_at) FROM issuer_retirements r
@@ -623,8 +631,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 }
 
 // adminPostponeRetirement moves stop_issuing_at later on a retiring or
-// retired issuer. It is the emergency switch for when clients still depend
-// on it. It never shortens redemption and keeps the replacement's promise.
+// retired issuer, for when clients still use the issuer. stop_redeeming_at
+// never moves earlier. The request is refused if the replacement would
+// expire or stop issuing before the issuer stops redeeming.
 func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
 	if err := c.requireExpiringCache(); err != nil {
 		return err
@@ -653,7 +662,7 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 		if !req.StopIssuingAt.After(*l.stopIssuingAt) || req.StopIssuingAt.Before(now.Truncate(time.Second)) {
 			return ruleErr("stop_issuing_at must be later than the current %s and not in the past", l.stopIssuingAt.UTC().Format(time.RFC3339))
 		}
-		cur := nullableTime(l.expiresAt) // retired issuers always have one
+		cur := nullableTime(l.expiresAt)
 		redeem := adminapi.MinStopRedeeming(req.StopIssuingAt)
 		if cur != nil && cur.After(redeem) {
 			redeem = *cur
@@ -667,8 +676,9 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 			}
 			redeem = *req.StopRedeemingAt
 		}
-		// v3: tokens are signed for future windows and the cron keeps adding
-		// keys until the new stop_issuing_at, so cover the furthest one.
+		// v3 tokens are signed for future windows, and the cron keeps adding
+		// keys until the new stop_issuing_at. So stop_redeeming_at must reach
+		// the end of the last window the cron can create.
 		need, err := windowsEnd(l, req.StopIssuingAt)
 		if err != nil {
 			return err
@@ -680,7 +690,8 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 			redeem = need
 		}
 
-		// Replacement must still issue through the (possibly longer) window.
+		// The replacement must not expire or stop issuing before the new
+		// stop_redeeming_at.
 		if err := replacementCovers(locked[l.replacement], redeem); err != nil {
 			return err
 		}
@@ -690,7 +701,7 @@ func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, i
 		if err := txSetExpiry(ctx, tx, id, redeem); err != nil {
 			return err
 		}
-		// The rotation cron skipped this issuer while it was retired.
+		// The rotation cron skipped this issuer while the issuer was retired.
 		if l.version >= 3 {
 			if err := c.txCatchUpV3Keys(ctx, tx, l, now); err != nil {
 				return err
@@ -717,8 +728,9 @@ func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id 
 			`DELETE FROM issuer_retirements WHERE issuer_id = $1 RETURNING expires_at_before_retire`, id).Scan(&before); err != nil {
 			return err
 		}
-		// Never shorten. Keep the later of the pre-retire value and the
-		// current one. The no-expiry sentinel wins.
+		// Restore the later of expires_at_before_retire and the current
+		// expires_at, so cancel never shortens redemption. A pre-retire "no
+		// expiry" value always wins.
 		restore := before
 		if b, cur := nullableTime(before), nullableTime(locked[id].expiresAt); b != nil && cur != nil && cur.After(*b) {
 			restore = locked[id].expiresAt

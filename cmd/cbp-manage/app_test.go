@@ -124,7 +124,8 @@ func TestDefaultRetireTimes(t *testing.T) {
 	if sr.Before(far) {
 		t.Fatalf("v3 default must cover latest key end, got %v", sr)
 	}
-	// with no keys yet, the windows the cron can still create decide it
+	// With no keys yet, the end of the windows the cron can still create sets
+	// the default stop_redeeming_at.
 	long := "P2M"
 	_, sr = defaultRetireTimes(adminapi.Issuer{Version: 3, Duration: &long, Buffer: 2, Overlap: 1}, now)
 	if want, _ := adminapi.WindowsEnd(long, 3, now); !sr.Equal(want) {
@@ -370,7 +371,7 @@ func TestConfirmSendsOnce(t *testing.T) {
 	}
 }
 
-// A blank max_tokens on the edit form leaves it unchanged.
+// A blank max_tokens on the edit form leaves max_tokens unchanged.
 func TestEditBlankMaxTokensUnchanged(t *testing.T) {
 	exp := time.Now().Add(24 * time.Hour)
 	m := newModel(&fakeAPI{}).openEdit(adminapi.Issuer{ID: "1", Name: "a", MaxTokens: 40, ExpiresAt: &exp})

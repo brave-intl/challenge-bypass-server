@@ -10,9 +10,10 @@ import (
 	timeutils "github.com/brave-intl/bat-go/libs/time"
 )
 
-// MinStopRedeeming is the earliest stop_redeeming_at for an issuer that last
-// issues at lastIssue: the later of 3 calendar months and 90 days after it.
-// Either can be longer (Feb 1 + 3 months is 89 days).
+// MinStopRedeeming is the earliest stop_redeeming_at allowed for an issuer
+// whose last issuance is at lastIssue. The result is the later of lastIssue
+// plus 3 calendar months and lastIssue plus 90 days. Either one can be the
+// later one. For example, Feb 1 plus 3 months is only 89 days.
 func MinStopRedeeming(lastIssue time.Time) time.Time {
 	m := lastIssue.UTC().AddDate(0, 3, 0)
 	if d := lastIssue.Add(90 * 24 * time.Hour); d.After(m) {
@@ -21,9 +22,9 @@ func MinStopRedeeming(lastIssue time.Time) time.Time {
 	return m
 }
 
-// WindowsEnd is the end of n v3 key windows of the ISO 8601 duration that
-// start at from, stepped as the rotation cron steps them. An empty duration
-// returns from.
+// WindowsEnd returns the end of n consecutive v3 key windows of the ISO 8601
+// duration, the first starting at from. The windows use the same calendar
+// steps as the rotation cron. An empty duration returns from.
 func WindowsEnd(duration string, n int, from time.Time) (time.Time, error) {
 	if duration == "" {
 		return from, nil
@@ -45,10 +46,10 @@ func WindowsEnd(duration string, n int, from time.Time) (time.Time, error) {
 type Status string
 
 const (
-	StatusActive   Status = "active"   // issuing and redeeming
-	StatusRetiring Status = "retiring" // retirement scheduled, still issuing
-	StatusRetired  Status = "retired"  // redeem-only
-	StatusExpired  Status = "expired"  // neither
+	StatusActive   Status = "active"   // signs and redeems
+	StatusRetiring Status = "retiring" // stop_issuing_at is in the future, still signs
+	StatusRetired  Status = "retired"  // redeems only
+	StatusExpired  Status = "expired"  // neither signs nor redeems
 )
 
 // DeriveStatus computes an issuer's status. A nil expiresAt means no expiry.
@@ -108,7 +109,7 @@ type CreateIssuerRequest struct {
 // unknown fields.
 type UpdateIssuerRequest struct {
 	MaxTokens *int       `json:"max_tokens"`
-	ExpiresAt *time.Time `json:"expires_at"` // extend only
+	ExpiresAt *time.Time `json:"expires_at"` // can only move later
 }
 
 type RetireRequest struct {
@@ -118,8 +119,8 @@ type RetireRequest struct {
 }
 
 // PostponeRequest moves stop_issuing_at later on a retiring or retired
-// issuer. With StopRedeemingAt nil, the server picks the earliest
-// stop_redeeming_at that keeps every retirement rule.
+// issuer. With StopRedeemingAt nil, the server uses the earliest
+// stop_redeeming_at that the retirement rules allow.
 type PostponeRequest struct {
 	StopIssuingAt   time.Time  `json:"stop_issuing_at"`
 	StopRedeemingAt *time.Time `json:"stop_redeeming_at"`

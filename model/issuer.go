@@ -36,7 +36,7 @@ type Issuer struct {
 	Keys                 []IssuerKeys `json:"keys" db:"-"`
 
 	// StopIssuingAt is the retirement's stop_issuing_at. Only
-	// fetchIssuersByCohort fills it in. Other fetches leave it nil.
+	// fetchIssuersByCohort sets StopIssuingAt. Other fetches leave StopIssuingAt nil.
 	StopIssuingAt *time.Time `json:"-" db:"-"`
 }
 

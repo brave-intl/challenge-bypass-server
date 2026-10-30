@@ -87,7 +87,8 @@ func (c *Client) ListIssuers(ctx context.Context) ([]Issuer, error) {
 	return out, err
 }
 
-// issuer calls an endpoint that responds with one issuer. id may be "".
+// issuer calls an /v1/admin/issuers endpoint that returns one issuer. An
+// empty id calls /v1/admin/issuers itself.
 func (c *Client) issuer(ctx context.Context, method, id, suffix string, in any) (*Issuer, error) {
 	path := "/v1/admin/issuers"
 	if id != "" {

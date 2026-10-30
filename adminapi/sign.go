@@ -14,9 +14,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// SignRequest signs r the way bat-go's httpsignature verifier expects. It
-// uses the same scheme as brave support-cli, ed25519 over date, digest and
-// (request-target). The digest covers r.Body, which is read and restored.
+// SignRequest signs r for bat-go's httpsignature verifier with ed25519 over
+// date, digest and (request-target), the scheme brave support-cli uses.
+// SignRequest reads r.Body to compute the digest and then restores r.Body.
 func SignRequest(r *http.Request, key ed25519.PrivateKey, now time.Time) error {
 	pub, ok := key.Public().(ed25519.PublicKey)
 	if !ok {

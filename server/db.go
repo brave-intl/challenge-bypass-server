@@ -63,8 +63,8 @@ var (
 	ErrDuplicateRedemption = errors.New("duplicate redemption")
 	errRedemptionNotFound  = errors.New("redemption with the given id does not exist")
 	// errRetiredPrefixSibling refuses a name that Kafka's prefix lookup could
-	// confuse with a retired or retiring issuer. Requests for the retired one
-	// would be signed by the new one instead of rejected.
+	// confuse with a retired or retiring issuer. Sign requests for the
+	// retired issuer would be signed by the new issuer instead of rejected.
 	errRetiredPrefixSibling = errors.New("name matches a retired issuer in kafka's prefix lookup")
 )
 
@@ -76,9 +76,10 @@ const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rota
 const schemaVersion uint = 8
 
 // migrateSchema migrates up to target, and never down. When the database is
-// already at or past target, it logs and returns. That happens when a newer
-// release ran and then this one was rolled back to. Plain m.Migrate(target)
-// would fail there because the newer migration files are not in this image.
+// already at or past target, migrateSchema logs and returns. The database is
+// ahead when a newer release migrated it and the deploy was then rolled back
+// to this build. Plain m.Migrate(target) would fail there, because the newer
+// migration files are not in this image.
 func migrateSchema(m *migrate.Migrate, target uint, logger *slog.Logger) error {
 	v, dirty, err := m.Version()
 	if err != nil && !errors.Is(err, migrate.ErrNilVersion) {
@@ -930,9 +931,9 @@ func (c *Server) createV3Issuer(issuer model.Issuer) error {
 
 	ctx := context.Background()
 	return c.withTx(ctx, func(tx *sql.Tx) error {
-		// Only names that clash with a retired issuer are refused. Such
-		// issuers exist only since issuer retirement, so legacy naming is
-		// otherwise as before.
+		// Legacy creates refuse only names that clash with a retired issuer.
+		// Retired issuers did not exist before this release, so every name
+		// legacy creates accepted before is still accepted.
 		clash, err := txPrefixSibling(ctx, tx, issuer.IssuerType, true)
 		if err != nil {
 			return err

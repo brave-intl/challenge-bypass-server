@@ -78,7 +78,8 @@ func atoiField(label, s string) (int, error) {
 
 func (m model) openForm(s screen, f form) model {
 	f.fields[0].input.Focus()
-	// Not m.back, which the confirm screen overwrites with the form's screen.
+	// Keep the return screen on the form. m.back cannot hold the return screen, because the
+	// confirm screen overwrites m.back with the form's screen.
 	f.back = m.screen
 	m.form, m.screen, m.err, m.note = f, s, "", ""
 	return m
@@ -272,10 +273,11 @@ type retireWizard struct {
 	stopRedeeming textinput.Model
 }
 
-// defaultRetireTimes returns stop issuing now, and stop redeeming at the
-// latest of three times. They are MinStopRedeeming(now) plus a day, which
-// covers the server's replica and cache margin, the latest existing key end,
-// and (v3) the end of every key window the cron can still create.
+// defaultRetireTimes returns stop_issuing_at = now and stop_redeeming_at =
+// the latest of three times. The first is MinStopRedeeming(now) plus one day,
+// to cover the server's replica and cache margin. The second is the latest
+// existing key end. The third, for v3 only, is the end of every key window
+// the cron can still create.
 func defaultRetireTimes(target adminapi.Issuer, now time.Time) (time.Time, time.Time) {
 	sr := adminapi.MinStopRedeeming(now).Add(24 * time.Hour)
 	if target.Version >= 3 {

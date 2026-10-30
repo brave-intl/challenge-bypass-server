@@ -635,9 +635,9 @@ OUTER:
 	return nil
 }
 
-// retiredSigningResult returns an invalid-issuer result for a sign request
-// to an issuer that has stopped issuing at now, and false while it still
-// issues.
+// retiredSigningResult returns an invalid-issuer result and true when the
+// issuer has stopped issuing at now. While the issuer still issues,
+// retiredSigningResult returns false.
 func retiredSigningResult(issuer *model.Issuer, request avroSchema.SigningRequest, now time.Time) (avroSchema.SigningResultV2, bool) {
 	if issuer.IsIssuing(now) {
 		return avroSchema.SigningResultV2{}, false

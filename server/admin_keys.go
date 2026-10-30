@@ -16,9 +16,10 @@ import (
 )
 
 // Operators allowed to call /v1/admin, one OpenSSH authorized_keys line per
-// operator. The comment is an opaque operator ID (see operatorIDPattern),
-// and it is written to the audit log. It is never an email, because this
-// repo is public. The mapping from ID to person is kept outside the repo.
+// operator. The key's comment field is an opaque operator ID (see
+// operatorIDPattern), which is written to the audit log. The operator ID is
+// never an email, because this repo is public. The mapping from operator ID
+// to person is kept outside the repo.
 var prodAdminKeys = []string{}
 
 var devAdminKeys = []string{}
@@ -93,9 +94,10 @@ type adminKeyIDKey struct{}
 const maxAdminClockSkew = 10 * time.Minute
 
 // adminSignatureMwr verifies ed25519 HTTP signatures over date, digest and
-// (request-target) against the operator keystore. It mirrors bat-go's
-// middleware.VerifyHTTPSignedOnly (same checks, same status codes) without
-// importing that package's sentry/redis/rate-limiter dependencies.
+// (request-target) against the operator keystore. adminSignatureMwr mirrors
+// bat-go's middleware.VerifyHTTPSignedOnly (same checks, same status codes)
+// without importing that package's sentry, redis and rate-limiter
+// dependencies.
 func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 	verifier := httpsignature.ParameterizedKeystoreVerifier{
 		SignatureParams: httpsignature.SignatureParams{

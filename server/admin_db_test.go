@@ -167,8 +167,8 @@ func (s *AdminDBSuite) lockTx(query string, args ...any) *sql.Tx {
 	return tx
 }
 
-// blocked runs fn in the background and checks it is still waiting after
-// 300ms, that is, on a lock tx holds. Its result arrives on the channel.
+// blocked runs fn in the background and checks that fn is still waiting
+// after 300ms, on a lock that tx holds. fn's result arrives on the channel.
 func (s *AdminDBSuite) blocked(tx *sql.Tx, fn func() error) <-chan error {
 	done := make(chan error, 1)
 	go func() { done <- fn() }()
@@ -259,7 +259,8 @@ func (s *AdminDBSuite) TestChainRule() {
 }
 
 // The chain rule compares a timestamp-without-zone column with now. A
-// non-UTC now used to be read hours off and skip the promise.
+// non-UTC now used to be read hours off, so the check let the replacement
+// stop issuing before the issuer it replaces stopped redeeming.
 func (s *AdminDBSuite) TestChainRuleWithNonUTCNow() {
 	a, b, c := s.create(v1("ca")), s.create(v1("cb")), s.create(v1("cc"))
 	start := time.Now().Add(time.Minute)
@@ -340,9 +341,10 @@ func (s *AdminDBSuite) TestSignPathSeesRetirementWithManyKeys() {
 	s.False(k.IsIssuing(time.Now().Add(time.Second)))
 }
 
-// Postponing a retired v3 issuer must give it keys from the current window
-// on, on its window grid, whether its keys all lapsed or were all deleted
-// (the cron recovers from neither). valid_from is a year back so a rebuild
+// Postponing a retired v3 issuer must create keys for the issuer from the
+// current window onward, on the issuer's window grid. That must hold both
+// when all the keys lapsed and when all the keys were deleted, because the
+// cron recovers from neither case. valid_from is a year back, so a rebuild
 // from valid_from would leave every window in the past.
 func (s *AdminDBSuite) TestPostponeV3RestoresCurrentKey() {
 	for _, tc := range []struct {
@@ -390,8 +392,8 @@ func (s *AdminDBSuite) TestPostponeV3RestoresCurrentKey() {
 	}
 }
 
-// A retired issuer's expiry is its stop_redeeming_at, so PATCH may not
-// extend it past what the replacement covers.
+// A retired issuer's expires_at is its stop_redeeming_at, so PATCH may not
+// move expires_at past the replacement's expiry or stop_issuing_at.
 func (s *AdminDBSuite) TestUpdateRetiredIssuerKeepsReplacementCoverage() {
 	a, b, c := s.create(v1("cov-a")), s.create(v1("cov-b")), s.create(v1("cov-c"))
 	start := time.Now().Add(time.Minute)
@@ -403,9 +405,9 @@ func (s *AdminDBSuite) TestUpdateRetiredIssuerKeepsReplacementCoverage() {
 	s.Require().NoError(s.srv.adminUpdateIssuer(s.ctx, "op", a, adminapi.UpdateIssuerRequest{ExpiresAt: &within}))
 }
 
-// Postpone locks the replacement too, so it waits for a concurrent change
-// to the replacement (here, a held row lock) instead of validating against
-// stale state.
+// Postpone locks the replacement too. So postpone waits for a concurrent
+// change to the replacement (here, a held row lock) instead of validating
+// against stale state.
 func (s *AdminDBSuite) TestPostponeLocksReplacement() {
 	a, b := s.create(v1("lk-a")), s.create(v1("lk-b"))
 	s.Require().NoError(s.retire(a, b, time.Now(), time.Now().Add(93*day)))
@@ -432,9 +434,9 @@ func (s *AdminDBSuite) TestRetirementChangesNeedExpiringCache() {
 	s.isRule(s.srv.adminCancelRetirement(s.ctx, "op", old, time.Now()), "never expire")
 }
 
-// Legacy create routes must not make a prefix sibling of a retired issuer
-// (Kafka would sign the retired one's requests with it), but still allow
-// siblings of issuers that were never retired.
+// Legacy create routes must not make a prefix sibling of a retired issuer,
+// because Kafka would sign the retired issuer's requests with the new
+// issuer. Siblings of issuers that were never retired are still allowed.
 func (s *AdminDBSuite) TestLegacyCreateRefusesSiblingOfRetired() {
 	ret := s.create(v1("lx"))
 	s.Require().NoError(s.retire(ret, s.create(v1("other-repl")), time.Now().Add(time.Hour), time.Now().Add(94*day)))
@@ -468,8 +470,8 @@ func (s *AdminDBSuite) TestBreakGlassSQL() {
 	s.False(got.ExpiresAt.Before(newStop.AddDate(0, 6, 0).Add(-time.Minute)), "covers v3 windows: 3 x P2M")
 }
 
-// Admin creates are serialized, so a create that waits on a concurrent one
-// sees the sibling it committed and refuses.
+// Admin creates are serialized. A create that waits on a concurrent create
+// sees the sibling that the concurrent create committed, and refuses.
 func (s *AdminDBSuite) TestCreateWaitsForConcurrentCreate() {
 	tx := s.lockTx(`SELECT pg_advisory_xact_lock($1)`, prefixLock)
 	done := s.blocked(tx, func() error {
@@ -536,8 +538,9 @@ func (s *AdminDBSuite) TestRetireSeesConcurrentRetireOfReplacement() {
 	s.isRule(<-done, "replacement must be active")
 }
 
-// Postpone reads the replacement before it takes the lock. If the
-// retirement changes in between, it refuses rather than act on the old one.
+// Postpone reads the replacement before taking the lock. If the retirement
+// changes in between, postpone refuses instead of acting on the old
+// retirement.
 func (s *AdminDBSuite) TestPostponeRefusesWhenRetirementChanged() {
 	a, b := s.create(v1("ch-a")), s.create(v1("ch-b"))
 	s.Require().NoError(s.retire(a, b, time.Now().Add(time.Hour), time.Now().Add(93*day)))
@@ -559,8 +562,8 @@ func (s *AdminDBSuite) TestPostponeRejectsExpiredIssuer() {
 	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", a, adminapi.PostponeRequest{StopIssuingAt: time.Now().Add(30 * day)}, time.Now()), "expired")
 }
 
-// Cancel keeps the current expiry when it is later than the one before
-// the retirement.
+// Cancel keeps the current expires_at when the current value is later than
+// expires_at_before_retire.
 func (s *AdminDBSuite) TestCancelKeepsLaterExpiry() {
 	before := time.Now().AddDate(0, 6, 0).UTC().Truncate(time.Second)
 	a := s.create(adminapi.CreateIssuerRequest{Name: "ck-a", Version: 1, ExpiresAt: &before})
@@ -715,8 +718,8 @@ func (s *AdminDBSuite) TestPrefixCheckTreatsLikeWildcards() {
 }
 
 // Changing the expiry of an issuer with a prefix sibling reorders Kafka's
-// `ORDER BY expires_at DESC` match, so retire, postpone and extend refuse it
-// even when the replacement is unrelated.
+// `ORDER BY expires_at DESC` match. So retire, postpone and extend refuse
+// that change even when the replacement is unrelated.
 func (s *AdminDBSuite) TestExpiryChangeRejectedWithPrefixSibling() {
 	s.Require().NoError(s.srv.createIssuer("foo", v1Cohort, 0, &time.Time{}))
 	s.Require().NoError(s.srv.createIssuer("foo-legacy", v1Cohort, 0, &time.Time{}))
@@ -734,7 +737,7 @@ func (s *AdminDBSuite) TestExpiryChangeRejectedWithPrefixSibling() {
 	// postpone: a sibling that appeared after the retirement (legacy create)
 	solo, soloRepl := s.create(v1("solo")), s.create(v1("other"))
 	s.Require().NoError(s.retire(solo, soloRepl, start, start.Add(93*day)))
-	// legacy create now refuses this name, so insert it directly
+	// Legacy create now refuses solo-x, so insert the row directly.
 	_, err = s.srv.db.Exec(`INSERT INTO v3_issuers (issuer_type, version) VALUES ('solo-x', 1)`)
 	s.Require().NoError(err)
 	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", solo, adminapi.PostponeRequest{StopIssuingAt: start.Add(30 * day)}, time.Now()), "prefix")
