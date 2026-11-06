@@ -146,6 +146,16 @@ func (s *AdminDBSuite) retire(id, repl uuid.UUID, stopIssuing, stopRedeeming tim
 	}, time.Now())
 }
 
+// v3StopRedeeming returns a stop_redeeming_at one hour past the last key
+// window of a v3 test issuer (P2M, buffer 2, overlap 1). The value comes from
+// WindowsEnd because a fixed calendar offset such as 6 months and 2 days
+// lands exactly on that window end on some dates.
+func (s *AdminDBSuite) v3StopRedeeming(stopIssuing time.Time) time.Time {
+	end, err := adminapi.WindowsEnd("P2M", 3, stopIssuing)
+	s.Require().NoError(err)
+	return end.Add(time.Hour)
+}
+
 func (s *AdminDBSuite) idOf(name string) (id uuid.UUID) {
 	s.Require().NoError(s.srv.db.QueryRow(`SELECT issuer_id FROM v3_issuers WHERE issuer_type = $1`, name).Scan(&id))
 	return id
@@ -237,7 +247,7 @@ func (s *AdminDBSuite) TestRetireV3CoversFutureWindows() {
 	start := time.Now().Add(time.Minute)
 	// 91 days < start + 6 months of windows → rejected
 	s.isRule(s.retire(old, repl, start, start.Add(93*day)), "key window")
-	s.Require().NoError(s.retire(old, repl, start, start.AddDate(0, 6, 2)))
+	s.Require().NoError(s.retire(old, repl, start, s.v3StopRedeeming(start)))
 }
 
 func (s *AdminDBSuite) TestRetireReplacementNotYetValid() {
@@ -457,7 +467,8 @@ func (s *AdminDBSuite) TestBreakGlassSQL() {
 	old := s.create(v3("bg3", time.Now().AddDate(2, 0, 0))) // P2M, buffer 2, overlap 1
 	repl := s.create(v1("bg-repl"))
 	// just past the v3 minimum, so a 30-day postpone must extend redemption
-	s.Require().NoError(s.retire(old, repl, time.Now(), time.Now().AddDate(0, 6, 2)))
+	stop := time.Now()
+	s.Require().NoError(s.retire(old, repl, stop, s.v3StopRedeeming(stop)))
 	sqlText := strings.NewReplacer("<issuer uuid>", old.String(), "<your operator id>", "op-test", "<why>", "test").Replace(string(block[1]))
 	_, err = s.srv.db.Exec(sqlText)
 	s.Require().NoError(err)
@@ -683,7 +694,7 @@ func (s *AdminDBSuite) TestPostponeV3CoversFutureWindows() {
 	old := s.create(v3("pv3", time.Now().AddDate(3, 0, 0))) // P2M, buffer 2, overlap 1 → 6 months of windows
 	repl := s.create(v1("repl-pv"))
 	start := time.Now().Add(time.Minute)
-	s.Require().NoError(s.retire(old, repl, start, start.AddDate(0, 6, 2)))
+	s.Require().NoError(s.retire(old, repl, start, s.v3StopRedeeming(start)))
 
 	newStop := start.Add(30 * day)
 	s.Require().NoError(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: newStop}, time.Now()))
