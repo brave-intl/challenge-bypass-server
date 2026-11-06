@@ -15,8 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// An older image (whose migration files stop before the DB's version) must
-// start cleanly instead of panicking: that is what makes rollback safe.
+// An older image, whose migration files stop before the DB's version, must
+// start cleanly instead of panicking. That is what makes rollback safe.
 func TestMigrateSchemaSkipsWhenDBAhead(t *testing.T) {
 	srv := &Server{}
 	require.NoError(t, srv.InitDBConfig())
