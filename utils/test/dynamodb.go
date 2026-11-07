@@ -14,15 +14,20 @@ import (
 
 // SetupDynamodbTables this function sets up tables for use in dynamodb tests.
 func SetupDynamodbTables(db *dynamodb.DynamoDB) error {
+	return SetupDynamodbTable(db, "redemptions")
+}
+
+// SetupDynamodbTable recreates an empty redemptions table with the given name.
+func SetupDynamodbTable(db *dynamodb.DynamoDB, name string) error {
 	describeInput := &dynamodb.DescribeTableInput{
-		TableName: ptr.FromString("redemptions"),
+		TableName: ptr.FromString(name),
 	}
 
 	_, err := db.DescribeTable(describeInput)
 
 	if err == nil {
 		_, err = db.DeleteTable(&dynamodb.DeleteTableInput{
-			TableName: ptr.FromString("redemptions"),
+			TableName: ptr.FromString(name),
 		})
 		if err != nil {
 			fmt.Printf("Error deleting table: %v", err)
@@ -43,7 +48,7 @@ func SetupDynamodbTables(db *dynamodb.DynamoDB) error {
 	}
 
 	input := &dynamodb.CreateTableInput{
-		TableName:   ptr.FromString("redemptions"),
+		TableName:   ptr.FromString(name),
 		BillingMode: ptr.FromString("PAY_PER_REQUEST"),
 		AttributeDefinitions: []*dynamodb.AttributeDefinition{
 			{

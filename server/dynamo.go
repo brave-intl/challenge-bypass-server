@@ -60,6 +60,7 @@ func primaryDynamoTable() string {
 
 // legacyDynamoTable returns the legacy DynamoDB table name.
 // Falls back to "redemptions" so deployments without explicit configuration are unaffected.
+// An empty value turns off legacy table reads, so the legacy table can be deleted.
 func legacyDynamoTable() string {
 	if v, ok := os.LookupEnv("dynamodb_table_legacy"); ok {
 		return v
@@ -100,7 +101,11 @@ func (c *Server) fetchRedemptionV2(id uuid.UUID) (*RedemptionV2, error) {
 		}
 		c.Logger.Info("redemption not found in primary table, checking legacy table", "id", id)
 	}
-	return c.fetchRedemptionV2FromTable(id, legacyDynamoTable())
+	legacy := legacyDynamoTable()
+	if legacy == "" {
+		return nil, errRedemptionNotFound
+	}
+	return c.fetchRedemptionV2FromTable(id, legacy)
 }
 
 // fetchRedemptionV2FromTable fetches a RedemptionV2 record from the named DynamoDB table.
@@ -141,6 +146,20 @@ func (c *Server) redeemTokenWithDynamo(issuer *model.Issuer, preimage *crypto.To
 	}
 
 	id := uuid.NewSHA1(*issuer.ID, []byte(string(preimageTxt)))
+
+	// The conditional PutItem below only checks the write table. A token
+	// redeemed before dynamodb_table was set exists only in the legacy
+	// table, so check the legacy table too.
+	if legacy := legacyDynamoTable(); primaryDynamoTable() != "" && legacy != "" {
+		_, err := c.fetchRedemptionV2FromTable(id, legacy)
+		if err == nil {
+			c.Logger.Error("Duplicate redemption")
+			return ErrDuplicateRedemption
+		}
+		if !errors.Is(err, errRedemptionNotFound) {
+			return err
+		}
+	}
 
 	redemption := RedemptionV2{
 		IssuerID:  issuer.ID.String(),
