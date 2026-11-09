@@ -22,7 +22,9 @@ import (
 // to person is kept outside the repo.
 var prodAdminKeys = []string{}
 
-var devAdminKeys = []string{}
+var devAdminKeys = []string{
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMXg54hMfINJT0oks3OyADxKPO4s2CoonZUVRX2+eKj+ smoke-test-1",
+}
 
 // adminKeysForEnv returns the operator allowlist for env. An unknown env gets
 // nil, which denies every admin request, rather than failing startup.
