@@ -73,7 +73,7 @@ const issuerColumns = `issuer_id, issuer_type, created_at, expires_at, last_rota
                        redemption_repository, version, max_tokens, duration`
 
 // schemaVersion is the migration version this build needs.
-const schemaVersion uint = 8
+const schemaVersion uint = 9
 
 // migrateSchema migrates up to target, and never down. When the database is
 // already at or past target, migrateSchema logs and returns. The database is
@@ -1000,6 +1000,13 @@ func txPopulateIssuerKeys(logger *slog.Logger, tx *sql.Tx, issuer model.Issuer) 
 					slog.Any("err", err),
 				)
 				return fmt.Errorf("failed to parse issuer duration: %w", err)
+			}
+			// A zero or negative duration makes no key windows, and Postgres
+			// cannot cast a negative ISO duration to an interval. The startup
+			// key rotation then fails and every pod panics on start.
+			now := time.Now()
+			if end, err := duration.From(now); err != nil || !end.After(now) {
+				return fmt.Errorf("issuer duration %q must be positive", *issuer.Duration)
 			}
 		}
 	}

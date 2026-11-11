@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -385,5 +387,34 @@ func TestEditBlankMaxTokensUnchanged(t *testing.T) {
 	}
 	if body := req.body.(adminapi.UpdateIssuerRequest); body.MaxTokens != nil || body.ExpiresAt == nil {
 		t.Fatalf("only expires_at must change: %+v", body)
+	}
+}
+
+// With many candidates the retire screen shows a window around the cursor,
+// so the title and the selected replacement stay on screen.
+func TestRetirePickerWindow(t *testing.T) {
+	f := &fakeAPI{}
+	for i := 0; i < 40; i++ {
+		f.issuers = append(f.issuers, adminapi.Issuer{ID: strconv.Itoa(i), Name: fmt.Sprintf("iss-%02d", i), Version: 1, Status: adminapi.StatusActive})
+	}
+	m := newModel(f)
+	m.issuers = f.issuers
+	m = m.openRetire(f.issuers[0])
+
+	v := m.retireView()
+	if !strings.Contains(v, "Retire iss-00") || !strings.Contains(v, "> iss-01") || strings.Contains(v, "iss-20") || !strings.Contains(v, "↓ 29 more") {
+		t.Fatalf("first page:\n%s", v)
+	}
+
+	tm, _ := m.Update(key("end"))
+	m = tm.(model)
+	v = m.retireView()
+	if m.retire.pick != 38 || !strings.Contains(v, "> iss-39") || !strings.Contains(v, "↑ 29 more") || strings.Contains(v, "iss-01") {
+		t.Fatalf("pick %d after end:\n%s", m.retire.pick, v)
+	}
+
+	tm, _ = m.Update(key("pgup"))
+	if p := tm.(model).retire.pick; p != 28 {
+		t.Fatalf("pick after pgup = %d, want 28", p)
 	}
 }

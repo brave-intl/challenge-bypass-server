@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"regexp"
 	"strings"
 	"time"
 
@@ -26,6 +28,28 @@ func (e *adminRuleError) Error() string { return e.msg }
 func ruleErr(format string, args ...any) error {
 	return &adminRuleError{msg: fmt.Sprintf(format, args...)}
 }
+
+// maxAdminHorizon bounds every time an operator sends. Go cannot encode a
+// year past 9999 as JSON, so a postpone far enough out would break every
+// issuer listing.
+const maxAdminHorizon = 10 * 365 * 24 * time.Hour
+
+// rejectFarTimes returns a rule error when any of ts is past now plus
+// maxAdminHorizon.
+func rejectFarTimes(now time.Time, ts ...*time.Time) error {
+	for _, t := range ts {
+		if t != nil && t.After(now.Add(maxAdminHorizon)) {
+			return ruleErr("times must be within 10 years of now")
+		}
+	}
+	return nil
+}
+
+// adminNamePattern is the allowed name for an issuer created through the
+// admin API. Control characters could make a name display as a different
+// issuer in the TUI, and a trailing backslash escapes the `%` that Kafka's
+// prefix lookup appends.
+var adminNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
 
 // utcTime normalizes a request time. v3_issuers time columns are
 // `timestamp` without time zone and Postgres drops any offset lib/pq sends,
@@ -181,9 +205,13 @@ func txInsertAudit(ctx context.Context, tx *sql.Tx, operator, action string, iss
 	if err != nil {
 		return err
 	}
+	// The unique signature hash makes a replayed signed request fail here,
+	// which rolls back the change it would repeat. Calls made without a
+	// signed request store NULL.
+	sig, _ := ctx.Value(adminSignatureKey{}).(string)
 	_, err = tx.ExecContext(ctx,
-		`INSERT INTO issuer_admin_audit (operator, action, issuer_id, request) VALUES ($1, $2, $3, $4)`,
-		operator, action, issuerID, body)
+		`INSERT INTO issuer_admin_audit (operator, action, issuer_id, request, signature_sha256) VALUES ($1, $2, $3, $4, NULLIF($5, ''))`,
+		operator, action, issuerID, body, sig)
 	return err
 }
 
@@ -218,24 +246,39 @@ func validateCreate(req adminapi.CreateIssuerRequest, now time.Time) error {
 	if strings.TrimSpace(req.Name) == "" {
 		return ruleErr("name is required")
 	}
+	if !adminNamePattern.MatchString(req.Name) {
+		return ruleErr("name must be 1 to 64 letters, digits, '.', '_' or '-'")
+	}
 	if req.Version < 1 || req.Version > 3 {
 		return ruleErr("version must be 1, 2 or 3")
 	}
-	if req.MaxTokens < 0 {
-		return ruleErr("max_tokens must be >= 0")
+	if req.MaxTokens < 0 || req.MaxTokens > math.MaxInt32 {
+		return ruleErr("max_tokens must be from 0 to %d", math.MaxInt32)
 	}
 	if req.ExpiresAt != nil && !req.ExpiresAt.After(now) {
 		return ruleErr("expires_at must be in the future")
+	}
+	if err := rejectFarTimes(now, req.ExpiresAt, req.ValidFrom); err != nil {
+		return err
 	}
 	if req.Version == 3 {
 		if req.Duration == "" {
 			return ruleErr("duration is required for v3")
 		}
-		if _, err := timeutils.ParseDuration(req.Duration); err != nil {
+		d, err := timeutils.ParseDuration(req.Duration)
+		if err != nil {
 			return ruleErr("duration %q is not an ISO 8601 duration", req.Duration)
 		}
-		if req.Buffer < 1 || req.Overlap < 0 {
-			return ruleErr("v3 needs buffer >= 1 and overlap >= 0")
+		if end, err := d.From(now); err != nil || end.Before(now.AddDate(0, 0, 1)) {
+			return ruleErr("duration %q must be at least one day", req.Duration)
+		}
+		// Every window in buffer+overlap gets a key in the create transaction.
+		if req.Buffer < 1 || req.Buffer > 100 || req.Overlap < 0 || req.Overlap > 100 {
+			return ruleErr("v3 needs buffer from 1 to 100 and overlap from 0 to 100")
+		}
+		// The cron creates every window from valid_from to now, one by one.
+		if req.ValidFrom != nil && req.ValidFrom.Before(now.AddDate(-1, 0, 0)) {
+			return ruleErr("valid_from must be within the last year")
 		}
 		if req.ExpiresAt == nil {
 			return ruleErr("v3 issuers need expires_at (the rotation cron skips v3 issuers without one)")
@@ -364,8 +407,11 @@ func (c *Server) adminUpdateIssuer(ctx context.Context, operator string, id uuid
 		return ruleErr("nothing to update: only max_tokens and expires_at are mutable")
 	}
 	req.ExpiresAt = utcTime(req.ExpiresAt)
-	if req.MaxTokens != nil && *req.MaxTokens < 0 {
-		return ruleErr("max_tokens must be >= 0")
+	if err := rejectFarTimes(time.Now(), req.ExpiresAt); err != nil {
+		return err
+	}
+	if req.MaxTokens != nil && (*req.MaxTokens < 0 || *req.MaxTokens > math.MaxInt32) {
+		return ruleErr("max_tokens must be from 0 to %d", math.MaxInt32)
 	}
 	return c.withTx(ctx, func(tx *sql.Tx) error {
 		locked, err := txLockWithReplacement(ctx, tx, id)
@@ -538,6 +584,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	// equality comparisons between stored and requested times flaky.
 	now = now.Truncate(time.Second)
 	stopIssuing, stopRedeeming := req.StopIssuingAt.UTC().Truncate(time.Second), req.StopRedeemingAt.UTC().Truncate(time.Second)
+	if err := rejectFarTimes(now, &stopIssuing, &stopRedeeming); err != nil {
+		return err
+	}
 	if stopIssuing.Before(now) && now.Sub(stopIssuing) <= time.Minute {
 		stopIssuing = now // tolerate small client clock skew
 	}
@@ -635,6 +684,9 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 // never moves earlier. The request is refused if the replacement would
 // expire or stop issuing before the issuer stops redeeming.
 func (c *Server) adminPostponeRetirement(ctx context.Context, operator string, id uuid.UUID, req adminapi.PostponeRequest, now time.Time) error {
+	if err := rejectFarTimes(now, &req.StopIssuingAt, req.StopRedeemingAt); err != nil {
+		return err
+	}
 	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}

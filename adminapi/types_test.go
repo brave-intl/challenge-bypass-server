@@ -36,6 +36,7 @@ func TestWindowsEnd(t *testing.T) {
 		next, _ := d.From(want)
 		want = *next
 	}
+	want = want.AddDate(0, 0, 9) // 3 days of margin per window
 	if got, err := WindowsEnd("P1M", 3, jan31); err != nil || !got.Equal(want) {
 		t.Errorf("P1M x 3 from Jan 31: got %v %v, want %v", got, err, want)
 	}

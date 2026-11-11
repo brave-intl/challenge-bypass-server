@@ -5,6 +5,7 @@ package server
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"log/slog"
 	"os"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 
 	timeutils "github.com/brave-intl/bat-go/libs/time"
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
+	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -761,4 +763,64 @@ func (s *AdminDBSuite) TestUpdateRejectsExpiredIssuer() {
 	s.Require().NoError(err)
 	next := time.Now().AddDate(1, 0, 0)
 	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", id, adminapi.UpdateIssuerRequest{ExpiresAt: &next}), "expired")
+}
+
+// Inputs that crashed pods, broke listings, or made huge key sets are refused.
+func (s *AdminDBSuite) TestCreateRejectsBadInput() {
+	exp := time.Now().AddDate(1, 0, 0)
+	withV3 := func(f func(*adminapi.CreateIssuerRequest)) adminapi.CreateIssuerRequest {
+		r := v3("bad-v3", exp)
+		f(&r)
+		return r
+	}
+	far := time.Now().AddDate(11, 0, 0)
+	old := time.Now().AddDate(-2, 0, 0)
+	for _, tc := range []struct {
+		req  adminapi.CreateIssuerRequest
+		rule string
+	}{
+		{v1("bad\nname"), "letters, digits"},
+		{v1("bad‮name"), "letters, digits"},
+		{v1(`ends-in\`), "letters, digits"},
+		{v1(strings.Repeat("a", 65)), "letters, digits"},
+		{adminapi.CreateIssuerRequest{Name: "big", Version: 1, MaxTokens: 1 << 31}, "max_tokens"},
+		{adminapi.CreateIssuerRequest{Name: "far", Version: 1, ExpiresAt: &far}, "10 years"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.Duration = "-P1D" }), "at least one day"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.Duration = "P0D" }), "at least one day"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.Duration = "PT1S" }), "at least one day"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.Buffer = 101 }), "buffer from 1 to 100"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.Overlap = 101 }), "overlap from 0 to 100"},
+		{withV3(func(r *adminapi.CreateIssuerRequest) { r.ValidFrom = &old }), "within the last year"},
+	} {
+		_, err := s.srv.adminCreateIssuer(s.ctx, "op-test", tc.req)
+		s.isRule(err, tc.rule)
+	}
+}
+
+// The legacy v3 create shares the key setup, so it refuses a duration that
+// would make the startup key rotation fail on every pod.
+func (s *AdminDBSuite) TestLegacyV3CreateRejectsNonPositiveDuration() {
+	for _, d := range []string{"-P1D", "P0D"} {
+		err := s.srv.createV3Issuer(model.Issuer{Version: 3, IssuerType: "legacy-bad", IssuerCohort: 1,
+			ExpiresAt: pq.NullTime{Time: time.Now().AddDate(1, 0, 0), Valid: true}, Buffer: 1, Duration: ptr.FromString(d)})
+		s.ErrorContains(err, "must be positive", d)
+	}
+	s.Require().NoError(s.srv.rotateIssuersV3())
+}
+
+// Times past year 9999 cannot be encoded as JSON, so a far postpone would
+// break every issuer listing. Every operator-sent time is bounded.
+func (s *AdminDBSuite) TestFarTimesRejected() {
+	old, repl := s.create(v1("far-old")), s.create(v1("far-new"))
+	far := time.Date(9999, 12, 1, 0, 0, 0, 0, time.UTC)
+	start := time.Now().Add(time.Hour)
+	s.isRule(s.retire(old, repl, far, far), "10 years")
+	s.Require().NoError(s.retire(old, repl, start, start.Add(93*day)))
+	s.isRule(s.srv.adminPostponeRetirement(s.ctx, "op", old, adminapi.PostponeRequest{StopIssuingAt: far}, time.Now()), "10 years")
+	s.isRule(s.srv.adminUpdateIssuer(s.ctx, "op", old, adminapi.UpdateIssuerRequest{ExpiresAt: &far}), "10 years")
+
+	list, err := s.srv.adminListIssuers(s.ctx, time.Now())
+	s.Require().NoError(err)
+	_, err = json.Marshal(list)
+	s.NoError(err)
 }
