@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -92,6 +93,9 @@ func (s *adminKeystore) operator(keyID string) string {
 
 type adminKeyIDKey struct{}
 
+// adminSignatureKey holds the hex sha256 of the request's Signature header.
+type adminSignatureKey struct{}
+
 // maxAdminClockSkew bounds how far a signed request's Date may be from now.
 const maxAdminClockSkew = 10 * time.Minute
 
@@ -135,7 +139,10 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 				adminAuthError(w, http.StatusRequestTimeout, "date is invalid")
 				return
 			}
-			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), adminKeyIDKey{}, keyID)))
+			sum := sha256.Sum256([]byte(r.Header.Get("Signature")))
+			ctx := context.WithValue(r.Context(), adminKeyIDKey{}, keyID)
+			ctx = context.WithValue(ctx, adminSignatureKey{}, hex.EncodeToString(sum[:]))
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }

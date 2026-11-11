@@ -383,6 +383,17 @@ func (m model) updateRetire(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w.pick++
 			return m, nil
 		}
+	case "pgup", "pgdown", "home", "end":
+		if w.step == 0 {
+			last := len(w.candidates) - 1
+			w.pick = map[string]int{
+				"pgup":   max(0, w.pick-pickerRows),
+				"pgdown": min(last, w.pick+pickerRows),
+				"home":   0,
+				"end":    last,
+			}[k.String()]
+			return m, nil
+		}
 	}
 	var cmd tea.Cmd
 	switch w.step {
@@ -409,17 +420,32 @@ func retireRequest(replID, stopIssuing, stopRedeeming string, now time.Time) (ad
 	return adminapi.RetireRequest{ReplacementIssuerID: replID, StopIssuingAt: si, StopRedeemingAt: sr}, nil
 }
 
+// pickerRows is how many replacement candidates the retire screen shows at once.
+const pickerRows = 10
+
 func (m model) retireView() string {
 	w := m.retire
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("Retire "+w.target.Name) + "\n\n")
 	b.WriteString("1. Replacement (active issuers only):\n")
-	for i, c := range w.candidates {
+	// Show a window around the cursor. With every candidate listed, a long
+	// list pushed the title and the cursor off the top of the terminal.
+	n := len(w.candidates)
+	start := max(0, min(w.pick-pickerRows/2, n-pickerRows))
+	end := min(n, start+pickerRows)
+	if start > 0 {
+		fmt.Fprintf(&b, "  ↑ %d more\n", start)
+	}
+	for i := start; i < end; i++ {
+		c := w.candidates[i]
 		cursor := "  "
 		if i == w.pick {
 			cursor = "> "
 		}
 		fmt.Fprintf(&b, "%s%s (v%d, cohort %d, expires %s)\n", cursor, c.Name, c.Version, c.Cohort, fmtTime(c.ExpiresAt))
+	}
+	if end < n {
+		fmt.Fprintf(&b, "  ↓ %d more\n", n-end)
 	}
 	if w.step >= 1 {
 		b.WriteString("\n2. Stop issuing at: " + w.stopIssuing.View() + "\n")
@@ -427,6 +453,6 @@ func (m model) retireView() string {
 	if w.step >= 2 {
 		b.WriteString("3. Stop redeeming at (≥ 3 months later): " + w.stopRedeeming.View() + "\n")
 	}
-	b.WriteString("\n" + helpStyle.Render("↑/↓ pick · enter next · esc back · times: now, +90d, 2027-01-01, RFC3339"))
+	b.WriteString("\n" + helpStyle.Render("↑/↓ pgup/pgdn home/end pick · enter next · esc back · times: now, +90d, 2027-01-01, RFC3339"))
 	return b.String()
 }

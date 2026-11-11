@@ -218,3 +218,36 @@ func (s *AdminHTTPSuite) TestLegacyCreateConflicts() {
 	s.Equal(http.StatusConflict, post("/v1/issuer", "ret-next"), "sibling of a retired issuer")
 	s.Equal(http.StatusConflict, post("/v2/issuer", "ret-next"), "sibling of a retired issuer")
 }
+
+// A captured signed request sent again must not repeat its change, and must
+// not touch the issuer.
+func (s *AdminHTTPSuite) TestReplayedMutationRejected() {
+	ctx := context.Background()
+	old, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "rp-old", Version: 1})
+	s.Require().NoError(err)
+	repl, err := s.client.CreateIssuer(ctx, adminapi.CreateIssuerRequest{Name: "rp-new", Version: 1})
+	s.Require().NoError(err)
+	start := time.Now().Add(time.Hour)
+	_, err = s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start, StopRedeemingAt: start.Add(93 * 24 * time.Hour)})
+	s.Require().NoError(err)
+
+	req, _ := http.NewRequest("DELETE", s.http.URL+"/v1/admin/issuers/"+old.ID+"/retire", bytes.NewReader(nil))
+	s.Require().NoError(adminapi.SignRequest(req, s.client.Key, time.Now()))
+	send := func() int {
+		r, _ := http.NewRequest("DELETE", req.URL.String(), bytes.NewReader(nil))
+		r.Header = req.Header.Clone()
+		resp, err := http.DefaultClient.Do(r)
+		s.Require().NoError(err)
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+	s.Equal(200, send())
+
+	// The operator retires again. A replay of the earlier cancel must fail.
+	_, err = s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start.Add(time.Minute), StopRedeemingAt: start.Add(94 * 24 * time.Hour)})
+	s.Require().NoError(err)
+	s.Equal(409, send())
+	got, err := s.client.GetIssuer(ctx, old.ID)
+	s.Require().NoError(err)
+	s.Equal(adminapi.StatusRetiring, got.Status)
+}

@@ -22,9 +22,12 @@ func MinStopRedeeming(lastIssue time.Time) time.Time {
 	return m
 }
 
-// WindowsEnd returns the end of n consecutive v3 key windows of the ISO 8601
-// duration, the first starting at from. The windows use the same calendar
-// steps as the rotation cron. An empty duration returns from.
+// WindowsEnd returns a time at or after the end of n consecutive v3 key
+// windows of the ISO 8601 duration, the first starting at from. An empty
+// duration returns from. bat-go sizes a month or a year by the calendar at
+// the moment it is called, not at the window's start. So windows the cron
+// makes later can each run up to 3 days longer than the ones counted here.
+// WindowsEnd adds those 3 days per window.
 func WindowsEnd(duration string, n int, from time.Time) (time.Time, error) {
 	if duration == "" {
 		return from, nil
@@ -40,7 +43,7 @@ func WindowsEnd(duration string, n int, from time.Time) (time.Time, error) {
 		}
 		from = *next
 	}
-	return from, nil
+	return from.AddDate(0, 0, 3*n), nil
 }
 
 type Status string

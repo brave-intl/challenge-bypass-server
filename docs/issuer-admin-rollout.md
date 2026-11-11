@@ -7,7 +7,7 @@ Covers shipping the issuer admin API, `cbp-manage` TUI and issuer retirement (sp
 | Release | Contents | Schema | Behavior change | Rollback |
 |---|---|---|---|---|
 | **R0** | Migration guard in `InitDB` | none | none | previous image, always safe |
-| **R1** | Feature code + migration 0008, **prod operator allowlist empty** (staging uses the dev list) | +2 tables | none until an issuer is retired. The admin API denies everything in prod. | R0 image, safe |
+| **R1** | Feature code + migrations 0008 and 0009, **prod operator allowlist empty** (staging uses the dev list) | +2 tables | none until an issuer is retired. The admin API denies everything in prod. | R0 image, safe |
 | **R2** | Operator public keys added to `prodAdminKeys` | none | admin API usable in prod | R1 image, safe |
 
 Each release goes staging → production and bakes before the next one starts.
@@ -58,7 +58,7 @@ if verr == nil && !dirty && v >= schemaVersion {
 
 ## R1: feature, dark
 
-**Contents:** migration `0008_issuer_admin` (it creates `issuer_retirements` and `issuer_admin_audit` and leaves `v3_issuers` untouched), `schemaVersion = 8`, admin routes, sign-path gate, rotation-cron `NOT EXISTS` filter, `prodAdminKeys` empty.
+**Contents:** migration `0008_issuer_admin` (it creates `issuer_retirements` and `issuer_admin_audit` and leaves `v3_issuers` untouched), migration `0009_admin_audit_signature` (it adds a unique signature hash to `issuer_admin_audit`, so a replayed admin request fails), `schemaVersion = 9`, admin routes, sign-path gate, rotation-cron `NOT EXISTS` filter, `prodAdminKeys` empty.
 
 ### Pre-flight (production)
 
@@ -74,8 +74,8 @@ if verr == nil && !dirty && v >= schemaVersion {
    3. Retire A → B with stop issuing now. A sign request for `rollout-a` returns 400 over HTTP and `issuerInvalid` over Kafka. A redeem of a token issued earlier still succeeds.
 2. **Production deploy** of the same image.
 3. **Verify, per workload, as pods come up:**
-   - The startup log shows migration 8 applied once. Later pods log the skip.
-   - `SELECT version, dirty FROM schema_migrations;` → `8, false`.
+   - The startup log shows migrations 8 and 9 applied once. Later pods log the skip.
+   - `SELECT version, dirty FROM schema_migrations;` → `9, false`.
    - `SELECT count(*) FROM issuer_retirements;` → `0`.
    - Unsigned `GET /v1/admin/issuers` → `401`. Signed with any key → `403`, because the prod allowlist is empty.
    - Sign/redeem rates, error metrics and Kafka lag match the pre-deploy baseline.
@@ -91,13 +91,13 @@ Roll back without further diagnosis if any of these happen:
 
 ### Rollback procedures
 
-**A. Application rollback (default).** Redeploy the R0 image. R0 sees DB version 8 ≥ its target 7 and skips migrating. The two new tables stay and nothing reads them. There is no data change and no downtime.
+**A. Application rollback (default).** Redeploy the R0 image. R0 sees DB version 9 ≥ its target 7 and skips migrating. The two new tables stay and nothing reads them. There is no data change and no downtime.
 
 **R0 is a safe rollback target only while `issuer_retirements` is empty** (always true during R1, since nobody can act in prod). Once retirements exist, it matters that R0 has no sign gate and no cron filter. Retired issuers would start signing again. The v3 rotation cron would add key windows past their already shortened `expires_at`, which produces tokens that expire before their window ends. After R2, roll back to R1 or later. Check first with `SELECT count(*) FROM issuer_retirements;`.
 
-**B. Migration failed (dirty = true).** Migration 0008 is one multi-statement file, which Postgres runs atomically, so a failure leaves the schema as it was and only the dirty flag set. New pods refuse to start and old pods keep serving.
+**B. Migration failed (dirty = true).** Migrations 0008 and 0009 are each one multi-statement file, which Postgres runs atomically, so a failure leaves the schema as it was and only the dirty flag set. New pods refuse to start and old pods keep serving.
 1. Confirm the tables were not created: `\dt issuer_*`.
-2. Run `migrate -path migrations -database "$DATABASE_URL" force 7`.
+2. Run `migrate -path migrations -database "$DATABASE_URL" force 7` if 0008 failed, or `force 8` if 0009 failed.
 3. Redeploy the R0 image (or fix the migration and retry).
 
 **C. Remove the schema (only if the new tables themselves cause a problem).** Run this only after procedure A has put R0 everywhere.

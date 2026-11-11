@@ -53,6 +53,8 @@ func (c *Server) adminError(r *http.Request, err error) *AppError {
 		return &AppError{Cause: err, Message: "issuer not found", Code: http.StatusNotFound}
 	case errors.As(err, &pqErr) && pqErr.Constraint == "issuer_type_uniq":
 		return &AppError{Cause: err, Message: "an issuer with that name already exists", Code: http.StatusConflict}
+	case errors.As(err, &pqErr) && pqErr.Constraint == "issuer_admin_audit_signature_uniq":
+		return &AppError{Cause: err, Message: "this signed request was already used; sign a new one", Code: http.StatusConflict}
 	}
 	c.Logger.Error("admin request failed", slog.String("path", r.URL.Path), slog.Any("error", err))
 	return &AppError{Cause: err, Message: "internal error", Code: http.StatusInternalServerError}
@@ -71,6 +73,9 @@ func decodeStrict(r *http.Request, v any) *AppError {
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return &AppError{Cause: err, Message: "invalid request body: " + err.Error(), Code: http.StatusUnprocessableEntity}
+	}
+	if dec.More() {
+		return &AppError{Message: "invalid request body: data after the JSON object", Code: http.StatusUnprocessableEntity}
 	}
 	return nil
 }

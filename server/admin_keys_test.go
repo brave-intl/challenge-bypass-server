@@ -36,6 +36,18 @@ func TestAdminKeysForEnv(t *testing.T) {
 	require.Nil(t, adminKeysForEnv("prod-typo"))
 }
 
+// A key in both lists would let a request signed for staging, where keys
+// and traffic are less protected, be replayed against production.
+func TestAdminKeysNotSharedAcrossEnvs(t *testing.T) {
+	dev := map[string]bool{}
+	for _, l := range devAdminKeys {
+		dev[strings.Fields(l)[1]] = true
+	}
+	for _, l := range prodAdminKeys {
+		require.False(t, dev[strings.Fields(l)[1]], "key in both prod and dev lists: %s", l)
+	}
+}
+
 func TestNewAdminKeystoreRejectsBadLines(t *testing.T) {
 	_, err := newAdminKeystore([]string{"not a key"})
 	require.Error(t, err)
