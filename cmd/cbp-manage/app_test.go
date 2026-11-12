@@ -18,6 +18,7 @@ type fakeAPI struct {
 	issuers   []adminapi.Issuer
 	retired   *adminapi.RetireRequest
 	postponed *adminapi.PostponeRequest
+	rotated   *adminapi.RotateKeyRequest
 	cancelled string
 	err       error
 }
@@ -47,6 +48,10 @@ func (f *fakeAPI) CancelRetirement(_ context.Context, id string) (*adminapi.Issu
 }
 func (f *fakeAPI) PostponeRetirement(_ context.Context, _ string, r adminapi.PostponeRequest) (*adminapi.Issuer, error) {
 	f.postponed = &r
+	return &f.issuers[0], nil
+}
+func (f *fakeAPI) RotateKey(_ context.Context, _ string, r adminapi.RotateKeyRequest) (*adminapi.Issuer, error) {
+	f.rotated = &r
 	return &f.issuers[0], nil
 }
 func (f *fakeAPI) ListAudit(context.Context, string, int) ([]adminapi.AuditEntry, error) {
@@ -301,6 +306,32 @@ func TestPostponeFlow(t *testing.T) {
 	confirmTyped(m, "old")
 	if f.postponed == nil || f.postponed.StopIssuingAt.Before(time.Now().Add(29*24*time.Hour)) {
 		t.Fatalf("postpone not sent with +30d: %+v", f.postponed)
+	}
+}
+
+// Rotation applies only to an active v1 or v2 issuer and needs the typed
+// name.
+func TestRotateKeyFlow(t *testing.T) {
+	v2 := adminapi.Issuer{ID: "1", Name: "pay", Version: 2, Status: adminapi.StatusActive}
+	f := &fakeAPI{issuers: []adminapi.Issuer{v2}}
+	var m tea.Model = newModel(f)
+	m = drive(m, func() tea.Msg { return detailMsg{iss: &f.issuers[0]} })
+	m, _ = m.Update(key("k"))
+	m, _ = m.Update(key("enter")) // default +93d
+	m, _ = m.Update(key("enter")) // no typed name
+	if f.rotated != nil {
+		t.Fatal("rotation sent without typed confirmation")
+	}
+	confirmTyped(m, "pay")
+	if f.rotated == nil || f.rotated.StopRedeemingAt.Before(time.Now().Add(92*24*time.Hour)) {
+		t.Fatalf("rotation not sent with +93d: %+v", f.rotated)
+	}
+
+	v3 := adminapi.Issuer{ID: "2", Name: "tl", Version: 3, Status: adminapi.StatusActive}
+	m = drive(newModel(f), func() tea.Msg { return detailMsg{iss: &v3} })
+	m, _ = m.Update(key("k"))
+	if m.(model).screen != screenDetail || m.(model).err == "" {
+		t.Fatal("v3 rotation must be refused in the TUI")
 	}
 }
 

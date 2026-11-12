@@ -8,6 +8,7 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 )
@@ -21,7 +22,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "cbp-manage: --url and --private-key (or CBP_ADMIN_URL / CBP_ADMIN_PRIVATE_KEY) are required")
 		os.Exit(2)
 	}
-	key, err := adminapi.LoadPrivateKey(*keyPath)
+	key, err := adminapi.LoadPrivateKey(*keyPath, func() ([]byte, error) {
+		fmt.Fprintf(os.Stderr, "passphrase for %s: ", *keyPath)
+		defer fmt.Fprintln(os.Stderr)
+		return term.ReadPassword(int(os.Stdin.Fd()))
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cbp-manage:", err)
 		os.Exit(1)

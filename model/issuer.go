@@ -110,6 +110,32 @@ func (x *Issuer) findActiveKeys(now time.Time, lw time.Duration) ([]*IssuerKeys,
 	return result, nil
 }
 
+// CurrentKey returns the key that signs at now. For v1 and v2 it is the
+// started, unended key with the latest start_at, so a key added by a
+// rotation signs only from its start_at, by which time every pod has loaded
+// it. For v3, and when no key qualifies, it is the last key. A nil or zero
+// bound is open.
+func (x *Issuer) CurrentKey(now time.Time) *IssuerKeys {
+	if len(x.Keys) == 0 {
+		return nil
+	}
+	last := &x.Keys[len(x.Keys)-1]
+	if x.Version >= 3 {
+		return last
+	}
+	var best *IssuerKeys
+	for i := range x.Keys {
+		k := &x.Keys[i]
+		if k.started(now) && !k.ended(now) && (best == nil || !k.start().Before(best.start())) {
+			best = k
+		}
+	}
+	if best == nil {
+		return last
+	}
+	return best
+}
+
 func parseSigningKeys(keys []*IssuerKeys) []*crypto.SigningKey {
 	result := make([]*crypto.SigningKey, 0, len(keys))
 
