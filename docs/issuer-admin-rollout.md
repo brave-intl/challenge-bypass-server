@@ -192,4 +192,6 @@ The new key starts signing after replica lag plus `CACHE_DURATION_SECS`. By then
 
 Kafka redemption tries every key whose window is open, so tokens from both keys redeem there. HTTP v1 and v2 redemption tries only one key, so only rotate issuers whose clients redeem over Kafka, such as the ads issuers. Never rotate an issuer bat-go uses. bat-go stores one public key per issuer and never refreshes it. A rotated key with no `start_at`, as some migrated keys have, gets one, because Kafka rejects a key with only one time bound.
 
+**Do not rotate an ads issuer yet.** `GET /v1/issuer` lists one key per issuer, so the previous key leaves the list when the new key starts signing. The ads service takes a payment token's value from that list. It would value tokens signed by the previous key at zero, even though they still redeem. Rotate ads issuers only after the ads service keeps the values of previous keys. Listing both keys is not an option, because browsers accept at most 6 public keys per issuer and the 6 cohorts already use them. Browsers also learn a new key only on their next issuers fetch, so token refills pause until then.
+
 **Undo.** The API has no undo. To keep the previous key redeeming longer, move its `end_at` later with SQL. Never delete the new key once it has signed, because tokens signed by it would stop redeeming.
