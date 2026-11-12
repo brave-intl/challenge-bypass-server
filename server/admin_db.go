@@ -12,6 +12,7 @@ import (
 	"time"
 
 	timeutils "github.com/brave-intl/bat-go/libs/time"
+	crypto "github.com/brave-intl/challenge-bypass-ristretto-ffi"
 	"github.com/brave-intl/challenge-bypass-server/adminapi"
 	"github.com/brave-intl/challenge-bypass-server/model"
 	"github.com/google/uuid"
@@ -462,6 +463,19 @@ const maxReplicaLag = 5 * time.Minute
 // requireExpiringCache refuses retirement changes when issuer cache entries
 // never expire, since other pods would never see the change.
 // CACHE_DURATION_SECS <= 0 makes SimpleCache keep entries forever.
+// propagated is when every pod has seen a change made at now. The sign path
+// reads issuers from the reader replica, and pods that cached an issuer
+// keep using the cached copy until the entry expires.
+func (c *Server) propagated(now time.Time) time.Time {
+	p := now.Add(maxReplicaLag)
+	if cc := c.dbConfig.CachingConfig; cc.Enabled {
+		// @TODO: this assumes every pod (HTTP and Kafka) runs this pod's
+		// CACHE_DURATION_SECS. Pass the fleet maximum here if they differ.
+		p = p.Add(time.Duration(cc.ExpirationSec) * time.Second)
+	}
+	return p
+}
+
 func (c *Server) requireExpiringCache() error {
 	if cc := c.dbConfig.CachingConfig; cc.Enabled && cc.ExpirationSec <= 0 {
 		return ruleErr("issuer caching is on with CACHE_DURATION_SECS=%d, so cache entries never expire and other pods would never see this change; set a positive value first", cc.ExpirationSec)
@@ -597,20 +611,11 @@ func (c *Server) adminRetireIssuer(ctx context.Context, operator string, id uuid
 	if err := c.requireExpiringCache(); err != nil {
 		return err
 	}
-	// The sign path reads retirement from the reader replica, and pods that
-	// cached the issuer before this change keep signing until the cache
-	// entry expires. So signing can continue until now + replica lag + cache
-	// period. When that time is later than stop_issuing_at, the redemption
-	// minimum is measured from that time instead.
-	propagated := now.Add(maxReplicaLag)
-	if cc := c.dbConfig.CachingConfig; cc.Enabled {
-		// @TODO: this assumes every pod (HTTP and Kafka) runs this pod's
-		// CACHE_DURATION_SECS. Pass the fleet maximum here if they differ.
-		propagated = propagated.Add(time.Duration(cc.ExpirationSec) * time.Second)
-	}
+	// When the propagation time is later than stop_issuing_at, the
+	// redemption minimum is measured from it instead.
 	lastIssue := stopIssuing
-	if propagated.After(lastIssue) {
-		lastIssue = propagated
+	if p := c.propagated(now); p.After(lastIssue) {
+		lastIssue = p
 	}
 	if min := adminapi.MinStopRedeeming(lastIssue); stopRedeeming.Before(min) {
 		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the last possible issuance", min.Format(time.RFC3339))
@@ -792,5 +797,86 @@ func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id 
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "cancel_retire", &id, map[string]string{"issuer_id": id.String()})
+	})
+}
+
+// adminRotateKey gives a v1 or v2 issuer a new signing key without changing
+// its name. The current key, the one with the latest end_at, stops
+// redeeming at stop_redeeming_at. The new key starts now and takes the
+// current key's old end_at, or the issuer's expiry if the current key has no
+// end, so it sorts last and every sign path uses it.
+func (c *Server) adminRotateKey(ctx context.Context, operator string, id uuid.UUID, req adminapi.RotateKeyRequest, now time.Time) error {
+	stop := req.StopRedeemingAt.UTC().Truncate(time.Second)
+	if err := rejectFarTimes(now, &stop); err != nil {
+		return err
+	}
+	if err := c.requireExpiringCache(); err != nil {
+		return err
+	}
+	// Pods keep signing with the current key until they see the new one.
+	if min := adminapi.MinStopRedeeming(c.propagated(now)); stop.Before(min) {
+		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the current key's last possible signature", min.Format(time.RFC3339))
+	}
+	signing, err := crypto.RandomSigningKey()
+	if err != nil {
+		return err
+	}
+	signingTxt, err := signing.MarshalText()
+	if err != nil {
+		return err
+	}
+	publicTxt, err := signing.PublicKey().MarshalText()
+	if err != nil {
+		return err
+	}
+	return c.withTx(ctx, func(tx *sql.Tx) error {
+		locked, err := txLockIssuers(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		l := locked[id]
+		if l.version > 2 {
+			return ruleErr("v3 issuers rotate their keys on a schedule; only v1 and v2 keys can be rotated")
+		}
+		if st := l.status(now); st != adminapi.StatusActive {
+			return ruleErr("only an active issuer can be rotated (it is %s)", st)
+		}
+		if exp := nullableTime(l.expiresAt); exp != nil && exp.Before(stop) {
+			return ruleErr("issuer expires at %s, before stop_redeeming_at, so the current key stops then anyway", exp.UTC().Format(time.RFC3339))
+		}
+		// The same order the issuer reads use, reversed.
+		var keyID uuid.UUID
+		var end pq.NullTime
+		err = tx.QueryRowContext(ctx, `
+            SELECT key_id, end_at FROM v3_issuer_keys WHERE issuer_id = $1
+            ORDER BY end_at DESC NULLS LAST, start_at DESC LIMIT 1`, id).Scan(&keyID, &end)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ruleErr("issuer has no keys")
+		}
+		if err != nil {
+			return err
+		}
+		// The new key must end after stop_redeeming_at so it sorts last. A
+		// current key with no end gives the new key the issuer's expiry.
+		newEnd := nullableTime(end)
+		if newEnd == nil {
+			newEnd = nullableTime(l.expiresAt)
+		}
+		if newEnd == nil {
+			return ruleErr("neither the current key nor the issuer has an end date; set expires_at first")
+		}
+		if !newEnd.After(stop) {
+			return ruleErr("the current key already ends at %s, at or before stop_redeeming_at", newEnd.UTC().Format(time.RFC3339))
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuer_keys SET end_at = $2 WHERE key_id = $1`, keyID, stop); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+            INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
+            VALUES ($1, $2, $3, $4, $5, $6)`,
+			id, signingTxt, string(publicTxt), l.cohort, now.UTC(), newEnd.UTC()); err != nil {
+			return err
+		}
+		return txInsertAudit(ctx, tx, operator, "rotate_key", &id, adminapi.RotateKeyRequest{StopRedeemingAt: stop})
 	})
 }

@@ -417,3 +417,28 @@ func TestIssuer_IsIssuing(t *testing.T) {
 	should.False(t, (&Issuer{StopIssuingAt: &past}).IsIssuing(now))
 	should.False(t, (&Issuer{StopIssuingAt: &now}).IsIssuing(now))
 }
+
+func TestIssuer_RedeemSigningKeys(t *testing.T) {
+	now := time.Now()
+	key := func(start, end time.Time) IssuerKeys {
+		sk, err := crypto.RandomSigningKey()
+		must.NoError(t, err)
+		txt, err := sk.MarshalText()
+		must.NoError(t, err)
+		return IssuerKeys{SigningKey: txt, StartAt: &start, EndAt: &end}
+	}
+	ended := key(now.AddDate(-2, 0, 0), now.AddDate(-1, 0, 0))
+	previous := key(now.AddDate(-1, 0, 0), now.AddDate(0, 3, 0))
+	open := key(time.Time{}, time.Time{})
+	current := key(now, now.AddDate(5, 0, 0))
+
+	iss := &Issuer{Keys: []IssuerKeys{ended, open, previous, current}}
+	got := iss.RedeemSigningKeys(now)
+	must.Len(t, got, 3, "the ended key is skipped")
+	should.Equal(t, current.CryptoSigningKey(), got[0], "the signing key is tried first")
+
+	// The last key is tried even past its end, as before key rotation existed.
+	iss = &Issuer{Keys: []IssuerKeys{ended}}
+	should.Len(t, iss.RedeemSigningKeys(now), 1)
+	should.Empty(t, (&Issuer{}).RedeemSigningKeys(now))
+}

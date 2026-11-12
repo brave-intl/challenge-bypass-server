@@ -313,6 +313,43 @@ func (suite *ServerTestSuite) TestRedeemV2ChecksLegacyTable() {
 	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "the primary table must refuse a second redeem")
 }
 
+// After a key rotation, new tokens are signed by the new key, and a token
+// signed by the previous key still redeems over HTTP until that key ends.
+func (suite *ServerTestSuite) TestRedeemAfterKeyRotation() {
+	issuerType := test.RandomString()
+	msg := "test message rotation"
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, v1Cohort, time.Now().AddDate(1, 0, 0))
+	issuer, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
+	suite.Require().Nil(appErr)
+	oldToken := suite.createCohortToken(server.URL, issuerType, v1Cohort, publicKey)
+
+	req := adminapi.RotateKeyRequest{StopRedeemingAt: time.Now().AddDate(0, 0, 93)}
+	suite.Require().NoError(suite.srv.adminRotateKey(context.Background(), "op-test", *issuer.ID, req, time.Now()))
+	suite.srv.invalidateIssuerCaches()
+
+	rotated, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
+	suite.Require().Nil(appErr)
+	oldText, err := publicKey.MarshalText()
+	suite.Require().NoError(err)
+	newText, err := rotated.Keys[len(rotated.Keys)-1].CryptoSigningKey().PublicKey().MarshalText()
+	suite.Require().NoError(err)
+	suite.Require().NotEqual(string(oldText), string(newText), "the new key must sign")
+
+	newPublicKey := rotated.Keys[len(rotated.Keys)-1].CryptoSigningKey().PublicKey()
+	newToken := suite.createCohortToken(server.URL, issuerType, v1Cohort, newPublicKey)
+
+	for name, tok := range map[string]*crypto.UnblindedToken{"previous": oldToken, "new": newToken} {
+		preimageText, sigText := suite.prepareRedemption(tok, msg)
+		resp, err := suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+		suite.Require().NoError(err)
+		suite.Assert().Equal(http.StatusOK, resp.StatusCode, "a token from the %s key must redeem", name)
+	}
+}
+
 type v3Redemption struct {
 	validFrom       time.Time
 	validTo         time.Time

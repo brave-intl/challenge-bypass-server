@@ -410,11 +410,8 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				continue
 			}
 
-			// get latest signing key from issuer
-			var signingKey *crypto.SigningKey
-			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
-			} else {
+			signingKeys := issuer.RedeemSigningKeys(now)
+			if len(signingKeys) == 0 {
 				// need to have atleast one signing key
 				c.Logger.Error(
 					"invalid issuer, must have one signing key",
@@ -427,7 +424,7 @@ func (c *Server) blindedTokenRedeemHandler(w http.ResponseWriter, r *http.Reques
 				}
 			}
 
-			if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload, []*crypto.SigningKey{signingKey}); err != nil {
+			if err := btd.VerifyTokenRedemption(request.TokenPreimage, request.Signature, request.Payload, signingKeys); err != nil {
 				verified = false
 			} else {
 				verified = true
@@ -506,11 +503,8 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 			}
 		}
 
-		// get latest signing key from issuer
-		var signingKey *crypto.SigningKey
-		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
-		} else {
+		signingKeys := issuer.RedeemSigningKeys(time.Now())
+		if len(signingKeys) == 0 {
 			// need to have atleast one signing key
 			c.Logger.Error(
 				"invalid issuer, must have one signing key",
@@ -523,7 +517,7 @@ func (c *Server) blindedTokenBulkRedeemHandler(w http.ResponseWriter, r *http.Re
 			}
 		}
 
-		err := btd.VerifyTokenRedemption(token.TokenPreimage, token.Signature, request.Payload, []*crypto.SigningKey{signingKey})
+		err := btd.VerifyTokenRedemption(token.TokenPreimage, token.Signature, request.Payload, signingKeys)
 		if err != nil {
 			c.Logger.Error(err.Error())
 			_ = tx.Rollback()

@@ -237,6 +237,75 @@ func (s *AdminDBSuite) TestRetireHappyPathAndCancel() {
 	s.Equal("retire", audit[1].Action)
 }
 
+func (s *AdminDBSuite) rotate(id uuid.UUID, stop time.Time) error {
+	return s.srv.adminRotateKey(s.ctx, "op-test", id, adminapi.RotateKeyRequest{StopRedeemingAt: stop}, time.Now())
+}
+
+// keyEnds returns the issuer's key end times in the order the sign path
+// reads them, so the last one is the signing key.
+func (s *AdminDBSuite) keyEnds(id uuid.UUID) []time.Time {
+	rows, err := s.srv.db.Query(`SELECT end_at FROM v3_issuer_keys WHERE issuer_id = $1 ORDER BY end_at ASC NULLS FIRST, start_at ASC`, id)
+	s.Require().NoError(err)
+	defer rows.Close()
+	var ends []time.Time
+	for rows.Next() {
+		var t time.Time
+		s.Require().NoError(rows.Scan(&t))
+		ends = append(ends, t)
+	}
+	return ends
+}
+
+func (s *AdminDBSuite) TestRotateKey() {
+	now := time.Now()
+	expires := now.AddDate(2, 0, 0)
+	req := v1("pay")
+	req.Version, req.ExpiresAt = 2, &expires
+	id := s.create(req)
+
+	// Like prod: the current key has an end date past the issuer's expiry.
+	keyEnd := expires.AddDate(0, 0, 20).UTC().Truncate(time.Second)
+	_, err := s.srv.db.Exec(`UPDATE v3_issuer_keys SET end_at = $2 WHERE issuer_id = $1`, id, keyEnd)
+	s.Require().NoError(err)
+
+	stop := now.AddDate(0, 0, 93)
+	s.Require().NoError(s.rotate(id, stop))
+	ends := s.keyEnds(id)
+	s.Require().Len(ends, 2)
+	s.WithinDuration(stop, ends[0], time.Second, "the previous key stops redeeming at stop_redeeming_at")
+	s.WithinDuration(keyEnd, ends[1], time.Second, "the new key takes the previous end and sorts last")
+
+	audit, _ := s.srv.adminListAudit(s.ctx, id, 10)
+	s.Equal("rotate_key", audit[0].Action)
+
+	// A key with no end gives the new key the issuer's expiry.
+	req.Name = "open"
+	open := s.create(req)
+	s.Require().NoError(s.rotate(open, stop))
+	ends = s.keyEnds(open)
+	s.Require().Len(ends, 2)
+	s.WithinDuration(expires, ends[1], time.Second)
+}
+
+func (s *AdminDBSuite) TestRotateKeyRules() {
+	now := time.Now()
+	expires := now.AddDate(1, 0, 0)
+	req := v1("pay")
+	req.Version, req.ExpiresAt = 2, &expires
+	id := s.create(req)
+
+	s.isRule(s.rotate(id, now.AddDate(0, 0, 80)), "90 days")
+	s.isRule(s.rotate(id, now.AddDate(2, 0, 0)), "expires at")
+	s.ErrorIs(s.rotate(uuid.New(), now.AddDate(0, 0, 93)), errAdminNotFound)
+	s.isRule(s.rotate(s.create(v3("tl", expires)), now.AddDate(0, 0, 93)), "v3")
+	s.isRule(s.rotate(s.create(v1("noexp")), now.AddDate(0, 0, 93)), "set expires_at first")
+
+	repl := s.create(v1("repl"))
+	start := now.Add(time.Hour)
+	s.Require().NoError(s.retire(id, repl, start, start.Add(93*day)))
+	s.isRule(s.rotate(id, now.AddDate(0, 0, 93)), "only an active issuer")
+}
+
 func (s *AdminDBSuite) TestRetireRules() {
 	now := time.Now()
 	old, repl := s.create(v1("old")), s.create(v1("new"))

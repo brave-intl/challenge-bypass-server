@@ -264,6 +264,30 @@ func (m model) openPostpone(cur adminapi.Issuer) model {
 	})
 }
 
+func (m model) openRotate(cur adminapi.Issuer) model {
+	return m.openForm(screenEdit, form{
+		title: "Rotate the signing key of " + cur.Name + " (same name; the new key signs from now)",
+		fields: []field{
+			newField("stop_redeeming_at", "+93d", "when the current key stops redeeming (≥ 3 months and 90 days)"),
+		},
+		build: func(m model, v []string) (confirmReq, error) {
+			sr, err := parseWhen(v[0], time.Now())
+			if err != nil {
+				return confirmReq{}, err
+			}
+			req := adminapi.RotateKeyRequest{StopRedeemingAt: sr}
+			return confirmReq{
+				title:         "Rotate the signing key of " + cur.Name + ". The current key stops redeeming at " + fmtTime(&sr) + ".",
+				body:          req,
+				typeToConfirm: cur.Name,
+				run: send("key rotated", func(ctx context.Context) (*adminapi.Issuer, error) {
+					return m.api.RotateKey(ctx, cur.ID, req)
+				}),
+			}, nil
+		},
+	})
+}
+
 type retireWizard struct {
 	target        adminapi.Issuer
 	candidates    []adminapi.Issuer

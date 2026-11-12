@@ -24,6 +24,7 @@ type api interface {
 	RetireIssuer(context.Context, string, adminapi.RetireRequest) (*adminapi.Issuer, error)
 	CancelRetirement(context.Context, string) (*adminapi.Issuer, error)
 	PostponeRetirement(context.Context, string, adminapi.PostponeRequest) (*adminapi.Issuer, error)
+	RotateKey(context.Context, string, adminapi.RotateKeyRequest) (*adminapi.Issuer, error)
 	ListAudit(context.Context, string, int) ([]adminapi.AuditEntry, error)
 }
 
@@ -277,6 +278,12 @@ func (m model) updateDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.openPostpone(cur), nil
+	case "k":
+		if cur.Version > 2 || cur.Status != adminapi.StatusActive {
+			m.err = "key rotation applies to an active v1 or v2 issuer"
+			return m, nil
+		}
+		return m.openRotate(cur), nil
 	case "c":
 		if cur.Status != adminapi.StatusRetiring {
 			m.err = "only a retiring issuer can have its retirement cancelled"
@@ -409,7 +416,7 @@ func (m model) detailView() string {
 	for _, a := range m.audit {
 		fmt.Fprintf(&b, "  %s  %-14s %s\n", a.CreatedAt.UTC().Format("2006-01-02 15:04Z"), a.Action, a.Operator)
 	}
-	b.WriteString("\n" + helpStyle.Render("e edit · R replace/retire · c cancel retirement · p postpone stop-issuing · esc back"))
+	b.WriteString("\n" + helpStyle.Render("e edit · k rotate key · R replace/retire · c cancel retirement · p postpone stop-issuing · esc back"))
 	return b.String()
 }
 

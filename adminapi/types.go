@@ -129,6 +129,12 @@ type PostponeRequest struct {
 	StopRedeemingAt *time.Time `json:"stop_redeeming_at"`
 }
 
+// RotateKeyRequest gives a v1 or v2 issuer a new signing key. The current
+// key keeps redeeming until StopRedeemingAt.
+type RotateKeyRequest struct {
+	StopRedeemingAt time.Time `json:"stop_redeeming_at"`
+}
+
 type WhoAmIResponse struct {
 	Operator string `json:"operator"`
 }

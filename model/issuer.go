@@ -110,6 +110,27 @@ func (x *Issuer) findActiveKeys(now time.Time, lw time.Duration) ([]*IssuerKeys,
 	return result, nil
 }
 
+// RedeemSigningKeys returns the keys v1 and v2 redemption tries: the last
+// key, which also signs, then every earlier key whose window contains now.
+// Earlier keys stay redeemable after a key rotation until their end_at. A
+// nil or zero bound is open.
+func (x *Issuer) RedeemSigningKeys(now time.Time) []*crypto.SigningKey {
+	if len(x.Keys) == 0 {
+		return nil
+	}
+	last := len(x.Keys) - 1
+	keys := []*IssuerKeys{&x.Keys[last]}
+	for i := last - 1; i >= 0; i-- {
+		k := &x.Keys[i]
+		started := k.StartAt == nil || k.StartAt.IsZero() || !k.StartAt.After(now)
+		ended := k.EndAt != nil && !k.EndAt.IsZero() && !k.EndAt.After(now)
+		if started && !ended {
+			keys = append(keys, k)
+		}
+	}
+	return parseSigningKeys(keys)
+}
+
 func parseSigningKeys(keys []*IssuerKeys) []*crypto.SigningKey {
 	result := make([]*crypto.SigningKey, 0, len(keys))
 
