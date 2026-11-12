@@ -91,7 +91,7 @@ func (m model) openCreate() model {
 		fields: []field{
 			newField("name", "", "issuer_type"),
 			newField("version", "3", "1, 2 or 3"),
-			newField("cohort", "1", ""),
+			newField("cohort", "1", "v1/v2 turn 0 into 1"),
 			newField("max_tokens", "40", ""),
 			newField("expires_at", "", "blank = none (v1/v2); required for v3"),
 			newField("valid_from (v3)", "", "blank = now"),
