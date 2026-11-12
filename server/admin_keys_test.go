@@ -34,6 +34,12 @@ func TestAdminKeysForEnv(t *testing.T) {
 	require.Equal(t, devAdminKeys, adminKeysForEnv("staging"))
 	require.Equal(t, devAdminKeys, adminKeysForEnv("localtest"))
 	require.Nil(t, adminKeysForEnv("prod-typo"))
+	// Startup panics on a malformed line.
+	for _, lines := range [][]string{prodAdminKeys, devAdminKeys} {
+		ks, err := newAdminKeystore(lines)
+		require.NoError(t, err)
+		require.Len(t, ks.keys, len(lines), "duplicate key")
+	}
 }
 
 // A key in both lists would let a request signed for staging, where keys
