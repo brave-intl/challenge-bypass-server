@@ -801,10 +801,8 @@ func (c *Server) adminCancelRetirement(ctx context.Context, operator string, id 
 }
 
 // adminRotateKey gives a v1 or v2 issuer a new signing key without changing
-// its name. The current key, the one with the latest end_at, stops
-// redeeming at stop_redeeming_at. The new key starts now and takes the
-// current key's old end_at, or the issuer's expiry if the current key has no
-// end, so it sorts last and every sign path uses it.
+// its name. The current key stops redeeming at stop_redeeming_at. The new
+// key starts signing once every pod has loaded it.
 func (c *Server) adminRotateKey(ctx context.Context, operator string, id uuid.UUID, req adminapi.RotateKeyRequest, now time.Time) error {
 	stop := req.StopRedeemingAt.UTC().Truncate(time.Second)
 	if err := rejectFarTimes(now, &stop); err != nil {
@@ -844,37 +842,45 @@ func (c *Server) adminRotateKey(ctx context.Context, operator string, id uuid.UU
 		if exp := nullableTime(l.expiresAt); exp != nil && exp.Before(stop) {
 			return ruleErr("issuer expires at %s, before stop_redeeming_at, so the current key stops then anyway", exp.UTC().Format(time.RFC3339))
 		}
-		// The same order the issuer reads use, reversed.
+		// The current key is the one model.Issuer.CurrentKey picks: the
+		// latest start_at. A key that has not started yet is a pending
+		// rotation.
 		var keyID uuid.UUID
-		var end pq.NullTime
+		var keyStart, end pq.NullTime
 		err = tx.QueryRowContext(ctx, `
-            SELECT key_id, end_at FROM v3_issuer_keys WHERE issuer_id = $1
-            ORDER BY end_at DESC NULLS LAST, start_at DESC LIMIT 1`, id).Scan(&keyID, &end)
+            SELECT key_id, start_at, end_at FROM v3_issuer_keys WHERE issuer_id = $1
+            ORDER BY start_at DESC NULLS LAST, created_at DESC LIMIT 1`, id).Scan(&keyID, &keyStart, &end)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ruleErr("issuer has no keys")
 		}
 		if err != nil {
 			return err
 		}
-		// The new key must end after stop_redeeming_at so it sorts last. A
-		// current key with no end gives the new key the issuer's expiry.
-		newEnd := nullableTime(end)
-		if newEnd == nil {
-			newEnd = nullableTime(l.expiresAt)
+		if keyStart.Valid && keyStart.Time.After(now) {
+			return ruleErr("a rotation is already pending: the newest key starts signing at %s", keyStart.Time.UTC().Format(time.RFC3339))
 		}
-		if newEnd == nil {
-			return ruleErr("neither the current key nor the issuer has an end date; set expires_at first")
+		cur := nullableTime(end)
+		if cur != nil && !cur.After(stop) {
+			return ruleErr("the current key already ends at %s, at or before stop_redeeming_at", cur.UTC().Format(time.RFC3339))
 		}
-		if !newEnd.After(stop) {
-			return ruleErr("the current key already ends at %s, at or before stop_redeeming_at", newEnd.UTC().Format(time.RFC3339))
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE v3_issuer_keys SET end_at = $2 WHERE key_id = $1`, keyID, stop); err != nil {
+		// Kafka redemption rejects a key with only one time bound, so a
+		// migrated key with no start_at gets one along with its end_at.
+		if _, err := tx.ExecContext(ctx, `
+            UPDATE v3_issuer_keys SET end_at = $2, start_at = COALESCE(start_at, created_at)
+            WHERE key_id = $1`, keyID, stop); err != nil {
 			return err
+		}
+		// The new key starts signing once every pod has loaded it, so no pod
+		// signs with a key that another pod's cache cannot redeem yet. It
+		// keeps the current key's end, which a zero time leaves open.
+		var newEnd time.Time
+		if cur != nil {
+			newEnd = cur.UTC()
 		}
 		if _, err := tx.ExecContext(ctx, `
             INSERT INTO v3_issuer_keys (issuer_id, signing_key, public_key, cohort, start_at, end_at)
             VALUES ($1, $2, $3, $4, $5, $6)`,
-			id, signingTxt, string(publicTxt), l.cohort, now.UTC(), newEnd.UTC()); err != nil {
+			id, signingTxt, string(publicTxt), l.cohort, c.propagated(now).UTC(), newEnd); err != nil {
 			return err
 		}
 		return txInsertAudit(ctx, tx, operator, "rotate_key", &id, adminapi.RotateKeyRequest{StopRedeemingAt: stop})

@@ -241,19 +241,20 @@ func (s *AdminDBSuite) rotate(id uuid.UUID, stop time.Time) error {
 	return s.srv.adminRotateKey(s.ctx, "op-test", id, adminapi.RotateKeyRequest{StopRedeemingAt: stop}, time.Now())
 }
 
-// keyEnds returns the issuer's key end times in the order the sign path
-// reads them, so the last one is the signing key.
-func (s *AdminDBSuite) keyEnds(id uuid.UUID) []time.Time {
-	rows, err := s.srv.db.Query(`SELECT end_at FROM v3_issuer_keys WHERE issuer_id = $1 ORDER BY end_at ASC NULLS FIRST, start_at ASC`, id)
+type keyBounds struct{ start, end pq.NullTime }
+
+// keys returns the issuer's key bounds, oldest start first.
+func (s *AdminDBSuite) keys(id uuid.UUID) []keyBounds {
+	rows, err := s.srv.db.Query(`SELECT start_at, end_at FROM v3_issuer_keys WHERE issuer_id = $1 ORDER BY start_at ASC NULLS FIRST, created_at ASC`, id)
 	s.Require().NoError(err)
 	defer rows.Close()
-	var ends []time.Time
+	var out []keyBounds
 	for rows.Next() {
-		var t time.Time
-		s.Require().NoError(rows.Scan(&t))
-		ends = append(ends, t)
+		var k keyBounds
+		s.Require().NoError(rows.Scan(&k.start, &k.end))
+		out = append(out, k)
 	}
-	return ends
+	return out
 }
 
 func (s *AdminDBSuite) TestRotateKey() {
@@ -263,28 +264,35 @@ func (s *AdminDBSuite) TestRotateKey() {
 	req.Version, req.ExpiresAt = 2, &expires
 	id := s.create(req)
 
-	// Like prod: the current key has an end date past the issuer's expiry.
+	// Like prod: the current key has both bounds, ending past the issuer's
+	// expiry.
 	keyEnd := expires.AddDate(0, 0, 20).UTC().Truncate(time.Second)
-	_, err := s.srv.db.Exec(`UPDATE v3_issuer_keys SET end_at = $2 WHERE issuer_id = $1`, id, keyEnd)
+	_, err := s.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = $2, end_at = $3 WHERE issuer_id = $1`, id, now.AddDate(-1, 0, 0).UTC(), keyEnd)
 	s.Require().NoError(err)
 
 	stop := now.AddDate(0, 0, 93)
 	s.Require().NoError(s.rotate(id, stop))
-	ends := s.keyEnds(id)
-	s.Require().Len(ends, 2)
-	s.WithinDuration(stop, ends[0], time.Second, "the previous key stops redeeming at stop_redeeming_at")
-	s.WithinDuration(keyEnd, ends[1], time.Second, "the new key takes the previous end and sorts last")
+	keys := s.keys(id)
+	s.Require().Len(keys, 2)
+	s.WithinDuration(stop, keys[0].end.Time, time.Second, "the previous key stops redeeming at stop_redeeming_at")
+	s.True(keys[1].start.Time.After(now.Add(maxReplicaLag-time.Second)), "the new key signs only after every pod can load it")
+	s.WithinDuration(keyEnd, keys[1].end.Time, time.Second, "the new key keeps the previous end")
+	s.isRule(s.rotate(id, stop.AddDate(0, 0, 1)), "already pending")
 
 	audit, _ := s.srv.adminListAudit(s.ctx, id, 10)
 	s.Equal("rotate_key", audit[0].Action)
 
-	// A key with no end gives the new key the issuer's expiry.
+	// A migrated key with no start gets one, since Kafka rejects a key with
+	// only one bound. A key with no end leaves the new key open too.
 	req.Name = "open"
 	open := s.create(req)
+	_, err = s.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = NULL WHERE issuer_id = $1`, open)
+	s.Require().NoError(err)
 	s.Require().NoError(s.rotate(open, stop))
-	ends = s.keyEnds(open)
-	s.Require().Len(ends, 2)
-	s.WithinDuration(expires, ends[1], time.Second)
+	keys = s.keys(open)
+	s.Require().Len(keys, 2)
+	s.True(keys[0].start.Valid, "the previous key must have both bounds")
+	s.Nil(nullableTime(keys[1].end), "the new key stays open like the previous one")
 }
 
 func (s *AdminDBSuite) TestRotateKeyRules() {
@@ -298,7 +306,6 @@ func (s *AdminDBSuite) TestRotateKeyRules() {
 	s.isRule(s.rotate(id, now.AddDate(2, 0, 0)), "expires at")
 	s.ErrorIs(s.rotate(uuid.New(), now.AddDate(0, 0, 93)), errAdminNotFound)
 	s.isRule(s.rotate(s.create(v3("tl", expires)), now.AddDate(0, 0, 93)), "v3")
-	s.isRule(s.rotate(s.create(v1("noexp")), now.AddDate(0, 0, 93)), "set expires_at first")
 
 	repl := s.create(v1("repl"))
 	start := now.Add(time.Hour)

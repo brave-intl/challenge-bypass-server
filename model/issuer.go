@@ -110,21 +110,43 @@ func (x *Issuer) findActiveKeys(now time.Time, lw time.Duration) ([]*IssuerKeys,
 	return result, nil
 }
 
-// RedeemSigningKeys returns the keys v1 and v2 redemption tries: the last
-// key, which also signs, then every earlier key whose window contains now.
-// Earlier keys stay redeemable after a key rotation until their end_at. A
-// nil or zero bound is open.
-func (x *Issuer) RedeemSigningKeys(now time.Time) []*crypto.SigningKey {
+// CurrentKey returns the key that signs at now. For v1 and v2 it is the
+// started key with the latest start_at, so a key added by a rotation signs
+// only from its start_at, by which time every pod has loaded it. For v3, and
+// when no key has started, it is the last key. A nil or zero bound is open.
+func (x *Issuer) CurrentKey(now time.Time) *IssuerKeys {
 	if len(x.Keys) == 0 {
 		return nil
 	}
-	last := len(x.Keys) - 1
-	keys := []*IssuerKeys{&x.Keys[last]}
-	for i := last - 1; i >= 0; i-- {
+	last := &x.Keys[len(x.Keys)-1]
+	if x.Version >= 3 {
+		return last
+	}
+	var best *IssuerKeys
+	for i := range x.Keys {
 		k := &x.Keys[i]
-		started := k.StartAt == nil || k.StartAt.IsZero() || !k.StartAt.After(now)
-		ended := k.EndAt != nil && !k.EndAt.IsZero() && !k.EndAt.After(now)
-		if started && !ended {
+		if k.started(now) && (best == nil || !k.start().Before(best.start())) {
+			best = k
+		}
+	}
+	if best == nil {
+		return last
+	}
+	return best
+}
+
+// RedeemSigningKeys returns the keys v1 and v2 redemption tries: the signing
+// key first, then every other key whose window contains now. After a key
+// rotation, the previous key stays redeemable until its end_at.
+func (x *Issuer) RedeemSigningKeys(now time.Time) []*crypto.SigningKey {
+	signing := x.CurrentKey(now)
+	if signing == nil {
+		return nil
+	}
+	keys := []*IssuerKeys{signing}
+	for i := len(x.Keys) - 1; i >= 0; i-- {
+		k := &x.Keys[i]
+		if k != signing && k.started(now) && !k.ended(now) {
 			keys = append(keys, k)
 		}
 	}

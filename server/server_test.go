@@ -313,8 +313,9 @@ func (suite *ServerTestSuite) TestRedeemV2ChecksLegacyTable() {
 	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "the primary table must refuse a second redeem")
 }
 
-// After a key rotation, new tokens are signed by the new key, and a token
-// signed by the previous key still redeems over HTTP until that key ends.
+// A rotated key signs only once every pod can load it. After that, new
+// tokens are signed by the new key, and a token signed by the previous key
+// still redeems over HTTP until that key ends.
 func (suite *ServerTestSuite) TestRedeemAfterKeyRotation() {
 	issuerType := test.RandomString()
 	msg := "test message rotation"
@@ -326,20 +327,31 @@ func (suite *ServerTestSuite) TestRedeemAfterKeyRotation() {
 	issuer, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
 	suite.Require().Nil(appErr)
 	oldToken := suite.createCohortToken(server.URL, issuerType, v1Cohort, publicKey)
+	currentKey := func() *crypto.PublicKey {
+		suite.srv.invalidateIssuerCaches()
+		iss, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
+		suite.Require().Nil(appErr)
+		return iss.CurrentKey(time.Now()).CryptoSigningKey().PublicKey()
+	}
+	sameKey := func(a, b *crypto.PublicKey) bool {
+		at, err := a.MarshalText()
+		suite.Require().NoError(err)
+		bt, err := b.MarshalText()
+		suite.Require().NoError(err)
+		return string(at) == string(bt)
+	}
 
+	// Rotated now: the new key has not started, so the previous key signs.
 	req := adminapi.RotateKeyRequest{StopRedeemingAt: time.Now().AddDate(0, 0, 93)}
 	suite.Require().NoError(suite.srv.adminRotateKey(context.Background(), "op-test", *issuer.ID, req, time.Now()))
-	suite.srv.invalidateIssuerCaches()
+	suite.Require().True(sameKey(publicKey, currentKey()), "a pending key must not sign")
+	suite.createCohortToken(server.URL, issuerType, v1Cohort, publicKey)
 
-	rotated, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
-	suite.Require().Nil(appErr)
-	oldText, err := publicKey.MarshalText()
+	// Move the new key's start into the past, as if the propagation delay passed.
+	_, err := suite.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = now() - interval '1 minute' WHERE issuer_id = $1 AND start_at > now()`, issuer.ID.String())
 	suite.Require().NoError(err)
-	newText, err := rotated.Keys[len(rotated.Keys)-1].CryptoSigningKey().PublicKey().MarshalText()
-	suite.Require().NoError(err)
-	suite.Require().NotEqual(string(oldText), string(newText), "the new key must sign")
-
-	newPublicKey := rotated.Keys[len(rotated.Keys)-1].CryptoSigningKey().PublicKey()
+	newPublicKey := currentKey()
+	suite.Require().False(sameKey(publicKey, newPublicKey), "the new key must sign once started")
 	newToken := suite.createCohortToken(server.URL, issuerType, v1Cohort, newPublicKey)
 
 	for name, tok := range map[string]*crypto.UnblindedToken{"previous": oldToken, "new": newToken} {

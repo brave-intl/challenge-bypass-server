@@ -107,10 +107,9 @@ func (c *Server) BlindedTokenIssuerHandlerV2(w http.ResponseWriter, r *http.Requ
 			return retiredIssuerAppError()
 		}
 
-		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
-		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
+		if k := issuer.CurrentKey(time.Now()); k != nil {
+			signingKey = k.CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
 			c.Logger.Error(
@@ -175,10 +174,9 @@ func (c *Server) blindedTokenIssuerHandler(w http.ResponseWriter, r *http.Reques
 			}
 		}
 
-		// get latest signing key from issuer
 		var signingKey *crypto.SigningKey
-		if len(issuer.Keys) > 0 {
-			signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
+		if k := issuer.CurrentKey(time.Now()); k != nil {
+			signingKey = k.CryptoSigningKey()
 		} else {
 			// need to have atleast one signing key
 			c.Logger.Error(

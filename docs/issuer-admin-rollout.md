@@ -188,8 +188,8 @@ It takes effect within `CACHE_DURATION_SECS`. `GREATEST` ignores the NULL from t
 
 Use `k` on the issuer's detail screen to give a v1 or v2 issuer a new signing key without changing its name. Clients keep requesting the same issuer name, so no client configuration changes. v3 issuers rotate on their own schedule and cannot be rotated this way.
 
-The new key signs from the moment each pod sees the change, which is within `CACHE_DURATION_SECS` plus replica lag. The previous key keeps redeeming until the `stop_redeeming_at` you choose. The server requires that time to be at least 3 calendar months and 90 days after the previous key's last possible signature, the same minimum a retirement uses. `GET /v1/issuer` returns the new public key straight away, so clients that cache it pick it up on their next refresh.
+The new key starts signing after replica lag plus `CACHE_DURATION_SECS`. By then every pod has loaded it, so no pod signs with a key that another pod cannot redeem yet. Until then the previous key signs, and a second rotation is refused. The previous key keeps redeeming until the `stop_redeeming_at` you choose. The server requires that time to be at least 3 calendar months and 90 days after the previous key's last possible signature, the same minimum a retirement uses. `GET /v1/issuer` returns the new public key straight away, so clients that cache it pick it up on their next refresh.
 
-Redemption tries the signing key first and then every earlier key whose window has not ended, over both HTTP and Kafka.
+Redemption tries the signing key first and then every other key whose window has started and not ended, over both HTTP and Kafka. A rotated key with no `start_at`, as some migrated keys have, gets one, because Kafka rejects a key with only one time bound.
 
 **Undo.** The API has no undo. To keep the previous key redeeming longer, move its `end_at` later with SQL. Never delete the new key once it has signed, because tokens signed by it would stop redeeming.

@@ -428,17 +428,23 @@ func TestIssuer_RedeemSigningKeys(t *testing.T) {
 		return IssuerKeys{SigningKey: txt, StartAt: &start, EndAt: &end}
 	}
 	ended := key(now.AddDate(-2, 0, 0), now.AddDate(-1, 0, 0))
-	previous := key(now.AddDate(-1, 0, 0), now.AddDate(0, 3, 0))
 	open := key(time.Time{}, time.Time{})
-	current := key(now, now.AddDate(5, 0, 0))
+	previous := key(now.AddDate(-1, 0, 0), now.AddDate(0, 3, 0))
+	pending := key(now.Add(time.Hour), time.Time{})
 
-	iss := &Issuer{Keys: []IssuerKeys{ended, open, previous, current}}
+	iss := &Issuer{Version: 2, Keys: []IssuerKeys{ended, open, previous, pending}}
+	should.Equal(t, &iss.Keys[2], iss.CurrentKey(now), "the latest started key signs, not the pending one")
 	got := iss.RedeemSigningKeys(now)
-	must.Len(t, got, 3, "the ended key is skipped")
-	should.Equal(t, current.CryptoSigningKey(), got[0], "the signing key is tried first")
+	must.Len(t, got, 2, "the ended and pending keys are skipped")
+	should.Equal(t, previous.CryptoSigningKey(), got[0], "the signing key is tried first")
 
-	// The last key is tried even past its end, as before key rotation existed.
-	iss = &Issuer{Keys: []IssuerKeys{ended}}
+	should.Equal(t, &iss.Keys[3], iss.CurrentKey(now.Add(2*time.Hour)), "the pending key signs once started")
+
+	v3 := &Issuer{Version: 3, Keys: []IssuerKeys{previous, pending}}
+	should.Equal(t, &v3.Keys[1], v3.CurrentKey(now), "v3 keeps the last key")
+
+	// The signing key is tried even past its end, as before key rotation.
+	iss = &Issuer{Version: 1, Keys: []IssuerKeys{ended}}
 	should.Len(t, iss.RedeemSigningKeys(now), 1)
 	should.Empty(t, (&Issuer{}).RedeemSigningKeys(now))
 }
