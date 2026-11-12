@@ -21,10 +21,15 @@ import (
 // operatorIDPattern), which is written to the audit log. The operator ID is
 // never an email, because this repo is public. The mapping from operator ID
 // to person is kept outside the repo.
-var prodAdminKeys = []string{}
+var prodAdminKeys = []string{
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDfcr9jUEu9D9lSpUnPwT1cCggCe48kZw1bJt+CXYSnh op-284362",
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJddTmoeo3F/7FUQ9BGirk46aDp9pYONT1RvCnsOuCCD op-8bbfac",
+}
 
 var devAdminKeys = []string{
 	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMXg54hMfINJT0oks3OyADxKPO4s2CoonZUVRX2+eKj+ smoke-test-1",
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMKhViUd6Nwd8qre0go7Qc6Wa6Q7A3GiWj7q/GMF/NzV op-807c59",
+	"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHKLNINHAvbpK0MZIusOSzWENTcN2TdCXpjbtfOIIaSi op-548e2d",
 }
 
 // adminKeysForEnv returns the operator allowlist for env. An unknown env gets

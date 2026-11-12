@@ -14,14 +14,23 @@ local_port=${1:-2418}
 
 aws sts get-caller-identity >/dev/null 2>&1 || aws sso login
 
-task=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SERVICE" \
-	--desired-status RUNNING --query 'taskArns[0]' --output text)
-if [ "$task" = None ] || [ -z "$task" ]; then
+tasks=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SERVICE" \
+	--desired-status RUNNING --query 'taskArns' --output text)
+if [ "$tasks" = None ] || [ -z "$tasks" ]; then
 	echo "no running task for $SERVICE in $CLUSTER" >&2
 	exit 1
 fi
-read -r image runtime < <(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" \
-	--query 'tasks[0].containers[0].[image,runtimeId]' --output text)
+# During a deploy the list includes tasks that have not started, which SSM
+# cannot reach. Pick the newest running task, and in it the container whose
+# exec agent is running, since sidecars come first in the container list.
+# shellcheck disable=SC2086
+read -r task image runtime < <(aws ecs describe-tasks --cluster "$CLUSTER" --tasks $tasks \
+	--query 'sort_by(tasks[?lastStatus==`RUNNING`], &startedAt)[-1].[taskArn, containers[?managedAgents[?lastStatus==`RUNNING`]].image | [0], containers[?managedAgents[?lastStatus==`RUNNING`]].runtimeId | [0]]' \
+	--output text)
+if [ "$task" = None ] || [ "$runtime" = None ]; then
+	echo "no task for $SERVICE is reachable yet; try again in a minute" >&2
+	exit 1
+fi
 
 echo "task ${task##*/} image $image"
 echo "forwarding localhost:$local_port -> $SERVICE:2416"
