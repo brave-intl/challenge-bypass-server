@@ -93,7 +93,9 @@ func (s *adminKeystore) operator(keyID string) string {
 
 type adminKeyIDKey struct{}
 
-// adminSignatureKey holds the hex sha256 of the request's Signature header.
+// adminSignatureKey holds the hex sha256 of the key ID and the signed
+// content. The Signature header itself is not hashed, because the parser
+// ignores text between its fields, so a replay could reformat it.
 type adminSignatureKey struct{}
 
 // maxAdminClockSkew bounds how far a signed request's Date may be from now.
@@ -139,7 +141,12 @@ func adminSignatureMwr(ks *adminKeystore) func(http.Handler) http.Handler {
 				adminAuthError(w, http.StatusRequestTimeout, "date is invalid")
 				return
 			}
-			sum := sha256.Sum256([]byte(r.Header.Get("Signature")))
+			signed, err := verifier.SignatureParams.BuildSigningString(r)
+			if err != nil {
+				adminAuthError(w, http.StatusForbidden, "request signature verification failure")
+				return
+			}
+			sum := sha256.Sum256(append([]byte(keyID+"\n"), signed...))
 			ctx := context.WithValue(r.Context(), adminKeyIDKey{}, keyID)
 			ctx = context.WithValue(ctx, adminSignatureKey{}, hex.EncodeToString(sum[:]))
 			next.ServeHTTP(w, r.WithContext(ctx))
