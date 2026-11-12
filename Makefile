@@ -12,7 +12,7 @@ docker-dev:
 # utils/test/dynamodb.go), so no aws CLI is needed here.
 docker-test:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -p 2416:2416 challenge-bypass \
-	go test -v -tags=db ./...
+	go test -v -tags=db,act ./...
 
 # Ad-hoc aws CLI against the compose services. The dynamodb endpoint is preset
 # by the aws-cli service, so only the command itself is needed, e.g.
@@ -90,3 +90,15 @@ integration-test-logs:
 # Alias for consistency with existing naming convention
 .PHONY: docker-integration-test
 docker-integration-test: integration-test
+
+# ACT (Anonymous Credit Tokens): builds the combined Rust static library
+# (ristretto FFI + ACT) into act/ffi/lib under the ristretto library name, so
+# `go build -tags act` / `go test -tags act` link it with no extra flags.
+.PHONY: act-ffi
+act-ffi:
+	cd act/ffi && cargo build --release --locked && mkdir -p lib && \
+	cp "$${CARGO_TARGET_DIR:-target}/release/libcbp_act_ffi.a" lib/libchallenge_bypass_ristretto_ffi.a
+
+.PHONY: act-test
+act-test: act-ffi
+	go test -tags act ./act/ ./server/ -run 'ACT|Credit|Verify'

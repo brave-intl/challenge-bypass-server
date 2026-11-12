@@ -1,0 +1,26 @@
+[package]
+name = "cbp-act-ffi"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+description = "C ABI over anonymous-credit-tokens, bundled with challenge-bypass-ristretto-ffi, for challenge-bypass-server"
+publish = false
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+# Pinned exactly: wire formats (CBOR) and proof sizes depend on this version.
+anonymous-credit-tokens = "=0.4.2"
+blake3 = "1.8.1"
+# Bundled so the server links ONE Rust static library. Two Rust staticlibs in
+# one static binary each carry libstd and fail with duplicate symbols.
+# Keep this rev in lockstep with the challenge-bypass-ristretto-ffi version in
+# go.mod (same rule as the Dockerfile).
+challenge-bypass-ristretto-ffi = { git = "https://github.com/brave-intl/challenge-bypass-ristretto-ffi", rev = "450ec6bab8472c95e4ecadf8a3ef9d38f7073fe2" }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "unwind"
