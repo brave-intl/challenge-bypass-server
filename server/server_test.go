@@ -302,6 +302,15 @@ func (suite *ServerTestSuite) TestRedeemV2ChecksLegacyTable() {
 	suite.T().Setenv("dynamodb_table_legacy", "")
 	_, err = suite.srv.fetchRedemptionV2(id)
 	suite.Assert().ErrorIs(err, errRedemptionNotFound, "an empty legacy table name should turn off legacy reads")
+
+	// With legacy reads off, HTTP redeem must skip the legacy table and rely
+	// on the primary table's conditional write.
+	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusOK, resp.StatusCode, "with legacy reads off, the token is new to the primary table")
+	resp, err = suite.attemptRedeem(server.URL, preimageText, sigText, issuerType, msg)
+	suite.Require().NoError(err)
+	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "the primary table must refuse a second redeem")
 }
 
 type v3Redemption struct {

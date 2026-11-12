@@ -117,6 +117,10 @@ func (c *Server) fetchRedemptionV2FromTable(id uuid.UUID, tableName string) (*Re
 				S: aws.String(id.String()),
 			},
 		},
+		// No conditional write guards a table that is not written to, so a
+		// stale read there could miss a token redeemed just before the
+		// switch to a new write table.
+		ConsistentRead: aws.Bool(tableName != redemptionWriteTable()),
 	}
 	result, err := c.dynamo.GetItem(input)
 	if err != nil {
