@@ -294,8 +294,9 @@ func (c *Server) adminCreateIssuer(ctx context.Context, operator string, req adm
 	if err := validateCreate(req, time.Now()); err != nil {
 		return uuid.Nil, err
 	}
+	// Like the legacy creates, v1 and v2 turn cohort 0 into 1 and v3 keeps 0.
 	cohort := req.Cohort
-	if cohort == 0 {
+	if cohort == 0 && req.Version < 3 {
 		cohort = v1Cohort
 	}
 	iss := model.Issuer{

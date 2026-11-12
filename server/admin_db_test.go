@@ -93,6 +93,24 @@ func (s *AdminDBSuite) TestCreateV3PopulatesWindows() {
 	s.NotNil(got.LatestKeyEnd)
 }
 
+// Kafka sign requests match on the key cohort, and clients sign cohort 0.
+func (s *AdminDBSuite) TestCreateCohortZero() {
+	req := v3("cohort-0", time.Now().AddDate(1, 0, 0))
+	req.Cohort = 0
+	got, err := s.srv.adminGetIssuer(s.ctx, s.create(req), time.Now())
+	s.Require().NoError(err)
+	s.Equal(int16(0), got.Cohort)
+	for _, k := range got.Keys {
+		s.Equal(int16(0), k.Cohort)
+	}
+
+	req = v1("legacy-0")
+	req.Cohort = 0
+	got, err = s.srv.adminGetIssuer(s.ctx, s.create(req), time.Now())
+	s.Require().NoError(err)
+	s.Equal(v1Cohort, got.Cohort, "v1 and v2 turn 0 into 1, like the legacy creates")
+}
+
 func (s *AdminDBSuite) TestCreateDuplicateRollsBackAudit() {
 	s.create(v1("dup"))
 	_, err := s.srv.adminCreateIssuer(s.ctx, "op-test", v1("dup"))
