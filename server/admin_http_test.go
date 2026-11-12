@@ -247,6 +247,10 @@ func (s *AdminHTTPSuite) TestReplayedMutationRejected() {
 	_, err = s.client.RetireIssuer(ctx, old.ID, adminapi.RetireRequest{ReplacementIssuerID: repl.ID, StopIssuingAt: start.Add(time.Minute), StopRedeemingAt: start.Add(94 * 24 * time.Hour)})
 	s.Require().NoError(err)
 	s.Equal(409, send())
+	// The parser ignores text between fields, so reformatting the header
+	// must not count as a new request.
+	req.Header.Set("Signature", " "+req.Header.Get("Signature")+", junk")
+	s.Equal(409, send())
 	got, err := s.client.GetIssuer(ctx, old.ID)
 	s.Require().NoError(err)
 	s.Equal(adminapi.StatusRetiring, got.Status)
