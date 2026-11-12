@@ -136,24 +136,6 @@ func (x *Issuer) CurrentKey(now time.Time) *IssuerKeys {
 	return best
 }
 
-// RedeemSigningKeys returns the keys v1 and v2 redemption tries: the signing
-// key first, then every other key whose window contains now. After a key
-// rotation, the previous key stays redeemable until its end_at.
-func (x *Issuer) RedeemSigningKeys(now time.Time) []*crypto.SigningKey {
-	signing := x.CurrentKey(now)
-	if signing == nil {
-		return nil
-	}
-	keys := []*IssuerKeys{signing}
-	for i := len(x.Keys) - 1; i >= 0; i-- {
-		k := &x.Keys[i]
-		if k != signing && k.started(now) && !k.ended(now) {
-			keys = append(keys, k)
-		}
-	}
-	return parseSigningKeys(keys)
-}
-
 func parseSigningKeys(keys []*IssuerKeys) []*crypto.SigningKey {
 	result := make([]*crypto.SigningKey, 0, len(keys))
 
