@@ -440,6 +440,11 @@ func TestIssuer_RedeemSigningKeys(t *testing.T) {
 
 	should.Equal(t, &iss.Keys[3], iss.CurrentKey(now.Add(2*time.Hour)), "the pending key signs once started")
 
+	// A key that started later but has ended never signs.
+	lateEnded := key(now.AddDate(0, -1, 0), now.Add(-time.Hour))
+	iss = &Issuer{Version: 2, Keys: []IssuerKeys{lateEnded, previous}}
+	should.Equal(t, &iss.Keys[1], iss.CurrentKey(now))
+
 	v3 := &Issuer{Version: 3, Keys: []IssuerKeys{previous, pending}}
 	should.Equal(t, &v3.Keys[1], v3.CurrentKey(now), "v3 keeps the last key")
 

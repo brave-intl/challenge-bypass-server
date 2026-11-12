@@ -111,9 +111,10 @@ func (x *Issuer) findActiveKeys(now time.Time, lw time.Duration) ([]*IssuerKeys,
 }
 
 // CurrentKey returns the key that signs at now. For v1 and v2 it is the
-// started key with the latest start_at, so a key added by a rotation signs
-// only from its start_at, by which time every pod has loaded it. For v3, and
-// when no key has started, it is the last key. A nil or zero bound is open.
+// started, unended key with the latest start_at, so a key added by a
+// rotation signs only from its start_at, by which time every pod has loaded
+// it. For v3, and when no key qualifies, it is the last key. A nil or zero
+// bound is open.
 func (x *Issuer) CurrentKey(now time.Time) *IssuerKeys {
 	if len(x.Keys) == 0 {
 		return nil
@@ -125,7 +126,7 @@ func (x *Issuer) CurrentKey(now time.Time) *IssuerKeys {
 	var best *IssuerKeys
 	for i := range x.Keys {
 		k := &x.Keys[i]
-		if k.started(now) && (best == nil || !k.start().Before(best.start())) {
+		if k.started(now) && !k.ended(now) && (best == nil || !k.start().Before(best.start())) {
 			best = k
 		}
 	}
