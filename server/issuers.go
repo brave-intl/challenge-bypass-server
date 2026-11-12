@@ -403,10 +403,9 @@ func makeIssuerResponse(iss *model.Issuer) issuerResponse {
 		expiresAt = expt.Format(time.RFC3339)
 	}
 
-	// Last key in array is the valid one
 	var publicKey *crypto.PublicKey
-	if len(iss.Keys) > 0 {
-		publicKey = iss.Keys[len(iss.Keys)-1].CryptoSigningKey().PublicKey()
+	if k := iss.CurrentKey(time.Now()); k != nil {
+		publicKey = k.CryptoSigningKey().PublicKey()
 	}
 
 	return issuerResponse{

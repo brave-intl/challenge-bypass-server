@@ -29,6 +29,21 @@ func (x *IssuerKeys) CryptoSigningKey() *crypto.SigningKey {
 	return result
 }
 
+func (x *IssuerKeys) start() time.Time {
+	if x.StartAt == nil {
+		return time.Time{}
+	}
+	return *x.StartAt
+}
+
+func (x *IssuerKeys) started(now time.Time) bool {
+	return !x.start().After(now)
+}
+
+func (x *IssuerKeys) ended(now time.Time) bool {
+	return x.EndAt != nil && !x.EndAt.IsZero() && !x.EndAt.After(now)
+}
+
 func (x *IssuerKeys) isActiveV3(now time.Time, lw time.Duration) (bool, error) {
 	if !x.isValidV3() {
 		return false, ErrInvalidIV3Key

@@ -237,6 +237,82 @@ func (s *AdminDBSuite) TestRetireHappyPathAndCancel() {
 	s.Equal("retire", audit[1].Action)
 }
 
+func (s *AdminDBSuite) rotate(id uuid.UUID, stop time.Time) error {
+	return s.srv.adminRotateKey(s.ctx, "op-test", id, adminapi.RotateKeyRequest{StopRedeemingAt: stop}, time.Now())
+}
+
+type keyBounds struct{ start, end pq.NullTime }
+
+// keys returns the issuer's key bounds, oldest start first.
+func (s *AdminDBSuite) keys(id uuid.UUID) []keyBounds {
+	rows, err := s.srv.db.Query(`SELECT start_at, end_at FROM v3_issuer_keys WHERE issuer_id = $1 ORDER BY start_at ASC NULLS FIRST, created_at ASC`, id)
+	s.Require().NoError(err)
+	defer rows.Close()
+	var out []keyBounds
+	for rows.Next() {
+		var k keyBounds
+		s.Require().NoError(rows.Scan(&k.start, &k.end))
+		out = append(out, k)
+	}
+	return out
+}
+
+func (s *AdminDBSuite) TestRotateKey() {
+	now := time.Now()
+	expires := now.AddDate(2, 0, 0)
+	req := v1("pay")
+	req.Version, req.ExpiresAt = 2, &expires
+	id := s.create(req)
+
+	// Like prod: the current key has both bounds, ending past the issuer's
+	// expiry.
+	keyEnd := expires.AddDate(0, 0, 20).UTC().Truncate(time.Second)
+	_, err := s.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = $2, end_at = $3 WHERE issuer_id = $1`, id, now.AddDate(-1, 0, 0).UTC(), keyEnd)
+	s.Require().NoError(err)
+
+	stop := now.AddDate(0, 0, 93)
+	s.Require().NoError(s.rotate(id, stop))
+	keys := s.keys(id)
+	s.Require().Len(keys, 2)
+	s.WithinDuration(stop, keys[0].end.Time, time.Second, "the previous key stops redeeming at stop_redeeming_at")
+	s.True(keys[1].start.Time.After(now.Add(maxReplicaLag-time.Second)), "the new key signs only after every pod can load it")
+	s.WithinDuration(keyEnd, keys[1].end.Time, time.Second, "the new key keeps the previous end")
+	s.isRule(s.rotate(id, stop.AddDate(0, 0, 1)), "already pending")
+
+	audit, _ := s.srv.adminListAudit(s.ctx, id, 10)
+	s.Equal("rotate_key", audit[0].Action)
+
+	// A migrated key with no start gets one, since Kafka rejects a key with
+	// only one bound. A key with no end leaves the new key open too.
+	req.Name = "open"
+	open := s.create(req)
+	_, err = s.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = NULL WHERE issuer_id = $1`, open)
+	s.Require().NoError(err)
+	s.Require().NoError(s.rotate(open, stop))
+	keys = s.keys(open)
+	s.Require().Len(keys, 2)
+	s.True(keys[0].start.Valid, "the previous key must have both bounds")
+	s.Nil(nullableTime(keys[1].end), "the new key stays open like the previous one")
+}
+
+func (s *AdminDBSuite) TestRotateKeyRules() {
+	now := time.Now()
+	expires := now.AddDate(1, 0, 0)
+	req := v1("pay")
+	req.Version, req.ExpiresAt = 2, &expires
+	id := s.create(req)
+
+	s.isRule(s.rotate(id, now.AddDate(0, 0, 80)), "90 days")
+	s.isRule(s.rotate(id, now.AddDate(2, 0, 0)), "expires at")
+	s.ErrorIs(s.rotate(uuid.New(), now.AddDate(0, 0, 93)), errAdminNotFound)
+	s.isRule(s.rotate(s.create(v3("tl", expires)), now.AddDate(0, 0, 93)), "v3")
+
+	repl := s.create(v1("repl"))
+	start := now.Add(time.Hour)
+	s.Require().NoError(s.retire(id, repl, start, start.Add(93*day)))
+	s.isRule(s.rotate(id, now.AddDate(0, 0, 93)), "only an active issuer")
+}
+
 func (s *AdminDBSuite) TestRetireRules() {
 	now := time.Now()
 	old, repl := s.create(v1("old")), s.create(v1("new"))

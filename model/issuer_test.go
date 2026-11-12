@@ -417,3 +417,36 @@ func TestIssuer_IsIssuing(t *testing.T) {
 	should.False(t, (&Issuer{StopIssuingAt: &past}).IsIssuing(now))
 	should.False(t, (&Issuer{StopIssuingAt: &now}).IsIssuing(now))
 }
+
+func TestIssuer_CurrentKey(t *testing.T) {
+	now := time.Now()
+	key := func(start, end time.Time) IssuerKeys {
+		return IssuerKeys{StartAt: &start, EndAt: &end}
+	}
+	ended := key(now.AddDate(-2, 0, 0), now.AddDate(-1, 0, 0))
+	open := key(time.Time{}, time.Time{})
+	previous := key(now.AddDate(-1, 0, 0), now.AddDate(0, 3, 0))
+	pending := key(now.Add(time.Hour), time.Time{})
+
+	iss := &Issuer{Version: 2, Keys: []IssuerKeys{ended, open, previous, pending}}
+	should.Equal(t, &iss.Keys[2], iss.CurrentKey(now), "the latest started key signs, not the pending one")
+	should.Equal(t, &iss.Keys[3], iss.CurrentKey(now.Add(2*time.Hour)), "the pending key signs once started")
+
+	// A key that started later but has ended never signs.
+	lateEnded := key(now.AddDate(0, -1, 0), now.Add(-time.Hour))
+	iss = &Issuer{Version: 2, Keys: []IssuerKeys{lateEnded, previous}}
+	should.Equal(t, &iss.Keys[1], iss.CurrentKey(now))
+
+	// Keys with no bounds, as migration 0007 created them, tie. The last
+	// one signs, as before CurrentKey existed.
+	iss = &Issuer{Version: 1, Keys: []IssuerKeys{{}, {}, {}}}
+	should.Equal(t, &iss.Keys[2], iss.CurrentKey(now))
+
+	v3 := &Issuer{Version: 3, Keys: []IssuerKeys{previous, pending}}
+	should.Equal(t, &v3.Keys[1], v3.CurrentKey(now), "v3 keeps the last key")
+
+	// With nothing started and unended, the last key signs, as before.
+	iss = &Issuer{Version: 1, Keys: []IssuerKeys{ended}}
+	should.Equal(t, &iss.Keys[0], iss.CurrentKey(now))
+	should.Nil(t, (&Issuer{}).CurrentKey(now))
+}

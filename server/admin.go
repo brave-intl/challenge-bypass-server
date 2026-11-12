@@ -33,6 +33,10 @@ func (c *Server) adminRoutes(r chi.Router) {
 		func(ctx context.Context, op string, id uuid.UUID, req adminapi.PostponeRequest) error {
 			return c.adminPostponeRetirement(ctx, op, id, req, time.Now())
 		}))
+	r.Method("POST", "/issuers/{id}/rotate", adminMutation(c, "rotate_key",
+		func(ctx context.Context, op string, id uuid.UUID, req adminapi.RotateKeyRequest) error {
+			return c.adminRotateKey(ctx, op, id, req, time.Now())
+		}))
 	r.Method("GET", "/audit", AppHandler(c.adminAuditHandler))
 }
 

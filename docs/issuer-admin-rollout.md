@@ -183,3 +183,15 @@ COMMIT;
 ```
 
 It takes effect within `CACHE_DURATION_SECS`. `GREATEST` ignores the NULL from the `CASE` for v1 and v2 issuers. One limit is that SQL cannot create signing keys. So a v3 issuer whose keys have all lapsed still cannot sign afterwards. Its postpone through the admin API creates them. Prefer the admin API whenever it is up.
+
+## Rotating a v1 or v2 key
+
+Use `k` on the issuer's detail screen to give a v1 or v2 issuer a new signing key without changing its name. Clients keep requesting the same issuer name, so no client configuration changes. v3 issuers rotate on their own schedule and cannot be rotated this way.
+
+The new key starts signing after replica lag plus `CACHE_DURATION_SECS`. By then every pod has loaded it, so no pod signs with a key that another pod cannot redeem yet. Until then the previous key signs, and a second rotation is refused. The previous key keeps redeeming until the `stop_redeeming_at` you choose. The server requires that time to be at least 3 calendar months and 90 days after the previous key's last possible signature, the same minimum a retirement uses. `GET /v1/issuer` returns the new public key straight away, so clients that cache it pick it up on their next refresh.
+
+Kafka redemption tries every key whose window is open, so tokens from both keys redeem there. HTTP v1 and v2 redemption tries only one key, so only rotate issuers whose clients redeem over Kafka, such as the ads issuers. Never rotate an issuer bat-go uses. bat-go stores one public key per issuer and never refreshes it. A rotated key with no `start_at`, as some migrated keys have, gets one, because Kafka rejects a key with only one time bound.
+
+**Do not rotate an ads issuer yet.** `GET /v1/issuer` lists one key per issuer, so the previous key leaves the list when the new key starts signing. The ads service takes a payment token's value from that list. It would value tokens signed by the previous key at zero, even though they still redeem. Rotate ads issuers only after the ads service keeps the values of previous keys. Listing both keys is not an option, because browsers accept at most 6 public keys per issuer and the 6 cohorts already use them. Browsers also learn a new key only on their next issuers fetch, so token refills pause until then.
+
+**Undo.** The API has no undo. To keep the previous key redeeming longer, move its `end_at` later with SQL. Never delete the new key once it has signed, because tokens signed by it would stop redeeming.
