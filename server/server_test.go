@@ -313,6 +313,45 @@ func (suite *ServerTestSuite) TestRedeemV2ChecksLegacyTable() {
 	suite.Assert().Equal(http.StatusConflict, resp.StatusCode, "the primary table must refuse a second redeem")
 }
 
+// A rotated key signs only once every pod can load it. After that, new
+// tokens are signed by the new key.
+func (suite *ServerTestSuite) TestSignAfterKeyRotation() {
+	issuerType := test.RandomString()
+
+	server := httptest.NewServer(suite.handler)
+	defer server.Close()
+
+	publicKey := suite.createIssuerWithExpiration(server.URL, issuerType, v1Cohort, time.Now().AddDate(1, 0, 0))
+	issuer, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
+	suite.Require().Nil(appErr)
+	currentKey := func() *crypto.PublicKey {
+		suite.srv.invalidateIssuerCaches()
+		iss, appErr := suite.srv.GetLatestIssuer(issuerType, v1Cohort)
+		suite.Require().Nil(appErr)
+		return iss.CurrentKey(time.Now()).CryptoSigningKey().PublicKey()
+	}
+	sameKey := func(a, b *crypto.PublicKey) bool {
+		at, err := a.MarshalText()
+		suite.Require().NoError(err)
+		bt, err := b.MarshalText()
+		suite.Require().NoError(err)
+		return string(at) == string(bt)
+	}
+
+	// Rotated now: the new key has not started, so the previous key signs.
+	req := adminapi.RotateKeyRequest{StopRedeemingAt: time.Now().AddDate(0, 0, 93)}
+	suite.Require().NoError(suite.srv.adminRotateKey(context.Background(), "op-test", *issuer.ID, req, time.Now()))
+	suite.Require().True(sameKey(publicKey, currentKey()), "a pending key must not sign")
+	suite.createCohortToken(server.URL, issuerType, v1Cohort, publicKey)
+
+	// Move the new key's start into the past, as if the propagation delay passed.
+	_, err := suite.srv.db.Exec(`UPDATE v3_issuer_keys SET start_at = now() - interval '1 minute' WHERE issuer_id = $1 AND start_at > now()`, issuer.ID.String())
+	suite.Require().NoError(err)
+	newPublicKey := currentKey()
+	suite.Require().False(sameKey(publicKey, newPublicKey), "the new key must sign once started")
+	suite.createCohortToken(server.URL, issuerType, v1Cohort, newPublicKey)
+}
+
 type v3Redemption struct {
 	validFrom       time.Time
 	validTo         time.Time

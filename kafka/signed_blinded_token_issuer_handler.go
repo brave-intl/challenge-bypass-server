@@ -437,10 +437,9 @@ OUTER:
 				)
 			}
 		} else {
-			// otherwise, use the latest key for signing get the latest signing key from issuer
 			var signingKey *crypto.SigningKey
-			if len(issuer.Keys) > 0 {
-				signingKey = issuer.Keys[len(issuer.Keys)-1].CryptoSigningKey()
+			if k := issuer.CurrentKey(time.Now()); k != nil {
+				signingKey = k.CryptoSigningKey()
 			}
 
 			if signingKey == nil {

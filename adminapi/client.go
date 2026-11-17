@@ -123,6 +123,10 @@ func (c *Client) PostponeRetirement(ctx context.Context, id string, req Postpone
 	return c.issuer(ctx, "POST", id, "/retire/postpone", req)
 }
 
+func (c *Client) RotateKey(ctx context.Context, id string, req RotateKeyRequest) (*Issuer, error) {
+	return c.issuer(ctx, "POST", id, "/rotate", req)
+}
+
 func (c *Client) ListAudit(ctx context.Context, issuerID string, limit int) ([]AuditEntry, error) {
 	q := url.Values{"issuer_id": {issuerID}, "limit": {strconv.Itoa(limit)}}
 	var out []AuditEntry

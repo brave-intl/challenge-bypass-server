@@ -35,13 +35,22 @@ func SignRequest(r *http.Request, key ed25519.PrivateKey, now time.Time) error {
 	return s.SignRequest(r)
 }
 
-// LoadPrivateKey reads an unencrypted OpenSSH ed25519 private key.
-func LoadPrivateKey(path string) (ed25519.PrivateKey, error) {
+// LoadPrivateKey reads an OpenSSH ed25519 private key. If the key is
+// encrypted, LoadPrivateKey calls passphrase to get the passphrase.
+func LoadPrivateKey(path string, passphrase func() ([]byte, error)) (ed25519.PrivateKey, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
 	k, err := ssh.ParseRawPrivateKey(raw)
+	var missing *ssh.PassphraseMissingError
+	if errors.As(err, &missing) {
+		var pass []byte
+		if pass, err = passphrase(); err != nil {
+			return nil, err
+		}
+		k, err = ssh.ParseRawPrivateKeyWithPassphrase(raw, pass)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
