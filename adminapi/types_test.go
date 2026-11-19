@@ -21,6 +21,20 @@ func TestMinStopRedeeming(t *testing.T) {
 	}
 }
 
+func TestMinRotateStop(t *testing.T) {
+	cases := map[string]string{
+		"2027-02-01": "2027-03-03", // 1 month is 28 days: 30 days wins
+		"2027-03-01": "2027-04-01", // 1 month is 31 days: 1 month wins
+	}
+	for in, want := range cases {
+		from, _ := time.Parse("2006-01-02", in)
+		w, _ := time.Parse("2006-01-02", want)
+		if got := MinRotateStop(from); !got.Equal(w) {
+			t.Errorf("%s: got %s want %s", in, got, w)
+		}
+	}
+}
+
 func TestWindowsEnd(t *testing.T) {
 	jan31 := time.Date(2027, 1, 31, 0, 0, 0, 0, time.UTC)
 	if got, err := WindowsEnd("", 3, jan31); err != nil || !got.Equal(jan31) {

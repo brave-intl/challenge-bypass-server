@@ -812,8 +812,8 @@ func (c *Server) adminRotateKey(ctx context.Context, operator string, id uuid.UU
 		return err
 	}
 	// Pods keep signing with the current key until they see the new one.
-	if min := adminapi.MinStopRedeeming(c.propagated(now)); stop.Before(min) {
-		return ruleErr("stop_redeeming_at must be at or after %s: 3 months and at least 90 days after the current key's last possible signature", min.Format(time.RFC3339))
+	if min := adminapi.MinRotateStop(c.propagated(now)); stop.Before(min) {
+		return ruleErr("stop_redeeming_at must be at or after %s: 1 month and at least 30 days after the current key's last possible signature", min.Format(time.RFC3339))
 	}
 	signing, err := crypto.RandomSigningKey()
 	if err != nil {

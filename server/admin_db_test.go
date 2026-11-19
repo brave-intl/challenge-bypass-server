@@ -302,7 +302,10 @@ func (s *AdminDBSuite) TestRotateKeyRules() {
 	req.Version, req.ExpiresAt = 2, &expires
 	id := s.create(req)
 
-	s.isRule(s.rotate(id, now.AddDate(0, 0, 80)), "90 days")
+	s.isRule(s.rotate(id, now.AddDate(0, 0, 25)), "30 days")
+	monthly := req
+	monthly.Name = "monthly"
+	s.Require().NoError(s.rotate(s.create(monthly), now.AddDate(0, 0, 32)))
 	s.isRule(s.rotate(id, now.AddDate(2, 0, 0)), "expires at")
 	s.ErrorIs(s.rotate(uuid.New(), now.AddDate(0, 0, 93)), errAdminNotFound)
 	s.isRule(s.rotate(s.create(v3("tl", expires)), now.AddDate(0, 0, 93)), "v3")

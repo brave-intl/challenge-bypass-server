@@ -268,7 +268,7 @@ func (m model) openRotate(cur adminapi.Issuer) model {
 	return m.openForm(screenEdit, form{
 		title: "Rotate the signing key of " + cur.Name + " (same name; the new key signs once every pod has loaded it)",
 		fields: []field{
-			newField("stop_redeeming_at", "+93d", "when the current key stops redeeming (≥ 3 months and 90 days)"),
+			newField("stop_redeeming_at", "+93d", "when the current key stops redeeming (≥ 1 month and 30 days)"),
 		},
 		build: func(m model, v []string) (confirmReq, error) {
 			sr, err := parseWhen(v[0], time.Now())

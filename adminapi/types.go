@@ -22,6 +22,19 @@ func MinStopRedeeming(lastIssue time.Time) time.Time {
 	return m
 }
 
+// MinRotateStop is the earliest stop_redeeming_at allowed for the previous
+// key of a rotated issuer whose last signature is at lastSign. The result is
+// the later of lastSign plus 1 calendar month and lastSign plus 30 days. It
+// is shorter than MinStopRedeeming because a rotation keeps the issuer name,
+// so clients move to the new key without any change on their side.
+func MinRotateStop(lastSign time.Time) time.Time {
+	m := lastSign.UTC().AddDate(0, 1, 0)
+	if d := lastSign.Add(30 * 24 * time.Hour); d.After(m) {
+		return d
+	}
+	return m
+}
+
 // WindowsEnd returns a time at or after the end of n consecutive v3 key
 // windows of the ISO 8601 duration, the first starting at from. An empty
 // duration returns from. bat-go sizes a month or a year by the calendar at
