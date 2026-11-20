@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/go-chi/chi/v5"
 	chiware "github.com/go-chi/chi/v5/middleware"
@@ -116,7 +116,7 @@ type Server struct {
 	ListenPort   int          `json:"listen_port,omitempty"`
 	DBConfigPath string       `json:"db_config_path"`
 	Logger       *slog.Logger `json:",omitempty"`
-	dynamo       *dynamodb.DynamoDB
+	dynamo       dynamodbiface.DynamoDBAPI
 	dbConfig     DBConfig
 	db           *sql.DB // Database writer instance
 	dbr          *sql.DB // Database reader instance

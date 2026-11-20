@@ -33,11 +33,18 @@ type SignedIssuerToken struct {
 	signingKey *crypto.SigningKey
 }
 
+// redeemServer is the subset of server.Server methods that SignedTokenRedeemHandler uses.
+type redeemServer interface {
+	FetchAllIssuers() ([]model.Issuer, error)
+	CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*cbpServer.RedemptionV2, cbpServer.Equivalence, error)
+	PersistRedemption(redemption cbpServer.RedemptionV2) error
+}
+
 func SignedTokenRedeemHandler(
 	ctx context.Context,
 	msg kafka.Message,
-	producer *kafka.Writer,
-	server *cbpServer.Server,
+	producer messageWriter,
+	server redeemServer,
 	logger *slog.Logger,
 ) error {
 	data := msg.Value
@@ -404,10 +411,7 @@ func SignedTokenRedeemHandler(
 
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), reqLogger)
 	if err != nil {
-		reqLogger.Error("failed to emit results to topic",
-			"topic", producer.Topic,
-			slog.Any("error", err),
-		)
+		reqLogger.Error("failed to emit results to topic", slog.Any("error", err))
 		kafkaErrorTotal.Inc()
 		metrics.CountError("emit")
 		return err
@@ -466,7 +470,7 @@ func handlePermanentRedemptionError(
 	message string,
 	cause error,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer messageWriter,
 	requestID string,
 	redeemResultStatus int32,
 	logger *slog.Logger,

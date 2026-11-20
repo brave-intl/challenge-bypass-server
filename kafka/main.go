@@ -34,6 +34,11 @@ type messageReader interface {
 	Stats() kafkaGo.ReaderStats
 }
 
+// messageWriter is the subset of kafka.Writer methods that Emit uses.
+type messageWriter interface {
+	WriteMessages(ctx context.Context, msgs ...kafkaGo.Message) error
+}
+
 // TopicMapping represents a kafka topic, how to process it, and where to emit the result.
 type TopicMapping struct {
 	Topic     string
@@ -363,11 +368,11 @@ func newConsumer(ctx context.Context, topics []string, groupID string, logger *s
 // Emit sends a message over the Kafka interface.
 func Emit(
 	ctx context.Context,
-	producer *kafkaGo.Writer,
+	producer messageWriter,
 	message []byte,
 	logger *slog.Logger,
 ) error {
-	logger.Info("beginning data emission", "topic", producer.Topic)
+	logger.Info("beginning data emission")
 
 	messageKey := uuid.New()
 	marshaledMessageKey, err := messageKey.MarshalBinary()

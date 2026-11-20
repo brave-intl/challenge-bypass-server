@@ -9,16 +9,17 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
 	"github.com/brave-intl/challenge-bypass-server/utils/ptr"
 )
 
 // SetupDynamodbTables this function sets up tables for use in dynamodb tests.
-func SetupDynamodbTables(db *dynamodb.DynamoDB) error {
+func SetupDynamodbTables(db dynamodbiface.DynamoDBAPI) error {
 	return SetupDynamodbTable(db, "redemptions")
 }
 
 // SetupDynamodbTable recreates an empty redemptions table with the given name.
-func SetupDynamodbTable(db *dynamodb.DynamoDB, name string) error {
+func SetupDynamodbTable(db dynamodbiface.DynamoDBAPI, name string) error {
 	describeInput := &dynamodb.DescribeTableInput{
 		TableName: ptr.FromString(name),
 	}
@@ -76,7 +77,7 @@ func SetupDynamodbTable(db *dynamodb.DynamoDB, name string) error {
 	return nil
 }
 
-func tableIsActive(db *dynamodb.DynamoDB, tableName string, timeout, duration time.Duration) error {
+func tableIsActive(db dynamodbiface.DynamoDBAPI, tableName string, timeout, duration time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
