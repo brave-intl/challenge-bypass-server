@@ -7,7 +7,6 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/model"
 
-	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr" // nolint
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -229,11 +228,10 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
 func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
-	temporary := false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
-		return nil, UnknownEquivalence, utils.ProcessingErrorFromError(err, temporary)
+		return nil, UnknownEquivalence, utils.ProcessingErrorFromError(err, false)
 	}
 
 	id := uuid.NewSHA1(*issuer.ID, preimageTxt)
@@ -262,17 +260,22 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		return &redemption, NoEquivalence, nil
 	}
 
-	var (
-		ptee *awsDynamoTypes.ProvisionedThroughputExceededException
-		rle  *awsDynamoTypes.RequestLimitExceeded
-		ise  *awsDynamoTypes.InternalServerError
-	)
+	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, isTemporaryDynamoError(err))
+}
 
-	// is this a temporary error?
-	if errors.As(err, &ptee) ||
-		errors.As(err, &rle) ||
-		errors.As(err, &ise) {
-		temporary = true
+// isTemporaryDynamoError reports whether err is a DynamoDB throttle or server
+// error, which a retry may get past. The client is SDK v1, so its errors are
+// awserr codes, not the SDK v2 exception types.
+func isTemporaryDynamoError(err error) bool {
+	var aerr awserr.Error
+	if !errors.As(err, &aerr) {
+		return false
 	}
-	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, temporary)
+	switch aerr.Code() {
+	case dynamodb.ErrCodeProvisionedThroughputExceededException,
+		dynamodb.ErrCodeRequestLimitExceeded,
+		dynamodb.ErrCodeInternalServerError:
+		return true
+	}
+	return false
 }
