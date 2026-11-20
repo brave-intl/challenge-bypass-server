@@ -40,13 +40,13 @@ func (s *fakeRedeemServer) FetchAllIssuers() ([]model.Issuer, error) {
 
 // CheckRedeemedTokenEquivalence returns s.equivs in call order and repeats the
 // last one. With no equivs it reports NoEquivalence.
-func (s *fakeRedeemServer) CheckRedeemedTokenEquivalence(issuer *model.Issuer, _ *crypto.TokenPreimage, payload string, offset int64) (*cbpServer.RedemptionV2, cbpServer.Equivalence, error) {
+func (s *fakeRedeemServer) CheckRedeemedTokenEquivalence(issuer *model.Issuer, _ *crypto.TokenPreimage, payload string, _ int64) (*cbpServer.RedemptionV2, cbpServer.Equivalence, error) {
 	r := equivResult{eq: cbpServer.NoEquivalence}
 	if len(s.equivs) > 0 {
 		r = s.equivs[min(s.equivCalls, len(s.equivs)-1)]
 	}
 	s.equivCalls++
-	return &cbpServer.RedemptionV2{IssuerID: issuer.ID.String(), Payload: payload, Offset: offset}, r.eq, r.err
+	return &cbpServer.RedemptionV2{IssuerID: issuer.ID.String(), Payload: payload}, r.eq, r.err
 }
 
 func (s *fakeRedeemServer) PersistRedemption(r cbpServer.RedemptionV2) error {
@@ -86,7 +86,7 @@ func redeemMessage(t *testing.T, reqs ...avroSchema.RedeemRequest) kafka.Message
 	var buf bytes.Buffer
 	set := avroSchema.RedeemRequestSet{Request_id: "req-1", Data: reqs}
 	require.NoError(t, set.Serialize(&buf))
-	return kafka.Message{Value: buf.Bytes(), Offset: 7}
+	return kafka.Message{Value: buf.Bytes()}
 }
 
 func redeemResults(t *testing.T, w *fakeWriter) avroSchema.RedeemResultSet {
@@ -127,7 +127,6 @@ func TestSignedTokenRedeemHandler(t *testing.T) {
 		assert.Equal(t, []byte("associated"), []byte(got.Associated_data))
 		require.Len(t, s.persisted, 1)
 		assert.Equal(t, issuer.ID.String(), s.persisted[0].IssuerID)
-		assert.Equal(t, int64(7), s.persisted[0].Offset)
 	})
 
 	t.Run("finds the key among several issuers and keys", func(t *testing.T) {
