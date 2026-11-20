@@ -21,6 +21,7 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/model"
+	"github.com/brave-intl/challenge-bypass-server/utils"
 )
 
 func TestLegacyDynamoTable(t *testing.T) {
@@ -187,6 +188,25 @@ func TestCheckRedeemedTokenEquivalence(t *testing.T) {
 		got, _, err := newDynamoServer(newFakeDynamo()).CheckRedeemedTokenEquivalence(issuer, preimage, "binding", 0)
 		require.NoError(t, err)
 		assert.Equal(t, expiry.Unix(), got.TTL)
+	})
+
+	t.Run("marks only throttles and server errors temporary", func(t *testing.T) {
+		for err, want := range map[error]bool{
+			awserr.New(dynamodb.ErrCodeProvisionedThroughputExceededException, "", nil): true,
+			awserr.New(dynamodb.ErrCodeRequestLimitExceeded, "", nil):                   true,
+			awserr.New(dynamodb.ErrCodeInternalServerError, "", nil):                    true,
+			awserr.New(dynamodb.ErrCodeResourceNotFoundException, "", nil):              false,
+			errors.New("not an aws error"):                                              false,
+		} {
+			f := newFakeDynamo()
+			f.getErr = err
+			issuer, preimage, _ := redemptionFixture(t)
+			_, _, got := newDynamoServer(f).CheckRedeemedTokenEquivalence(issuer, preimage, "binding", 0)
+			var pe *utils.ProcessingError
+			require.ErrorAs(t, got, &pe)
+			assert.ErrorIs(t, got, err)
+			assert.Equal(t, want, pe.Temporary, err.Error())
+		}
 	})
 }
 

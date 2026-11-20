@@ -18,6 +18,12 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+// signServer is the subset of server.Server methods that SignedBlindedTokenIssuerHandler uses.
+type signServer interface {
+	GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error)
+	RotateIssuersV3() error
+}
+
 /*
 SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
 
@@ -31,12 +37,6 @@ SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided b
 	this behavior to share utility functions rather than passing an instance of the server
 	as an argument here. That will require a bit of refactoring.
 */
-// signServer is the subset of server.Server methods that SignedBlindedTokenIssuerHandler uses.
-type signServer interface {
-	GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error)
-	RotateIssuersV3() error
-}
-
 func SignedBlindedTokenIssuerHandler(
 	ctx context.Context,
 	msg kafka.Message,
