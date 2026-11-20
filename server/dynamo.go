@@ -7,9 +7,9 @@ import (
 
 	"github.com/brave-intl/challenge-bypass-server/model"
 
-	awsDynamoTypes "github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr" // nolint
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
@@ -220,7 +220,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
-		return err
+		return utils.ProcessingErrorFromError(err, isTemporaryDynamoError(err))
 	}
 	return nil
 }
@@ -229,11 +229,10 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 // matches an existing persisted record, the whole value matches, or neither match and
 // this is a new token to be redeemed.
 func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *crypto.TokenPreimage, payload string, offset int64) (*RedemptionV2, Equivalence, error) {
-	temporary := false
 	preimageTxt, err := preimage.MarshalText()
 	if err != nil {
 		c.Logger.Error("Error Marshalling preimage")
-		return nil, UnknownEquivalence, utils.ProcessingErrorFromError(err, temporary)
+		return nil, UnknownEquivalence, utils.ProcessingErrorFromError(err, false)
 	}
 
 	id := uuid.NewSHA1(*issuer.ID, preimageTxt)
@@ -262,17 +261,19 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 		return &redemption, NoEquivalence, nil
 	}
 
-	var (
-		ptee *awsDynamoTypes.ProvisionedThroughputExceededException
-		rle  *awsDynamoTypes.RequestLimitExceeded
-		ise  *awsDynamoTypes.InternalServerError
-	)
+	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, isTemporaryDynamoError(err))
+}
 
-	// is this a temporary error?
-	if errors.As(err, &ptee) ||
-		errors.As(err, &rle) ||
-		errors.As(err, &ise) {
-		temporary = true
+// isTemporaryDynamoError reports whether err is a DynamoDB error that a retry
+// may get past: a throttle, a retryable network failure or a 5xx response.
+// Only SDK errors count, because request.IsErrorRetryable treats most other
+// errors as retryable.
+func isTemporaryDynamoError(err error) bool {
+	var aerr awserr.Error
+	if !errors.As(err, &aerr) {
+		return false
 	}
-	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, temporary)
+	var rf awserr.RequestFailure
+	return request.IsErrorThrottle(aerr) || request.IsErrorRetryable(aerr) ||
+		(errors.As(err, &rf) && rf.StatusCode() >= 500)
 }

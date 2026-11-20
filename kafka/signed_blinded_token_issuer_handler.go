@@ -13,11 +13,16 @@ import (
 	avroSchema "github.com/brave-intl/challenge-bypass-server/avro/generated"
 	"github.com/brave-intl/challenge-bypass-server/btd"
 	"github.com/brave-intl/challenge-bypass-server/model"
-	cbpServer "github.com/brave-intl/challenge-bypass-server/server"
 	"github.com/brave-intl/challenge-bypass-server/utils"
 	"github.com/brave-intl/challenge-bypass-server/utils/metrics"
 	"github.com/segmentio/kafka-go"
 )
+
+// signServer is the subset of server.Server methods that SignedBlindedTokenIssuerHandler uses.
+type signServer interface {
+	GetLatestIssuerKafka(issuerType string, issuerCohort int16) (*model.Issuer, error)
+	RotateIssuersV3() error
+}
 
 /*
 SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided blinded tokens.
@@ -35,8 +40,8 @@ SignedBlindedTokenIssuerHandler emits signed, blinded tokens based on provided b
 func SignedBlindedTokenIssuerHandler(
 	ctx context.Context,
 	msg kafka.Message,
-	producer *kafka.Writer,
-	server *cbpServer.Server,
+	producer messageWriter,
+	server signServer,
 	logger *slog.Logger,
 ) error {
 	const (
@@ -620,11 +625,7 @@ OUTER:
 	reqLogger.Debug("about to emit", slog.Any("resultSet", resultSet))
 	err = Emit(ctx, producer, resultSetBuffer.Bytes(), reqLogger)
 	if err != nil {
-		reqLogger.Error(
-			"failed to emit",
-			"topic", producer.Topic,
-			slog.Any("resultSet", resultSet),
-		)
+		reqLogger.Error("failed to emit", slog.Any("resultSet", resultSet))
 		kafkaErrorTotal.Inc()
 		metrics.CountError("emit")
 		return err
@@ -695,7 +696,7 @@ func handlePermanentIssuanceError(
 	issuerResultStatus int32,
 	requestID string,
 	msg kafka.Message,
-	producer *kafka.Writer,
+	producer messageWriter,
 	logger *slog.Logger,
 ) error {
 	logger.Error(
