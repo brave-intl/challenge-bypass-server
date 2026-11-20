@@ -4,11 +4,13 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr" // nolint
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbiface"
@@ -192,11 +194,15 @@ func TestCheckRedeemedTokenEquivalence(t *testing.T) {
 
 	t.Run("marks only throttles and server errors temporary", func(t *testing.T) {
 		for err, want := range map[error]bool{
-			awserr.New(dynamodb.ErrCodeProvisionedThroughputExceededException, "", nil): true,
-			awserr.New(dynamodb.ErrCodeRequestLimitExceeded, "", nil):                   true,
-			awserr.New(dynamodb.ErrCodeInternalServerError, "", nil):                    true,
-			awserr.New(dynamodb.ErrCodeResourceNotFoundException, "", nil):              false,
-			errors.New("not an aws error"):                                              false,
+			awserr.New(dynamodb.ErrCodeProvisionedThroughputExceededException, "", nil):                       true,
+			awserr.New(dynamodb.ErrCodeRequestLimitExceeded, "", nil):                                         true,
+			awserr.New("ThrottlingException", "", nil):                                                        true,
+			awserr.New(request.ErrCodeResponseTimeout, "", nil):                                               true,
+			awserr.New(request.ErrCodeRequestError, "send request failed", syscall.ECONNRESET):                true,
+			awserr.NewRequestFailure(awserr.New(dynamodb.ErrCodeInternalServerError, "", nil), 500, ""):       true,
+			awserr.NewRequestFailure(awserr.New(dynamodb.ErrCodeResourceNotFoundException, "", nil), 400, ""): false,
+			awserr.New(request.CanceledErrorCode, "", nil):                                                    false,
+			errors.New("not an aws error"):                                                                    false,
 		} {
 			f := newFakeDynamo()
 			f.getErr = err
@@ -228,9 +234,18 @@ func TestPersistRedemption(t *testing.T) {
 	})
 
 	t.Run("returns other write failures", func(t *testing.T) {
-		f := newFakeDynamo()
-		f.putErr = errors.New("connection reset")
-		assert.ErrorIs(t, newDynamoServer(f).PersistRedemption(r), f.putErr)
+		for err, temporary := range map[error]bool{
+			awserr.New(dynamodb.ErrCodeProvisionedThroughputExceededException, "", nil): true,
+			errors.New("not an aws error"): false,
+		} {
+			f := newFakeDynamo()
+			f.putErr = err
+			got := newDynamoServer(f).PersistRedemption(r)
+			var pe *utils.ProcessingError
+			require.ErrorAs(t, got, &pe)
+			assert.ErrorIs(t, got, err)
+			assert.Equal(t, temporary, pe.Temporary, err.Error())
+		}
 	})
 }
 

@@ -369,6 +369,10 @@ func SignedTokenRedeemHandler(
 					continue
 				}
 			}
+			var processingError *utils.ProcessingError
+			if errors.As(err, &processingError) && processingError.Temporary {
+				return err
+			}
 			reqLogger.Error("could not mark token redemption")
 			redeemedTokenResults = append(redeemedTokenResults, avroSchema.RedeemResult{
 				Issuer_name:     verifiedIssuer.IssuerType,

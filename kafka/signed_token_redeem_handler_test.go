@@ -271,6 +271,7 @@ func TestSignedTokenRedeemHandler(t *testing.T) {
 		for name, s := range map[string]*fakeRedeemServer{
 			"fetching issuers":     {fetchErr: temporary},
 			"checking equivalence": {issuers: []model.Issuer{issuer}, equivs: []equivResult{{err: temporary}}},
+			"persisting":           {issuers: []model.Issuer{issuer}, persistErr: temporary},
 			"rechecking after a race": {
 				issuers:    []model.Issuer{issuer},
 				equivs:     []equivResult{{}, {err: temporary}},

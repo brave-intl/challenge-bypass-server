@@ -9,6 +9,7 @@ import (
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr" // nolint
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/dynamodb"
 	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
@@ -219,7 +220,7 @@ func (c *Server) PersistRedemption(redemption RedemptionV2) error {
 			return ErrDuplicateRedemption
 		}
 		c.Logger.Error("Error creating item")
-		return err
+		return utils.ProcessingErrorFromError(err, isTemporaryDynamoError(err))
 	}
 	return nil
 }
@@ -263,19 +264,16 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 	return &redemption, NoEquivalence, utils.ProcessingErrorFromError(err, isTemporaryDynamoError(err))
 }
 
-// isTemporaryDynamoError reports whether err is a DynamoDB throttle or server
-// error, which a retry may get past. The client is SDK v1, so its errors are
-// awserr codes, not the SDK v2 exception types.
+// isTemporaryDynamoError reports whether err is a DynamoDB error that a retry
+// may get past: a throttle, a retryable network failure or a 5xx response.
+// Only SDK errors count, because request.IsErrorRetryable treats any other
+// error as retryable.
 func isTemporaryDynamoError(err error) bool {
 	var aerr awserr.Error
 	if !errors.As(err, &aerr) {
 		return false
 	}
-	switch aerr.Code() {
-	case dynamodb.ErrCodeProvisionedThroughputExceededException,
-		dynamodb.ErrCodeRequestLimitExceeded,
-		dynamodb.ErrCodeInternalServerError:
-		return true
-	}
-	return false
+	var rf awserr.RequestFailure
+	return request.IsErrorThrottle(aerr) || request.IsErrorRetryable(aerr) ||
+		(errors.As(err, &rf) && rf.StatusCode() >= 500)
 }
