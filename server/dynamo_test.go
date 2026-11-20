@@ -40,8 +40,8 @@ func TestLegacyDynamoTable(t *testing.T) {
 	}
 }
 
-// fakeDynamo keeps items per table and enforces the attribute_not_exists(id)
-// condition that every redemption write uses.
+// fakeDynamo keeps items per table. A write with the attribute_not_exists(id)
+// condition fails on an existing id, and a write without it overwrites.
 type fakeDynamo struct {
 	dynamodbiface.DynamoDBAPI
 	tables map[string]map[string]map[string]*dynamodb.AttributeValue
@@ -72,7 +72,7 @@ func (f *fakeDynamo) PutItem(in *dynamodb.PutItemInput) (*dynamodb.PutItemOutput
 		f.tables[*in.TableName] = table
 	}
 	id := *in.Item["id"].S
-	if _, ok := table[id]; ok {
+	if _, ok := table[id]; ok && aws.StringValue(in.ConditionExpression) == "attribute_not_exists(id)" {
 		return nil, awserr.New(dynamodb.ErrCodeConditionalCheckFailedException, "exists", nil)
 	}
 	table[id] = in.Item

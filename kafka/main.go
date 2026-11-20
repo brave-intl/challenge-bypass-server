@@ -168,7 +168,7 @@ func StartConsumers(
 				logger *slog.Logger,
 			) error {
 				tokenRedeemRequestTotal.Inc()
-				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger.With("topic", adsResultRedeemV1Topic))
+				err := SignedTokenRedeemHandler(ctx, msg, redeemWriter, providedServer, logger.With("result_topic", adsResultRedeemV1Topic))
 				if err != nil {
 					tokenRedeemFailureTotal.Inc()
 				}
@@ -181,7 +181,7 @@ func StartConsumers(
 				logger *slog.Logger,
 			) error {
 				tokenIssuanceRequestTotal.Inc()
-				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger.With("topic", adsResultSignV1Topic))
+				err := SignedBlindedTokenIssuerHandler(ctx, msg, signWriter, providedServer, logger.With("result_topic", adsResultSignV1Topic))
 				if err != nil {
 					tokenIssuanceFailureTotal.Inc()
 				}

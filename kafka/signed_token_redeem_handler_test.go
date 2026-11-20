@@ -250,7 +250,7 @@ func TestSignedTokenRedeemHandler(t *testing.T) {
 			"a bad preimage":            {&fakeRedeemServer{issuers: []model.Issuer{issuer}}, redeemMessage(t, badPreimage)},
 			"a bad signature":           {&fakeRedeemServer{issuers: []model.Issuer{issuer}}, redeemMessage(t, badSignature)},
 			"a permanent dynamo error":  {&fakeRedeemServer{issuers: []model.Issuer{issuer}, equivs: []equivResult{{err: permanent}}}, redeemMessage(t, valid)},
-			"a permanent recheck error": {&fakeRedeemServer{issuers: []model.Issuer{issuer}, equivs: []equivResult{{}, {err: permanent}}, persistErr: cbpServer.ErrDuplicateRedemption}, redeemMessage(t, valid)},
+			"a permanent recheck error": {&fakeRedeemServer{issuers: []model.Issuer{issuer}, equivs: []equivResult{{eq: cbpServer.NoEquivalence}, {err: permanent}}, persistErr: cbpServer.ErrDuplicateRedemption}, redeemMessage(t, valid)},
 		} {
 			t.Run(name, func(t *testing.T) {
 				w := &fakeWriter{}
@@ -273,7 +273,7 @@ func TestSignedTokenRedeemHandler(t *testing.T) {
 			"persisting":           {issuers: []model.Issuer{issuer}, persistErr: temporary},
 			"rechecking after a race": {
 				issuers:    []model.Issuer{issuer},
-				equivs:     []equivResult{{}, {err: temporary}},
+				equivs:     []equivResult{{eq: cbpServer.NoEquivalence}, {err: temporary}},
 				persistErr: cbpServer.ErrDuplicateRedemption,
 			},
 		} {
