@@ -266,8 +266,8 @@ func (c *Server) CheckRedeemedTokenEquivalence(issuer *model.Issuer, preimage *c
 
 // isTemporaryDynamoError reports whether err is a DynamoDB error that a retry
 // may get past: a throttle, a retryable network failure or a 5xx response.
-// Only SDK errors count, because request.IsErrorRetryable treats any other
-// error as retryable.
+// Only SDK errors count, because request.IsErrorRetryable treats most other
+// errors as retryable.
 func isTemporaryDynamoError(err error) bool {
 	var aerr awserr.Error
 	if !errors.As(err, &aerr) {
