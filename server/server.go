@@ -123,6 +123,7 @@ type Server struct {
 
 	caches    *CacheCollection
 	adminKeys *adminKeystore
+	actCache  *actIssuerCache
 }
 
 // DefaultServer on port
@@ -274,6 +275,10 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			c.adminRoutes(r)
 		})
 
+		// The ACT routes check their own tokens (see mountACTRoutes), so they
+		// are mounted outside the TOKEN_LIST group below.
+		c.mountACTRoutes(r)
+
 		// Authenticated Routes
 		r.Group(func(r chi.Router) {
 			if os.Getenv("ENV") == "production" {
@@ -319,6 +324,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, router := c.setupRouter(ctx, logger)
+	// The ACT sweeper runs in every API process, whatever CRON_ENABLED says.
+	// Replicas do not collide, because each hold is claimed with SKIP LOCKED.
+	c.startACTSweeper(ctx)
 
 	ServeMetrics()
 

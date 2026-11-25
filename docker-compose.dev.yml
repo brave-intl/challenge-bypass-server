@@ -2,3 +2,7 @@ services:
   challenge-bypass:
     volumes:
       - ".:/src"
+      # Hide host-built Rust artifacts (e.g. glibc staticlibs from `make act-ffi`)
+      # so the Alpine musl container always links /usr/lib/libchallenge_bypass_ristretto_ffi.a.
+      - "/src/act/ffi/lib"
+      - "/src/act/ffi/target"

@@ -167,6 +167,11 @@ func (c *Server) InitDB(logger *slog.Logger) {
 		panic(err)
 	}
 
+	if err := migrateACT(writer, logger); err != nil {
+		panic(err)
+	}
+	c.actCache = &actIssuerCache{}
+
 	if cfg.CachingConfig.Enabled {
 		c.caches = bootstrapCache(cfg)
 	}
