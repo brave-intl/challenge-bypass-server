@@ -1,0 +1,103 @@
+# Anonymous Credit Tokens. See docs/act-credit-tokens.md.
+# Binary fields are base64 CBOR produced by the client library.
+
+# Operator-signed via Ed25519 HTTP signature (/v1/admin).
+POST http://localhost:2416/v1/admin/act/issuers
+Content-Type: application/json
+# Date: ...
+# Digest: SHA-256=...
+# Signature: keyId="...",algorithm="ed25519",headers="date digest (request-target)",signature="..."
+
+{
+    "name": "leo-premium-2026-11",
+    "max_credits": 1000000,
+    "stop_issuing_at": "2026-12-01T00:00:00Z",
+    "expires_at": "2027-11-01T00:00:00Z",
+    "rollover_from": ["leo-premium-2026-10"]
+}
+
+###
+
+PATCH http://localhost:2416/v1/admin/act/issuers/leo-premium-2026-10
+Content-Type: application/json
+# Ed25519 HTTP signature headers required
+
+{
+    "stop_issuing_at": "2026-11-01T00:00:00Z",
+    "expires_at": "2027-11-01T00:00:00Z",
+    "add_rollover_from": ["leo-premium-2026-09"],
+    "remove_rollover_from": ["leo-premium-2026-08"]
+}
+
+###
+
+GET http://localhost:2416/v1/admin/act/issuers
+# Ed25519 HTTP signature headers required
+
+###
+
+GET http://localhost:2416/v1/act/issuer/leo-premium-2026-11
+Content-Type: application/json
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-11/issue
+Content-Type: application/json
+# Authorization: Bearer {{act_issue_token}}
+
+{
+    "request": "{{base64 CBOR IssuanceRequest}}",
+    "credits": 500000,
+    "idempotency_key": "{{unique order/slot id}}",
+    "rollover": [
+        {
+            "issuer": "leo-premium-2026-10",
+            "proof": "{{base64 CBOR SpendProof for remaining balance}}"
+        }
+    ]
+}
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-11/rollover
+Content-Type: application/json
+# Authorization: Bearer {{token}}
+
+{
+    "request": "{{base64 CBOR IssuanceRequest}}",
+    "idempotency_key": "{{unique request id}}",
+    "rollover": [
+        {
+            "issuer": "leo-premium-2026-10",
+            "proof": "{{base64 CBOR SpendProof}}"
+        },
+        {
+            "proof": "{{base64 CBOR SpendProof on target issuer for dust consolidation}}"
+        }
+    ]
+}
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-11/spend
+Content-Type: application/json
+# Authorization: Bearer {{token}}
+
+{
+    "proof": "{{base64 CBOR SpendProof}}",
+    "idempotency_key": "{{unique origin request id}}"
+}
+
+###
+
+POST http://localhost:2416/v1/act/issuer/leo-premium-2026-11/spend/{{nullifier}}/refund
+Content-Type: application/json
+
+{
+    "cost": 1234
+}
+
+###
+
+GET http://localhost:2416/v1/act/issuer/leo-premium-2026-11/spend/{{nullifier}}
+Content-Type: application/json

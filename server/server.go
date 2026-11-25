@@ -123,6 +123,7 @@ type Server struct {
 
 	caches    *CacheCollection
 	adminKeys *adminKeystore
+	actCache  *actIssuerCache
 }
 
 // DefaultServer on port
@@ -274,6 +275,12 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			c.adminRoutes(r)
 		})
 
+		// ACT (Anonymous Credit Tokens) Routes: /issue uses ACT_ISSUE_TOKEN_LIST
+		// (separate from TOKEN_LIST), while origin routes use SimpleTokenAuthorizedOnly
+		// in production. Mounted outside the TOKEN_LIST group so minting tokens
+		// never have to be duplicated in TOKEN_LIST.
+		c.mountACTRoutes(r)
+
 		// Authenticated Routes
 		r.Group(func(r chi.Router) {
 			if os.Getenv("ENV") == "production" {
@@ -319,6 +326,9 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, router := c.setupRouter(ctx, logger)
+	// ACT hold sweeper runs with the API (not cron: CRON_ENABLED=false in the
+	// ECS deployments). Safe on every replica: holds are claimed with SKIP LOCKED.
+	c.startACTSweeper(ctx)
 
 	ServeMetrics()
 

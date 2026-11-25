@@ -37,6 +37,9 @@ func (c *Server) adminRoutes(r chi.Router) {
 		func(ctx context.Context, op string, id uuid.UUID, req adminapi.RotateKeyRequest) error {
 			return c.adminRotateKey(ctx, op, id, req, time.Now())
 		}))
+	r.Method("GET", "/act/issuers", AppHandler(c.actAdminIssuerListHandler))
+	r.Method("POST", "/act/issuers", AppHandler(c.actAdminIssuerCreateHandler))
+	r.Method("PATCH", "/act/issuers/{name}", AppHandler(c.actAdminIssuerUpdateHandler))
 	r.Method("GET", "/audit", AppHandler(c.adminAuditHandler))
 }
 
