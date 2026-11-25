@@ -1,9 +1,9 @@
 //! C ABI over `anonymous-credit-tokens` (ACT) for challenge-bypass-server.
 //!
-//! Every value crosses the boundary as bytes: protocol messages use the crate's
-//! CBOR encoding, credit amounts are u64, and scalars (nullifier, context) are
-//! 32-byte little-endian encodings. Output buffers are allocated here and must
-//! be released with `act_buf_free`.
+//! Values cross the boundary as bytes. Protocol messages use the crate's CBOR
+//! encoding, credit amounts are u64, and scalars such as the nullifier and the
+//! context are 32-byte little-endian encodings. Output buffers are allocated
+//! here and must be released with `act_buf_free`.
 //!
 //! The server-side calls (`act_issue`, `act_verify_spend`, `act_refund`) are
 //! what challenge-bypass-server uses. The `act_client_*` calls exist so the Go
@@ -20,8 +20,9 @@ use anonymous_credit_tokens::{
 };
 use rand_core::OsRng;
 
-// Re-export so every challenge-bypass-ristretto-ffi C symbol lands in this
-// staticlib; the Go ristretto bindings link against it under that crate's name.
+// Re-exported so every challenge-bypass-ristretto-ffi C symbol is included in
+// this staticlib. The Go ristretto bindings link this staticlib under the
+// ristretto crate's library name.
 pub use challenge_bypass_ristretto_ffi;
 
 /// Bit length of credit amounts. Balances and charges must be < 2^L.
@@ -94,8 +95,8 @@ fn cbor_err<E>(_: E) -> i32 {
 }
 
 /// Parses "organization:service:deployment:version" into cached `Params`.
-/// Building params hashes four points and precomputes tables, so cache them
-/// under a read-biased lock and compute misses outside the lock.
+/// Building `Params` hashes four points and precomputes tables, so each
+/// `Params` is cached behind an `RwLock` and built outside the lock.
 fn params(ptr: *const u8, len: usize) -> Res<Arc<Params>> {
     static CACHE: OnceLock<RwLock<HashMap<String, Arc<Params>>>> = OnceLock::new();
     let s = std::str::from_utf8(unsafe { bytes(ptr, len) }).map_err(cbor_err)?;
@@ -110,9 +111,8 @@ fn params(ptr: *const u8, len: usize) -> Res<Arc<Params>> {
             return Ok(p.clone());
         }
     }
-    // Params::new builds four ~30 KB precomputed tables on the stack (~300 KB
-    // total), which overflows musl's default 128 KB thread stack if the caller
-    // did not raise it. Run the one-time miss build on a 1 MiB stack thread.
+    // Params::new uses about 300 KB of stack, more than musl's default 128 KB
+    // thread stack. Build each new Params on a thread with a 1 MiB stack.
     let (p0, p1, p2, p3) = (
         parts[0].to_owned(),
         parts[1].to_owned(),
@@ -167,8 +167,8 @@ fn out(dst: *mut ActBuf, v: Vec<u8>) -> Res<()> {
     Ok(())
 }
 
-/// Writes two output buffers atomically: both pointers are checked before
-/// either allocation is handed across the C ABI so a failure never leaks.
+/// Writes two output buffers. Both pointers are checked before either buffer
+/// is handed across the C ABI, so a null pointer never leaks the other buffer.
 fn out2(dst1: *mut ActBuf, v1: Vec<u8>, dst2: *mut ActBuf, v2: Vec<u8>) -> Res<()> {
     if dst1.is_null() || dst2.is_null() {
         return Err(ACT_ERR_INTERNAL);
@@ -209,7 +209,8 @@ pub unsafe extern "C" fn act_keygen(sk_out: *mut ActBuf, pk_out: *mut ActBuf) ->
 /// Derives the 32-byte context scalar the issuer binds into credentials.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `ctx_out` for 32 bytes.
+/// Input pointers must be valid for `*_len` bytes. `ctx_out` must be valid
+/// for 32 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_context(ctx: *const u8, ctx_len: usize, ctx_out: *mut u8) -> i32 {
     guard(|| {
@@ -221,7 +222,8 @@ pub unsafe extern "C" fn act_context(ctx: *const u8, ctx_len: usize, ctx_out: *m
 /// Signs a client issuance request for `amount` credits bound to `ctx`.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `resp_out` for writes.
+/// Input pointers must be valid for `*_len` bytes. `resp_out` must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_issue(
     params_ptr: *const u8,
@@ -249,12 +251,13 @@ pub unsafe extern "C" fn act_issue(
 
 /// Verifies a spend proof without releasing anything to the client.
 ///
-/// The crate only verifies inside `refund`, so this computes a zero refund and
-/// discards it. On success writes the nullifier and context (32 bytes each)
-/// and the charged amount.
+/// The crate only verifies inside `refund`, so `act_verify_spend` computes a
+/// zero refund and discards it. On success it writes the nullifier and the
+/// context, 32 bytes each, and the charged amount.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; outputs for writes.
+/// Input pointers must be valid for `*_len` bytes. Output pointers must be
+/// valid for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_verify_spend(
     params_ptr: *const u8,
@@ -288,7 +291,8 @@ pub unsafe extern "C" fn act_verify_spend(
 /// (0 <= returned <= charge) to the client's next credential.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `refund_out` for writes.
+/// Input pointers must be valid for `*_len` bytes. `refund_out` must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_refund(
     params_ptr: *const u8,
@@ -315,10 +319,11 @@ pub unsafe extern "C" fn act_refund(
 // Client operations (tests and reference only)
 // ---------------------------------------------------------------------------
 
-/// Starts issuance: returns the client's secret state and the request to send.
+/// Starts issuance. Returns the client's secret state and the request to send.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; outputs for writes.
+/// Input pointers must be valid for `*_len` bytes. Output pointers must be
+/// valid for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_issuance_request(
     params_ptr: *const u8,
@@ -336,10 +341,11 @@ pub unsafe extern "C" fn act_client_issuance_request(
     })
 }
 
-/// Finishes issuance: verifies the issuer response and returns the credential.
+/// Finishes issuance. Verifies the issuer response and returns the credential.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `token_out` for writes.
+/// Input pointers must be valid for `*_len` bytes. `token_out` must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_finalize_issuance(
     params_ptr: *const u8,
@@ -372,7 +378,8 @@ pub unsafe extern "C" fn act_client_finalize_issuance(
 /// client's secret refund state. The input credential must not be reused.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; outputs for writes.
+/// Input pointers must be valid for `*_len` bytes. Output pointers must be
+/// valid for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_prove_spend(
     params_ptr: *const u8,
@@ -398,7 +405,8 @@ pub unsafe extern "C" fn act_client_prove_spend(
 /// Turns an issuer refund into the client's next credential.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `token_out` for writes.
+/// Input pointers must be valid for `*_len` bytes. `token_out` must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_finalize_refund(
     params_ptr: *const u8,
@@ -430,7 +438,8 @@ pub unsafe extern "C" fn act_client_finalize_refund(
 /// Reads the balance of a credential.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `balance_out` for writes.
+/// Input pointers must be valid for `*_len` bytes. `balance_out` must be valid
+/// for writes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_balance(
     token: *const u8,
@@ -452,7 +461,8 @@ pub unsafe extern "C" fn act_client_balance(
 /// Clients can use this to recover a refund by nullifier if the spend response was lost.
 ///
 /// # Safety
-/// Input pointers must be valid for `*_len` bytes; `nullifier_out` for 32 bytes.
+/// Input pointers must be valid for `*_len` bytes. `nullifier_out` must be
+/// valid for 32 bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn act_client_spend_nullifier(
     proof: *const u8,

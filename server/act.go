@@ -24,8 +24,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Anonymous Credit Tokens (ACT): pay-per-use credits with hold-and-refund.
-// Client guide: docs/act-credit-tokens.md.
+// Anonymous Credit Tokens (ACT) are pay-per-use credits. A spend holds a
+// charge, and settling the hold refunds the part that was not used. The
+// client guide is docs/act-credit-tokens.md.
 
 const (
 	// actParamsVersion pins the ACT generator derivation. Changing it (or any
@@ -64,15 +65,15 @@ func init() {
 	metrics.MustRegisterIfNotRegistered(prometheus.DefaultRegisterer, actCallTotal, actCreditsTotal)
 }
 
-// actEnabled reports whether ACT crypto is compiled in and enabled at runtime.
-// ACT defaults to disabled so binaries built with the "act" tag stay inert in
-// production until ACT_ENABLED=true is explicitly set.
+// actEnabled reports whether ACT is compiled in and ACT_ENABLED is "true".
+// ACT is off by default, so a binary built with the "act" tag serves no ACT
+// routes until ACT_ENABLED=true is set.
 func actEnabled() bool {
 	return act.Available() && os.Getenv("ACT_ENABLED") == "true"
 }
 
-// actDefaultParams is the ACT domain separator for issuers created without
-// explicit params: brave:challenge-bypass-server:<ENV>:<version>.
+// actDefaultParams returns the ACT domain separator for issuers created
+// without params, in the form brave:challenge-bypass-server:<ENV>:<version>.
 func actDefaultParams() string {
 	env := os.Getenv("ENV")
 	if env == "" {
@@ -98,9 +99,9 @@ func actHoldTimeout(logger *slog.Logger) time.Duration {
 	return d
 }
 
-// actIssueTokenList returns the bearer tokens allowed to mint ACT credits.
-// In production this is strictly separate from TOKEN_LIST (and fails closed
-// when unset) so an origin service that spends credits cannot mint them.
+// actIssueTokenList returns the bearer tokens in ACT_ISSUE_TOKEN_LIST. Only
+// these tokens can mint credits. The list is separate from TOKEN_LIST, so an
+// origin service that spends credits cannot mint them.
 func actIssueTokenList() []string {
 	raw := os.Getenv("ACT_ISSUE_TOKEN_LIST")
 	if raw == "" {
@@ -116,6 +117,9 @@ func actIssueTokenList() []string {
 	return out
 }
 
+// actIssueAuthMwr requires a token from ACT_ISSUE_TOKEN_LIST in production,
+// and outside production when the list is set. In production an empty list
+// rejects every request.
 func actIssueAuthMwr(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		tokens := actIssueTokenList()
@@ -142,12 +146,10 @@ func (c *Server) actEnabledMwr(next http.Handler) http.Handler {
 	})
 }
 
-// mountACTRoutes registers the service-facing ACT API. Issuer creation and
-// updates live under /v1/admin/act/issuers (Ed25519 operator-signed).
-// /issue is authenticated solely by ACT_ISSUE_TOKEN_LIST (separate from
-// TOKEN_LIST), while origin routes use SimpleTokenAuthorizedOnly in
-// production. When ACT is not compiled in or ACT_ENABLED is not "true", every
-// ACT route returns 501.
+// mountACTRoutes registers the ACT routes that services call. /issue accepts
+// only tokens from ACT_ISSUE_TOKEN_LIST. In production, the other routes need
+// a TOKEN_LIST token. Every route returns 501 when ACT is not compiled in or
+// ACT_ENABLED is not "true". The operator routes are in adminRoutes.
 func (c *Server) mountACTRoutes(r chi.Router) {
 	r.Route("/v1/act", func(r chi.Router) {
 		r.Use(c.actEnabledMwr)
@@ -210,8 +212,9 @@ func (c *Server) sweepACTTick(ctx context.Context, holdTimeout time.Duration) {
 
 type actIssuerCreateRequest struct {
 	Name string `json:"name"`
-	// Context is bound into every credential and revealed on spend. Share it
-	// across all users of the pool; never make it per-user. Defaults to Name.
+	// Context is bound into every credential and revealed on every spend, so
+	// a per-user value would identify the user. Use one value for all users
+	// of the issuer. Defaults to Name.
 	Context       string     `json:"context"`
 	MaxCredits    uint64     `json:"max_credits"`
 	StopIssuingAt *time.Time `json:"stop_issuing_at,omitempty"`
@@ -219,9 +222,9 @@ type actIssuerCreateRequest struct {
 	// Params overrides the ACT domain separator
 	// (organization:service:deployment:version). Leave empty for the default.
 	Params string `json:"params,omitempty"`
-	// RolloverFrom lists existing ACT issuer names whose unspent credentials
-	// may be rolled into this issuer. Same-issuer dust consolidation is always
-	// allowed without listing the issuer itself.
+	// RolloverFrom names the existing issuers whose unspent credentials may be
+	// rolled over into the new issuer. Rolling over credentials of the new
+	// issuer itself is always allowed and needs no entry.
 	RolloverFrom []string `json:"rollover_from,omitempty"`
 }
 
@@ -261,8 +264,8 @@ func makeACTIssuerResponse(iss *actIssuer) actIssuerResponse {
 }
 
 type actRolloverInput struct {
-	// Issuer is the source issuer name for Proof. Defaults to the target issuer
-	// name when omitted (for same-issuer dust consolidation).
+	// Issuer names the issuer that Proof spends from. Empty means the target
+	// issuer.
 	Issuer string `json:"issuer,omitempty"`
 	Proof  []byte `json:"proof"`
 }
@@ -629,10 +632,9 @@ func (c *Server) actIssuerGetHandler(w http.ResponseWriter, r *http.Request) *Ap
 	return c.renderACT(w, action, http.StatusOK, makeACTIssuerResponse(iss))
 }
 
-// actIssueHandler signs a client's issuance request for `credits` newly
-// purchased credits plus any optional unspent balances rolled over from allowed
-// source issuers. Retrying with the same idempotency_key and request returns
-// the stored IssuanceResponse.
+// actIssueHandler signs a client's issuance request for the purchased credits
+// plus any balances rolled over in the same request. A retry with the same
+// idempotency_key and request gets the stored response.
 func (c *Server) actIssueHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	const action = "issue"
 	var req actIssueRequest
@@ -646,10 +648,11 @@ func (c *Server) actIssueHandler(w http.ResponseWriter, r *http.Request) *AppErr
 	return c.handleACTIssuance(w, r, action, req.IdempotencyKey, req.Request, req.Credits, req.Rollover)
 }
 
-// actRolloverHandler performs a standalone anonymous balance rollover or dust
-// consolidation (purchased_credits = 0). Every credit issued on the target
-// issuer is backed 1:1 by verified, newly nullified spend proofs from the
-// target issuer itself or an operator-allowed source issuer.
+// actRolloverHandler issues a credential on the target issuer for the total
+// charge of the spend proofs in the request, with no purchased credits. Each
+// proof must verify against the target issuer or an issuer in its rollover
+// allowlist. Each proof's nullifier is recorded so the proof cannot be used
+// again.
 func (c *Server) actRolloverHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	const action = "rollover"
 	var req actRolloverRequest
@@ -687,13 +690,13 @@ func (c *Server) handleACTIssuance(
 		return c.actError(action, err)
 	}
 
-	// Scope idempotency keys by action ("issue:" vs "rollover:") so an
-	// anonymous /rollover call cannot collide with a billing /issue key.
+	// The stored key starts with the action, so a /rollover key cannot block
+	// an /issue request that uses the same key.
 	scopedKey := action + ":" + idempotencyKey
 	reqHash := hashACTIssuanceRequest(target.Name, purchasedCredits, issuanceReq, rolloverInputs)
 
-	// Fast-path idempotent retry: return the stored response even if the
-	// target issuer has since passed stop_issuing_at or expires_at.
+	// A retry gets the stored response, even after the target issuer passes
+	// stop_issuing_at or expires_at.
 	existing, err := c.fetchACTIssuance(ctx, target.ID, scopedKey)
 	if err != nil {
 		return c.actError(action, err)
@@ -858,7 +861,8 @@ func (c *Server) actSpendGetHandler(w http.ResponseWriter, r *http.Request) *App
 }
 
 // actRefundHandler settles a hold at the actual cost and returns the refund.
-// Expired issuers can still settle so in-flight holds are never stranded.
+// A hold on an expired issuer can still be settled, so a hold taken before
+// expiry always gets its refund.
 func (c *Server) actRefundHandler(w http.ResponseWriter, r *http.Request) *AppError {
 	const action = "refund"
 	iss, err := c.fetchACTIssuer(r.Context(), chi.URLParam(r, "name"))

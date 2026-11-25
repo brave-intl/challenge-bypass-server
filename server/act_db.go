@@ -34,20 +34,19 @@ const (
 var (
 	errACTIssuerNotFound = errors.New("act: issuer not found")
 	errACTSpendNotFound  = errors.New("act: spend not found")
-	// errACTDoubleSpend - nullifier already recorded with a different proof or idempotency key
+	// errACTDoubleSpend is returned when a nullifier is already recorded or
+	// appears twice in one request. A request that repeats the recorded proof
+	// and idempotency key is a retry, not a double spend.
 	errACTDoubleSpend = errors.New("act: nullifier already spent")
-	// errACTRefundConflict - spend already refunded at a different cost, or rolled over
-	errACTRefundConflict = errors.New("act: spend already settled with a different cost")
-	// errACTCostExceedsCharge - actual cost is larger than the held charge
-	errACTCostExceedsCharge = errors.New("act: cost exceeds held charge")
-	// errACTIssuanceConflict - issuance idempotency key already used for a different request
-	errACTIssuanceConflict = errors.New("act: issuance idempotency key already used with a different request")
-	// errACTRolloverNotAllowed - source issuer is not permitted to roll into target issuer
+	// errACTRefundConflict is also returned for a spend that was rolled over.
+	errACTRefundConflict     = errors.New("act: spend already settled with a different cost")
+	errACTCostExceedsCharge  = errors.New("act: cost exceeds held charge")
+	errACTIssuanceConflict   = errors.New("act: issuance idempotency key already used with a different request")
 	errACTRolloverNotAllowed = errors.New("act: rollover from source issuer is not allowed")
-	// errACTIssuanceStopped - issuer has passed stop_issuing_at or expires_at
+	// errACTIssuanceStopped is returned after stop_issuing_at and after
+	// expires_at.
 	errACTIssuanceStopped = errors.New("act: issuer is no longer accepting new issuances")
-	// errACTInvalidUpdate - admin update violates an ACT issuer invariant
-	errACTInvalidUpdate = errors.New("act: invalid issuer update")
+	errACTInvalidUpdate   = errors.New("act: invalid issuer update")
 )
 
 type actIssuer struct {
@@ -91,7 +90,8 @@ type actIssuerCacheEntry struct {
 	expiresAt time.Time
 }
 
-// actIssuerCache is a nil-safe TTL cache for ACT issuers.
+// actIssuerCache caches ACT issuers for actIssuerCacheTTL. Its methods accept
+// a nil cache and then do nothing.
 type actIssuerCache struct {
 	mu      sync.RWMutex
 	entries map[string]actIssuerCacheEntry
@@ -150,8 +150,8 @@ type actIssuance struct {
 	CreatedAt        time.Time
 }
 
-// verifiedRolloverProof is a rollover input verified against its source issuer
-// before entering the atomic consumption + issuance transaction.
+// verifiedRolloverProof is a rollover proof that has been verified against its
+// source issuer and is ready for executeACTIssuance to record.
 type verifiedRolloverProof struct {
 	SourceID  uuid.UUID
 	Nullifier [32]byte
@@ -159,9 +159,10 @@ type verifiedRolloverProof struct {
 	Charge    uint64
 }
 
-// migrateACT applies the ACT schema up to actSchemaVersion using migrateSchema
-// so rolling back to an older build skips when the DB is ahead. It uses its
-// own migrations table so versions never interleave with the main sequence.
+// migrateACT migrates the ACT schema up to actSchemaVersion. Like the main
+// schema, the ACT schema is left alone when the database is ahead of this
+// build. ACT versions are tracked in act_schema_migrations, so they never mix
+// with the main migration versions.
 func migrateACT(db *sql.DB, logger *slog.Logger) error {
 	src, err := iofs.New(actmigrations.FS, ".")
 	if err != nil {
@@ -486,8 +487,9 @@ func (c *Server) listACTIssuers(ctx context.Context) ([]actIssuer, error) {
 	return out, nil
 }
 
-// fetchACTIssuer returns the named ACT issuer, using a short TTL cache and
-// reading from the writer on miss so newly created issuers never hit replica lag.
+// fetchACTIssuer returns the named ACT issuer from actCache. On a cache miss
+// fetchACTIssuer reads the writer database, so an issuer created a moment ago
+// is found even when the reader replica lags.
 func (c *Server) fetchACTIssuer(ctx context.Context, name string) (*actIssuer, error) {
 	now := time.Now()
 	if iss, ok := c.actCache.get(name, now); ok {
@@ -534,8 +536,8 @@ const actIssuanceColumns = `issuer_id, idempotency_key, request_hash, purchased_
 
 func scanACTIssuance(row rowScanner) (*actIssuance, error) {
 	var (
-		issuance                         actIssuance
-		purchased, rolled, totalCredits  int64
+		issuance                        actIssuance
+		purchased, rolled, totalCredits int64
 	)
 	err := row.Scan(&issuance.IssuerID, &issuance.IdempotencyKey, &issuance.RequestHash,
 		&purchased, &rolled, &totalCredits, &issuance.Response, &issuance.CreatedAt)
@@ -558,10 +560,10 @@ func (c *Server) fetchACTIssuance(ctx context.Context, issuerID uuid.UUID, idemp
 	return issuance, err
 }
 
-// executeACTIssuance atomically consumes all verified rollover nullifiers,
-// signs the new IssuanceResponse, and persists the idempotency record in
-// act_issuances. It returns created=true only when this call performed the
-// issuance (false on an idempotent retry).
+// executeACTIssuance records the rollover nullifiers, signs the
+// IssuanceResponse and stores it in act_issuances, all in one transaction.
+// created is false when the returned response was stored by an earlier
+// request with the same idempotency key.
 func (c *Server) executeACTIssuance(
 	ctx context.Context,
 	target *actIssuer,
@@ -571,8 +573,8 @@ func (c *Server) executeACTIssuance(
 	purchasedCredits, rolledCredits uint64,
 	rollovers []verifiedRolloverProof,
 ) (*actIssuance, bool, error) {
-	// Sort rollover proofs deterministically by (source_id, nullifier) so
-	// concurrent multi-proof rollovers cannot deadlock on act_spends locks.
+	// Insert in (source_id, nullifier) order, so two concurrent rollovers that
+	// share proofs cannot deadlock on act_spends rows.
 	sorted := make([]verifiedRolloverProof, len(rollovers))
 	copy(sorted, rollovers)
 	slices.SortFunc(sorted, func(a, b verifiedRolloverProof) int {
@@ -599,8 +601,9 @@ func (c *Server) executeACTIssuance(
 			r.SourceID, r.Nullifier[:], r.ProofHash[:], rolloverIdem, int64(r.Charge), actStatusRolledOver,
 		).Scan(&inserted)
 		if errors.Is(err, sql.ErrNoRows) {
-			// Either a genuine double-spend/double-rollover, or a concurrent
-			// retry with the exact same idempotency_key just committed.
+			// The nullifier is already recorded. Either the proof was spent or
+			// rolled over before, or a concurrent retry with the same key
+			// committed first.
 			_ = tx.Rollback()
 			existing, ferr := c.fetchACTIssuance(ctx, target.ID, idempotencyKey)
 			if ferr != nil {
@@ -685,13 +688,11 @@ func (c *Server) fetchACTSpend(ctx context.Context, issuerID uuid.UUID, nullifie
 		issuerID, nullifier))
 }
 
-// recordACTHold atomically records a verified spend's nullifier as a hold.
-//
-// A retry carrying both the identical proof hash and the identical origin
-// idempotency key returns the existing record (with created=false) so the
-// calling service can safely retry. Any other proof or idempotency key for the
-// same nullifier is a double spend (including a client replaying the same
-// proof across requests, or a credential already consumed by rollover).
+// recordACTHold records a verified spend's nullifier as a hold. A retry with
+// the same proof hash and idempotency key returns the existing row with
+// created=false. Any other proof or key for the same nullifier is a double
+// spend. That includes a client that sends one proof in two requests, and a
+// credential that was already rolled over.
 func (c *Server) recordACTHold(ctx context.Context, issuerID uuid.UUID, info act.SpendInfo, proof, proofHash []byte, idempotencyKey string) (*actSpend, bool, error) {
 	spend, err := scanACTSpend(c.db.QueryRowContext(ctx, `
 		INSERT INTO act_spends (issuer_id, nullifier, proof_hash, idempotency_key, spend_proof, charge)
@@ -713,9 +714,9 @@ func (c *Server) recordACTHold(ctx context.Context, issuerID uuid.UUID, info act
 	return existing, false, nil
 }
 
-// finalizeACTSpend settles a hold at `cost` credits and stores the refund for
-// the remaining `charge - cost`. It is idempotent for the same cost and
-// returns settledNow=true only when this call transitioned the row from held.
+// finalizeACTSpend settles a hold at cost credits and stores the refund for
+// the remaining charge minus cost. Repeating the same cost returns the stored
+// result. settledNow is true only when this call moved the row out of held.
 func (c *Server) finalizeACTSpend(ctx context.Context, iss *actIssuer, nullifier []byte, cost uint64) (*actSpend, bool, error) {
 	tx, err := c.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -749,8 +750,8 @@ func (c *Server) finalizeACTSpend(ctx context.Context, iss *actIssuer, nullifier
 	return spend, true, nil
 }
 
-// settleACTSpend issues the refund for a locked, held spend, clears the stored
-// spend_proof (no longer needed once refunded), and marks the row refunded.
+// settleACTSpend issues the refund for a held spend whose row the caller has
+// locked. It marks the row refunded and clears spend_proof.
 func settleACTSpend(ctx context.Context, tx *sql.Tx, iss *actIssuer, spend *actSpend, cost uint64) error {
 	if cost > spend.Charge {
 		return errACTCostExceedsCharge
@@ -779,9 +780,9 @@ func settleACTSpend(ctx context.Context, tx *sql.Tx, iss *actIssuer, spend *actS
 	return nil
 }
 
-// actSweepCursor marks the last row scanned by sweepACTHoldsPage so later
-// batches within a tick advance past failing rows even when an entire page
-// fails to settle.
+// actSweepCursor is the last row that sweepACTHoldsPage scanned. The next page
+// starts after that row, so a page of holds that all fail to settle does not
+// stop the sweep of later holds.
 type actSweepCursor struct {
 	createdAt time.Time
 	issuerID  uuid.UUID
@@ -789,14 +790,15 @@ type actSweepCursor struct {
 	set       bool
 }
 
-// sweepACTHoldsPage settles one keyset-paginated batch of holds older than
-// olderThan at zero cost, returning the full charge to the client. Each hold
-// is claimed and committed in its own short transaction with FOR UPDATE SKIP
-// LOCKED so failing rows cannot roll back other rows, and returning the last
-// scanned cursor lets callers advance past poison-pill pages.
+// sweepACTHoldsPage settles up to limit holds older than olderThan at cost 0,
+// which returns the full charge to the client. The page starts after the row
+// in after. sweepACTHoldsPage returns the number of holds fetched, the number
+// settled, and the cursor for the next page. Each hold is locked with FOR
+// UPDATE SKIP LOCKED and committed in its own transaction, so a hold that
+// fails to settle does not roll back the others.
 //
-// ponytail: settles at cost 0 (user-favourable). If abandoned holds get abused,
-// charge a flat fee or make timeout cost configurable per issuer instead.
+// A hold that times out costs the client nothing. If clients abuse that,
+// charge a flat fee or make the timeout cost configurable per issuer.
 func (c *Server) sweepACTHoldsPage(ctx context.Context, olderThan time.Duration, limit int, after actSweepCursor) (int, int, actSweepCursor, error) {
 	var (
 		rows *sql.Rows

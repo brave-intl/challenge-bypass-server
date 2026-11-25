@@ -36,8 +36,8 @@ type actTestEnv struct {
 	adminKey ed25519.PrivateKey
 }
 
-// newACTTestServer needs a Postgres at DATABASE_URL; it runs the main and ACT
-// migrations so admin audit logging and ACT tables are both present.
+// newACTTestServer needs a Postgres at DATABASE_URL. newACTTestServer runs the
+// main and ACT migrations, so the admin audit table and the ACT tables exist.
 func newACTTestServer(t *testing.T) *actTestEnv {
 	t.Helper()
 	t.Setenv("ACT_ENABLED", "true")
@@ -227,8 +227,8 @@ func TestACTHoldRefundLifecycle(t *testing.T) {
 		t.Fatalf("missing issue idempotency_key: %d, want 400", code)
 	}
 
-	// Idempotent /issue retry returns the exact same signed response; conflicting
-	// payload with the same idempotency_key returns 409.
+	// A retried /issue returns the same signed response. A different payload
+	// with the same idempotency_key returns 409.
 	pre0, req0, err := act.ClientIssuanceRequest(cl.params)
 	if err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestACTHoldRefundLifecycle(t *testing.T) {
 		t.Fatalf("retry spend: %d %+v", code, retry)
 	}
 
-	// Replaying the identical proof with a DIFFERENT idempotency_key is rejected (409).
+	// Replaying the same proof with a different idempotency_key returns 409.
 	if code := actDo(t, h, "POST", cl.base+"/spend", actSpendRequest{Proof: proof, IdempotencyKey: "req-2"}, nil); code != http.StatusConflict {
 		t.Fatalf("replay with different idempotency_key: %d, want 409", code)
 	}
@@ -293,7 +293,7 @@ func TestACTHoldRefundLifecycle(t *testing.T) {
 		t.Fatalf("cost > charge: %d, want 400", code)
 	}
 
-	// Settle at 120: 180 comes back and spend_proof is cleared from Postgres.
+	// Settle at 120. The client gets 180 back, and spend_proof is cleared.
 	var settled actSpendResponse
 	if code := actDo(t, h, "POST", refundPath, cost(120), &settled); code != http.StatusOK {
 		t.Fatalf("refund: %d", code)
@@ -323,7 +323,8 @@ func TestACTHoldRefundLifecycle(t *testing.T) {
 		t.Fatalf("balance after refund = %d, want 880", got)
 	}
 
-	// Same cost again returns the stored refund; a different cost conflicts.
+	// The same cost again returns the stored refund. A different cost returns
+	// 409.
 	var again actSpendResponse
 	if code := actDo(t, h, "POST", refundPath, cost(120), &again); code != http.StatusOK || !bytes.Equal(again.Refund, settled.Refund) {
 		t.Fatalf("idempotent refund: %d", code)
@@ -367,8 +368,9 @@ func TestACTRolloverAndIssuerLifecycle(t *testing.T) {
 	oldIss := newACTIssuer(t, env, 1000)
 	newIss := newACTIssuer(t, env, 1000)
 
-	// 1. Same-issuer anonymous dust consolidation (2 small credentials -> 1 larger credential).
-	// Works even in production without ACT_ISSUE_TOKEN_LIST (zero net minting).
+	// 1. Roll two small credentials of one issuer into one larger credential.
+	// This works in production without ACT_ISSUE_TOKEN_LIST, because a
+	// rollover mints no new credits.
 	dustA := oldIss.credential(120)
 	dustB := oldIss.credential(230)
 	proofA, _, err := act.ClientProveSpend(oldIss.params, dustA, 120)
@@ -483,7 +485,8 @@ func TestACTRolloverAndIssuerLifecycle(t *testing.T) {
 		t.Fatalf("unexpected rollover_from: %+v", updatedNew.RolloverFrom)
 	}
 
-	// 4. Operator stops issuing on oldIss (stop_issuing_at = now): /issue fails, /spend still works.
+	// 4. The operator sets stop_issuing_at to now on oldIss. /issue fails and
+	// /spend still works.
 	t.Setenv("ENV", "test")
 	t.Setenv("ACT_ISSUE_TOKEN_LIST", "")
 	oldSpendTok := oldIss.credential(100)
@@ -508,7 +511,7 @@ func TestACTRolloverAndIssuerLifecycle(t *testing.T) {
 		t.Fatalf("spend after stop_issuing_at (before expires_at): %d, want 200", code)
 	}
 
-	// 5. Even after oldIss passes expires_at, anonymous rollover onto newIss still succeeds!
+	// 5. After oldIss passes expires_at, a rollover onto newIss still succeeds.
 	if _, err := env.srv.db.Exec(`UPDATE act_issuers SET stop_issuing_at = now() - interval '2 minutes', expires_at = now() - interval '1 minute' WHERE name = $1`, oldIss.name); err != nil {
 		t.Fatal(err)
 	}
@@ -569,7 +572,9 @@ func TestACTRolloverAndIssuerLifecycle(t *testing.T) {
 		t.Fatalf("topup+rollover balance = %d, want 850", bal)
 	}
 
-	// 7. Operator removes oldIss from newIss's rollover_from allowlist: overlap is rejected, removal blocks further rollovers.
+	// 7. The operator removes oldIss from newIss's rollover_from. A request
+	// that adds and removes the same issuer is rejected. After the removal, a
+	// rollover from oldIss fails.
 	if code := actDoAdmin(t, env, "PATCH", "/v1/admin/act/issuers/"+newIss.name, actIssuerUpdateRequest{
 		AddRolloverFrom:    []string{oldIss.name},
 		RemoveRolloverFrom: []string{oldIss.name},
@@ -613,7 +618,8 @@ func TestACTConcurrentRolloverRaces(t *testing.T) {
 	env := newACTTestServer(t)
 	iss := newACTIssuer(t, env, 1000)
 
-	// Race A: 6 goroutines trying to roll over the SAME credential with DIFFERENT idempotency keys.
+	// Race A: 6 goroutines roll over the same credential with different
+	// idempotency keys.
 	tokA := iss.credential(100)
 	proofA, _, _ := act.ClientProveSpend(iss.params, tokA, 100)
 	const workers = 6
@@ -647,7 +653,8 @@ func TestACTConcurrentRolloverRaces(t *testing.T) {
 		t.Fatalf("concurrent double rollover: ok=%d conflict=%d, want 1 and %d", okCount, conflictCount, workers-1)
 	}
 
-	// Race B: 6 concurrent identical retries with the SAME idempotency_key all get 200 and identical response.
+	// Race B: 6 concurrent identical retries with the same idempotency_key all
+	// get 200 and the same response.
 	tokB := iss.credential(150)
 	proofB, _, _ := act.ClientProveSpend(iss.params, tokB, 150)
 	_, reqB, _ := act.ClientIssuanceRequest(iss.params)
@@ -722,9 +729,9 @@ func TestACTAuthAndValidation(t *testing.T) {
 		t.Fatalf("replayed signed create: %d %s, want 409 already used", rec2.Code, rec2.Body)
 	}
 
-	// Minting (/issue) and origin routes (/spend, /rollover, GET /issuer) are
-	// strictly isolated in production: ACT_ISSUE_TOKEN_LIST tokens do NOT need
-	// to be in TOKEN_LIST, and TOKEN_LIST tokens cannot call /issue.
+	// In production, /issue and the origin routes use separate token lists. An
+	// ACT_ISSUE_TOKEN_LIST token does not need to be in TOKEN_LIST, and a
+	// TOKEN_LIST token cannot call /issue.
 	cl := newACTIssuer(t, env, 100)
 	tok := cl.credential(20)
 	spendProof, _, _ := act.ClientProveSpend(cl.params, tok, 10)
@@ -752,7 +759,8 @@ func TestACTAuthAndValidation(t *testing.T) {
 	}, nil, nil); code != http.StatusOK {
 		t.Fatalf("get issuer with TOKEN_LIST token: %d, want 200", code)
 	}
-	// ACT_ISSUE_TOKEN_LIST-only token (not in TOKEN_LIST!) can mint, and cannot spend or read issuer.
+	// A token that is only in ACT_ISSUE_TOKEN_LIST can mint, but cannot spend
+	// or read the issuer.
 	if code := actDoWithHeaders(t, prodH, "POST", cl.base+"/issue", nil, map[string]string{
 		"Authorization": "Bearer mint-only-2",
 	}, actIssueRequest{Request: issReq, Credits: 10, IdempotencyKey: "auth-3"}, nil); code != http.StatusOK {
@@ -904,9 +912,9 @@ func TestACTSweepAbandonedHoldsAndPoisonPill(t *testing.T) {
 		t.Fatalf("fresh hold swept: %+v", got)
 	}
 
-	// Insert two older poison-pill rows (corrupt proofs) ahead of the valid hold
-	// and verify keyset pagination advances past a full failing page (limit=2)
-	// to still settle the valid hold on the next page.
+	// Insert two older holds with corrupt proofs ahead of the valid hold. With
+	// limit=2 every hold on the first page fails, and the next page still
+	// settles the valid hold.
 	var issuerID uuid.UUID
 	if err := env.srv.db.QueryRow(`SELECT issuer_id FROM act_issuers WHERE name = $1`, cl.name).Scan(&issuerID); err != nil {
 		t.Fatal(err)
@@ -930,7 +938,8 @@ func TestACTSweepAbandonedHoldsAndPoisonPill(t *testing.T) {
 	if _, err := env.srv.db.Exec(`UPDATE act_spends SET created_at = now() - interval '2 hours' WHERE spend_proof = $1`, proof); err != nil {
 		t.Fatal(err)
 	}
-	// Page 1 (limit=2) hits only the 2 poison pills; cursor advances to page 2 which settles the valid hold.
+	// Page 1 holds only the two corrupt holds. The cursor moves to page 2,
+	// which settles the valid hold.
 	fetched1, settled1, cursor, err1 := env.srv.sweepACTHoldsPage(context.Background(), time.Hour, 2, actSweepCursor{})
 	if err1 == nil || fetched1 != 2 || settled1 != 0 || !cursor.set {
 		t.Fatalf("page 1: fetched=%d settled=%d cursor.set=%v err=%v", fetched1, settled1, cursor.set, err1)

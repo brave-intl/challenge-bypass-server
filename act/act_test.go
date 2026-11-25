@@ -9,7 +9,8 @@ import (
 
 const testParams = "brave:cbp-act-test:test:2026-09-30"
 
-// Full issue -> spend(hold) -> refund(unused) -> spend again cycle.
+// TestCreditLifecycle issues a credential, holds a spend, refunds the unused
+// part and spends again.
 func TestCreditLifecycle(t *testing.T) {
 	sk, pk, err := GenerateKey()
 	if err != nil {

@@ -1,15 +1,16 @@
 //go:build act
 
-// Command act-smoke exercises the ACT API end to end against a running cbp,
-// playing both the client (credential holder) and the service (origin).
+// Command act-smoke tests the ACT API end to end against a running server. It
+// acts as both the client that holds credentials and the origin service.
 //
 //	act-smoke -url http://localhost:2416 [-token $TOKEN] [-issue-token $ISSUE_TOKEN] [-admin-key path] [-issuer name] [-check-sweep 20m]
 //
 // If the issuer does not exist yet, -admin-key (or $CBP_ADMIN_PRIVATE_KEY) is
 // used to sign POST /v1/admin/act/issuers.
 //
-// -check-sweep also leaves a hold unsettled and waits (up to the given time)
-// for the server's sweeper to settle it at cost 0 (after ACT_HOLD_TIMEOUT).
+// -check-sweep also leaves a hold unsettled, then waits up to the given time
+// for the server's sweeper to settle the hold at cost 0 after
+// ACT_HOLD_TIMEOUT.
 //
 // Exits non-zero on the first failed check. See docs/act-credit-tokens.md.
 package main

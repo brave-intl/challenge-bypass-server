@@ -92,9 +92,10 @@ integration-test-logs:
 .PHONY: docker-integration-test
 docker-integration-test: integration-test
 
-# ACT (Anonymous Credit Tokens): builds the combined Rust static library
-# (ristretto FFI + ACT) into act/ffi/lib under the ristretto library name, so
-# `go build -tags act` / `go test -tags act` link it with no extra flags.
+# act-ffi builds the Rust static library that holds the ristretto FFI and
+# Anonymous Credit Tokens (ACT). The library is copied to act/ffi/lib under
+# the ristretto library name, so `go build -tags act` and `go test -tags act`
+# link it with no extra flags.
 .PHONY: act-ffi
 act-ffi:
 	cd act/ffi && cargo build --release --locked && mkdir -p lib && \

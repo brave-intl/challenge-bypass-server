@@ -8,11 +8,11 @@ package act
 */
 import "C"
 
-// Linking: act/ffi builds ONE static library that bundles
-// challenge-bypass-ristretto-ffi with the ACT bindings (two Rust staticlibs in
-// a static binary collide on libstd). It is installed under the ristretto
-// name, libchallenge_bypass_ristretto_ffi.a, the same archive the ristretto Go
-// bindings link. `make act-ffi` puts it in ffi/lib.
+// act/ffi builds one static library that holds challenge-bypass-ristretto-ffi
+// and the ACT bindings, because two Rust static libraries in one static binary
+// each carry libstd and conflict. The library is installed as
+// libchallenge_bypass_ristretto_ffi.a, the archive that the ristretto Go
+// bindings already link. `make act-ffi` puts the library in ffi/lib.
 
 import (
 	"runtime"
@@ -86,7 +86,8 @@ func Issue(params string, sk, req []byte, credits uint64, ctx []byte) ([]byte, e
 }
 
 // VerifySpend checks a spend proof and reports its nullifier, context and charge.
-// It does not record the nullifier; callers must do that atomically.
+// VerifySpend does not record the nullifier. The caller must record it
+// atomically.
 func VerifySpend(params string, sk, proof []byte) (SpendInfo, error) {
 	var p runtime.Pinner
 	defer p.Unpin()
@@ -118,7 +119,8 @@ func Refund(params string, sk, proof []byte, returned uint64) ([]byte, error) {
 	return take(out), nil
 }
 
-// ClientIssuanceRequest starts issuance. Keep pre secret; send req to the issuer.
+// ClientIssuanceRequest starts issuance. Keep pre secret, and send req to the
+// issuer.
 func ClientIssuanceRequest(params string) (pre, req []byte, err error) {
 	var p runtime.Pinner
 	defer p.Unpin()

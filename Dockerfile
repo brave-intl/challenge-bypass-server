@@ -1,12 +1,14 @@
 FROM rust:1.99-alpine3.24 AS rust_builder
 # musl is this image's native target on both amd64 and arm64, so the staticlib
 # needs no cross-target setup and always lands in target/release.
-# gcc + musl-dev: blake3 (an ACT dependency) compiles C/asm.
+# blake3, an ACT dependency, compiles C and assembly, so the build needs gcc
+# and musl-dev.
 RUN apk add --no-cache gcc musl-dev
-# act/ffi builds ONE static library: challenge-bypass-ristretto-ffi (pinned in
-# act/ffi/Cargo.toml; keep in lockstep with go.mod so the exports match the cgo
-# bindings) plus the ACT bindings. Two Rust staticlibs cannot be linked into one
-# static binary (duplicate libstd), so the ristretto lib is no longer built alone.
+# act/ffi builds one static library that holds challenge-bypass-ristretto-ffi
+# and the ACT bindings. Two Rust static libraries cannot be linked into one
+# static binary, because each carries its own libstd. The ristretto rev is
+# pinned in act/ffi/Cargo.toml and must match go.mod, so the library exports
+# match the cgo bindings.
 COPY act/ffi /src
 WORKDIR /src
 RUN cargo build --locked --release
@@ -15,9 +17,9 @@ FROM golang:1.27-alpine3.24 AS go_builder
 # cgo needs a C toolchain to link against the Rust staticlib; on musl that is
 # gcc + musl-dev.
 RUN apk add --no-cache gcc musl-dev
-# musl gives each thread only 128 KB of stack, and cgo calls run on Go's
-# threads. lib.rs already isolates Params::new on a 1 MiB thread, and 1 MiB
-# here provides stack margin for any deep Rust FFI call.
+# musl gives each thread 128 KB of stack, and cgo calls run on Go's threads.
+# lib.rs builds Params on its own 1 MiB thread. This setting gives every other
+# Rust call 1 MiB of stack as well.
 ENV CGO_LDFLAGS="-Wl,-z,stack-size=1048576"
 WORKDIR /src
 # Resolve modules in their own layer so editing source does not re-download the

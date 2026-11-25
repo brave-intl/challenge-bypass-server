@@ -275,10 +275,8 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 			c.adminRoutes(r)
 		})
 
-		// ACT (Anonymous Credit Tokens) Routes: /issue uses ACT_ISSUE_TOKEN_LIST
-		// (separate from TOKEN_LIST), while origin routes use SimpleTokenAuthorizedOnly
-		// in production. Mounted outside the TOKEN_LIST group so minting tokens
-		// never have to be duplicated in TOKEN_LIST.
+		// The ACT routes check their own tokens (see mountACTRoutes), so they
+		// are mounted outside the TOKEN_LIST group below.
 		c.mountACTRoutes(r)
 
 		// Authenticated Routes
@@ -326,8 +324,8 @@ func (c *Server) setupRouter(ctx context.Context, logger *slog.Logger) (context.
 // ListenAndServe listen to ports and mount handlers
 func (c *Server) ListenAndServe(ctx context.Context, logger *slog.Logger) error {
 	_, router := c.setupRouter(ctx, logger)
-	// ACT hold sweeper runs with the API (not cron: CRON_ENABLED=false in the
-	// ECS deployments). Safe on every replica: holds are claimed with SKIP LOCKED.
+	// The ACT sweeper runs in every API process, whatever CRON_ENABLED says.
+	// Replicas do not collide, because each hold is claimed with SKIP LOCKED.
 	c.startACTSweeper(ctx)
 
 	ServeMetrics()
